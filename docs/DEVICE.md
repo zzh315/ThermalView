@@ -25,6 +25,19 @@ Commands, both read-only (cached descriptors and standard string reads; no class
 
 For M1: open 256 × 196 with `UVC_FRAME_FORMAT_YUYV` (`ANY` also recognizes YUY2) and pass fps 25 explicitly; libuvc will pick alt 1.
 
+### Seen through other apps on the tablet (2026-09-24; our own decoder verifies these in M1)
+
+From `adb logcat --pid=<app>` during the M0 compatibility matrix:
+
+- Hti Image's libuvc negotiated dwMaxVideoFrameSize 100352, dwMaxPayloadTransferSize 524, frame index 1, 25 fps.
+- ThruTracker's `setZoomAbsolute value=0x8004 entity=1 vcIface=0` returned 2 bytes, so the camera terminal (id 1) accepts SET_CUR on Zoom (Absolute) as expected.
+- InfiCamPlus streamed at 25.1–25.2 fps on its V1 path. Its decoder read, from our camera's metadata:
+  - cal constants a = 0.2333, b = 27.867, ka = 0.00004, kb = 0.0053, kc = 0.5351, at uint16 offsets 259…267 = Q + 3 … Q + 11 with Q = P + 256, which is PROTOCOL.md's Block B layout;
+  - shutter temperature 3050 (K × 10) = 31.85 °C;
+  - FPA temperature 32.26 °C.
+
+  All are plausible, which supports "V1 camera, compensated output" and PROTOCOL.md's offsets. InfiCamPlus then wrote its own defaults into the user area (emissivity 0.95, reflected and air temperature 20 °C, humidity 0.5, distance 1); the camera was unplugged afterwards. M1 should record the user area after a fresh plug-in, to learn what the camera holds when no app has written to it.
+
 ## Mac toolchain (verified 2026-09-24)
 
 | Component | Version | Verified by |
@@ -63,4 +76,5 @@ Commands: `adb shell getprop <prop>`, `pm list features`, `wm size`, `wm density
 | Camera privacy toggle | Not set (`dumpsys sensor_privacy` lists no toggles) | — |
 | App storage | The adb shell can read `/sdcard/Android/data`, M1's dump pull path | Confirms PLAN M1 |
 | App stores | Xiaomi app store (`com.xiaomi.market`) and Google Play both installed | — |
-| adb | Wireless debugging at 192.168.1.114; this Mac was already paired. The connect port changes whenever wireless debugging restarts | — |
+| adb | Wireless debugging at 192.168.1.114; this Mac was already paired. The connect port changes whenever wireless debugging restarts (41373, then 44269). During camera testing it dropped twice: once briefly (reconnecting on the same port worked), and once for good — the tablet still showed it on, but `adb mdns services` advertised nothing until it was restarted. When the tablet vanishes, check `adb mdns services` first, then ask the owner to toggle wireless debugging | Workflow note for M1 |
+| USB chooser | On plug-in, Android offers the apps whose USB filters match: Hti Image, Xtherm infrared, InfiCam (InfiCamPlus) and ThruTracker Recorder. Apps already running with the camera attached ask for permission directly | M0 compatibility matrix |

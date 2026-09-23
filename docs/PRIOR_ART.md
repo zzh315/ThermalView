@@ -15,22 +15,27 @@ Commits below are the ones checked on 2026-09-24.
 
 ## Catalog
 
-### Works with this exact camera (owner-verified)
+### Works with this exact camera (verified in the M0 matrix) — the reference apps
 
 | App | Type | Notes |
 |---|---|---|
 | Hti Image (`com.hti.Xtherm`) | closed, Android | The owner's current best image. Play Store: v6.4.20240702 (July 2024) by WIFI-VIEW (hti-meter.com), "HT301 thermal imager supporting software". Its package name and versioning suggest it's derived from Xtherm's code base and tuned for the HT-301; a 2020 Xtherm review calls the two apps identical. Two 2022 reviews of v6.3 say it has no manual or locked range; check whether 6.4 added one. Primary image-quality reference. |
-| Xtherm (`com.infiRay.Xtherm`) | closed, Android | Official InfiRay app; its listing says "APP for T3s/T3pro". The "T3" label for our camera is the owner's observation; no public source confirms it. Point/line/surface measurement and 6 environment corrections (listing). Removed from Google Play (404 since 2025); Xiaomi's store carries v7.0.260325 (March 2026). The owner finds its image weaker than Hti Image. Temperature cross-check reference (M2). Per InfiCam's notes and InfiRay's demo, it sends `0x8000` 1 s after connect and then every 380 s, and rebuilds its temperature table after each shutter. |
+| Xtherm (`com.infiRay.Xtherm`) | closed, Android | Official InfiRay app; its listing says "APP for T3s/T3pro", and pressing its HD button with our camera says "T3 device doesn't support HD function". Point/line/surface measurement and 6 environment corrections (listing). Removed from Google Play (404 since 2025); Xiaomi's store carries v7.0.260325 (March 2026). The owner finds its image weaker than Hti Image. Temperature cross-check reference (M2). Per InfiCam's notes and InfiRay's demo, it sends `0x8000` 1 s after connect and then every 380 s, and rebuilds its temperature table after each shutter. |
+| InfiCamPlus — github.com/diminDDL/InfiCamPlus @ `6fad1f3` | open (MIT), Android, Java + C++ | Its device list (taken from Xtherm's, per PR #17) accepts product names containing "S0" or "Xmodule", and "S0H-40" from "Infiray" takes its V1 (onboard-processed) path — confirmed in M0 (`raw=0`, steady 25 fps). Its V2 support comes from Ghidra work on Xtherm's libraries (PR #17). The project targets "V2" raw-sensor cameras: V1 T2S+/T2L users saw readings ~40–45 °C too high on 1.0.x, and the maintainer points them to the original InfiCam (issue #2); v1.0.4 crashed on a T2S+ V1 (#19). HEAD rejects the HT-301; older builds crashed on it (issue #5). |
 
-### Plausibly compatible — test in the M0 compatibility matrix
+### Tested in M0, doesn't work with this camera
 
-| App | Type | Why it might work |
+| App | Type | Result |
 |---|---|---|
-| 天眼热成像 (formerly 艾睿天眼) / Xinfrared (`com.infiRayX.Search`, English name infiRaySearch) | closed, Android | InfiRay's app for the Search / Eagle Eye series, with the MATRIX IV algorithm and an "X-Clear" outdoor enhancement mode (listings). Not on Google Play; Xiaomi's store has v4.4.250120. It has an HD mode, so it's the likely source of the "T3 device doesn't support HD" message the owner has seen; note which app shows it. Night-scene reference if it connects. |
-| 专业级热像仪 / Xtherm Power (`com.infiRay.XthermPower`) | closed, Android | Same developer as Xtherm. Its listing targets InfiRay's industrial DX-series cameras (point/line/box measurement, −20–550 °C), so support for ours is unlikely, but it's cheap to try. |
-| ThruTracker Recorder — github.com/ThruTrackerAnalytics/thrutracker-recorder (README and CHANGELOG only) | closed (free through 2027), Android 10+ | v1.1.0 (2026-07-25) added experimental support for exactly VID:PID 1514:0001 (the HT-301), with a native isochronous capture path and a raw 16-bit radiometric mode. So far only the release notes say so; the README and website still list only the TopDon for Android. Unknown whether it handles 256-wide frames. |
-| InfiCamPlus — github.com/diminDDL/InfiCamPlus @ `6fad1f3` | open (MIT), Android, Java + C++ | Its device list (taken from Xtherm's, per PR #17) accepts product names containing "S0" or "Xmodule", and "S0H-40" from "Infiray" takes its V1 (onboard-processed) path. Its V2 support comes from Ghidra work on Xtherm's libraries (PR #17). The project targets "V2" raw-sensor cameras: V1 T2S+/T2L users saw readings ~40–45 °C too high on 1.0.x, and the maintainer points them to the original InfiCam (issue #2); v1.0.4 crashed on a T2S+ V1 (#19). HEAD rejects the HT-301; older builds crashed on it (issue #5). |
-| InfiCam — gitlab.com/netman69/inficam @ `531aa81` | open (MIT), Android, Java + C++ | No published APK, so it needs a source build (old Gradle, targetSdk 27). Built for onboard-processed ("V1") cameras. Try it if InfiCamPlus misbehaves. |
+| 天眼热成像 (formerly 艾睿天眼) / Xinfrared (`com.infiRayX.Search`, English name infiRaySearch) | closed, Android | InfiRay's app for the Search / Eagle Eye series, with the MATRIX IV algorithm and an "X-Clear" outdoor enhancement mode (listings); not on Google Play, Xiaomi store v4.4.250120. It never recognizes the camera — its USB filter omits it — so it's no night-scene reference. |
+| ThruTracker Recorder — github.com/ThruTrackerAnalytics/thrutracker-recorder (README and CHANGELOG only) | closed (free through 2027), Android 10+ | v1.1.0 (2026-07-25) added experimental support for VID:PID 1514:0001, assuming the HT-301's 384×292 geometry. It streams from our camera but rejects every 256-wide frame, so it shows nothing. Its capture approach is still worth learning from (pass 1 item 6). |
+
+### Not tested
+
+| App | Type | Why |
+|---|---|---|
+| 专业级热像仪 / Xtherm Power (`com.infiRay.XthermPower`) | closed, Android | Same developer as Xtherm, but its listing targets InfiRay's industrial DX-series cameras (point/line/box measurement, −20–550 °C). Skipped by the owner's choice. |
+| InfiCam — gitlab.com/netman69/inficam @ `531aa81` | open (MIT), Android, Java + C++ | No published APK, so it needs a source build (old Gradle, targetSdk 27). Built for onboard-processed ("V1") cameras. Not needed: InfiCamPlus works. |
 
 ### Same protocol, desktop only — source to read, not run
 
@@ -74,12 +79,14 @@ Pass 2 adds the strongest papers and code per pipeline stage here.
 
 | App | Version | Connects | Streams | Messages / errors | Image size on screen | Zoom / area tools | Notes |
 |---|---|---|---|---|---|---|---|
-| Hti Image (`com.hti.Xtherm`) | 6.4.20240702 (targetSdk 34) | | | | | | Installed by the owner |
-| Xtherm (`com.infiRay.Xtherm`) | 7.0.260325 (targetSdk 34) | | | | | | Installed by the owner (Xiaomi store build) |
-| InfiCamPlus (`be.ntmn.inficam`) | 1.0.5 (targetSdk 34) | | | | | | From GitHub releases. Uses the original InfiCam package name, so the two can't coexist. Writes its environment settings to the camera's user area on every connect (volatile — it never sends `0x80FF`); replug after testing it |
-| ThruTracker Recorder (`com.thrutracker.thermalrecorder`) | 1.1.0 (targetSdk 35) | | | | | | From GitHub releases |
-| 天眼热成像 (`com.infiRayX.Search`) | — | | | | | | Not installed; available in the tablet's Xiaomi store |
-| Xtherm Power (`com.infiRay.XthermPower`) | — | | | | | | Not installed; available in the tablet's Xiaomi store |
+| Hti Image (`com.hti.Xtherm`) | 6.4.20240702 (targetSdk 34) | Yes | Yes | None beyond the USB prompts | 1980×1508 at (290, 60); aspect 1.31, slightly off 4:3 | No zoom. Point, line and box tools; the box confines hottest/coldest/center but doesn't change the colors | **Reference app.** Rainbow-type palette by default, no readouts until a tool is picked. Its log shows libuvc negotiating 100352-byte frames, 524-byte payloads, 25 fps, with 192 packets per transfer, and OpenCL initialization |
+| Xtherm (`com.infiRay.Xtherm`) | 7.0.260325 (targetSdk 34) | Yes | Yes | "T3 device doesn't support HD function" when its HD button is pressed | 2010×1508 at (120, 60); 4:3 | Pinch zoom, but it won't go below 2× once engaged. Point, line, box and grid tools; the box shows max/avg/min but doesn't change the colors. The scale bar's end markers drag to limit the range, and pixels beyond a marker turn grey | **Reference app.** Ironbow palette; hottest, coldest and center readouts by default. Its log is flooded with MediaPlayer errors. It asks for USB permission on launch if the camera is already attached |
+| InfiCamPlus (`be.ntmn.inficam`) | 1.0.5 (targetSdk 34) | Yes | Yes, 25.1–25.2 fps received and delivered | None beyond the permission prompts (CAMERA first, then USB) | 2053×1540 at (254, 60), to the bottom edge; 4:3 | Pinch zoom from 1×. No box tool. The lock freezes the current color range (the owner found it useful) | **Reference app.** Takes its V1 path (`raw=0`). Its log decodes our metadata: cal constants a=0.2333, b=27.867, ka=0.00004, kb=0.0053, kc=0.5351 at Q+3…Q+11; shutter 3050 (K × 10) = 31.85 °C; FPA 32.26 °C. It writes its own defaults (emissivity 0.95, 20 °C, humidity 0.5, distance 1) into the user area; the camera was replugged afterwards. Render time 17–27 ms per frame. Shares the original InfiCam package name, so the two can't coexist |
+| ThruTracker Recorder (`com.thrutracker.thermalrecorder`) | 1.1.0 (targetSdk 35) | Yes | Streams, but 0.0 fps shown | Status line "HTI HT-301 · Streaming · 0.0 fps" | — | — | **Doesn't work.** It identifies 1514:0001 as the HT-301 (384×292) and rejects every frame ("bad frame size 100352 (expected 224256)"). It sends `0x8004` through the camera terminal's Zoom (Absolute) (entity 1) before streaming, and runs 16 URBs × 32 packets × 524 bytes on alt 1 |
+| 天眼热成像 (`com.infiRayX.Search`) | 4.4.250120 (targetSdk 34) | No | No | "No device detected"; "Please enable OTG and plug in hardware", even after "Device inserted" and granting permissions | — | — | **Doesn't work.** It isn't offered in Android's USB chooser, so its device filter omits this camera. It's built on saki4510t's UVCCamera library |
+| Xtherm Power (`com.infiRay.XthermPower`) | — | — | — | — | — | — | Not tested (owner's call): its listing targets InfiRay's DX-series cameras |
+
+On plug-in, Android's app chooser lists the apps whose USB filters match this camera: Hti Image, Xtherm infrared, InfiCam (InfiCamPlus) and ThruTracker Recorder. Tested 2026-09-24 with `adb exec-out screencap -p`, `adb logcat --pid`, and `tools/py/image_rect.py` for the image rectangles. Half-size screenshots are in [device/matrix/](device/matrix/).
 
 ## Pass 1 — capture and protocol (during M0)
 
@@ -100,7 +107,7 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 4. Known issues from InfiCam's notes: flicker when aimed at trees or grass (its auto range is the camera's per-frame min/max with no smoothing), and nearest-neighbor interpolation looking bad at small sizes. Our AGC and upscaler must not reproduce either; the `night` benchmark scene should include trees or grass.
 5. Interpolation options from InfiRayProPyCapture, including its ESPCN ×4 "Sharp" mode (applied to the palette-mapped image there, but to the scalar here): build the shortlist for M5.
 6. Manual-range UX: InfiCam's lock button and two-thumb slider (1 °C steps, lock icons on the scale bar) and its open questions (min + max vs. center + span; locking vs. limiting; locking min and max separately); ht301_hacklib's center + span keys; p2pro-rs pinning min and max separately; thermal-camera-android's lock plus dialog. Pick the simplest control that works one-handed on a tablet.
-7. Box and zoom UX: black-box observation of Xtherm's area measurement and of any zoom or area tools other reference apps showed in the M0 matrix — how the box is drawn, moved and resized, what it shows, whether it changes the color mapping. Then pick the hit-testing model from the UI references.
+7. Box and zoom UX: the M0 matrix observations are under Findings. Add how Hti Image's and Xtherm's boxes are drawn, moved and resized, then pick the hit-testing model from the UI references.
 8. Algorithm survey, any source: for each pipeline stage (shutter handling, bad pixels, destriping, temporal denoise, tone mapping, detail enhancement, upscaling), shortlist the strongest one to three approaches from papers and open-source code for any sensor, with license and expected cost within the frame budget. Add them to the catalog.
 
 ## Findings
@@ -109,6 +116,14 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 
 - **Source:** every open-source viewer checked (ht301_hacklib, IR-Py-Thermal, InfiCam/InfiCamPlus, thermal-cat, p3-ir-camera, thermal-camera-viewer, GetThermal, and others). None lets a user-drawn box drive the color range; boxes only feed markers or stats. FLIR's firmware AGC does — only ROI pixels build the histogram. InfiCam and InfiCamPlus, when zoomed and unlocked, take the auto range and min/max from the visible area.
 - **Verdict:** adopt FLIR's model for the box and InfiCam's visible-area rule for zoom (PLAN M4 stage 5, M6). Store the box in camera coordinates (thermal-camera-viewer's widget-coordinate box is the pitfall).
+
+### Reference apps' measurement UX (M0 matrix, 2026-09-24)
+
+- **Box:** Hti Image (point, line, box) and Xtherm (point, line, box, grid) both have one, and neither changes the color range. They only confine readouts: Hti Image shows hottest, coldest and center; Xtherm shows max, avg and min. This confirms the design finding above.
+- **Zoom:** Hti Image has none. Xtherm pinch-zooms but floors at 2× once engaged, and pinching can't bring it back to 1× — a pitfall. InfiCamPlus pinch-zooms from 1×.
+- **Range:** Xtherm's draggable scale-bar markers limit the range and paint out-of-range pixels grey. InfiCamPlus's lock freezes the current range; the owner found it useful.
+- **Capture internals, from their logs:** Hti Image runs libuvc with 192 packets per transfer (stock libuvc uses 32) and initializes OpenCL. ThruTracker queues 16 URBs × 32 packets. InfiCamPlus renders through a CPU canvas in 17–27 ms per frame. Compare transfer sizing in M1 if our capture drops frames.
+- **Verdict:** keep our box-driven color range, and zoom 1×–8× with double-tap back to 1× (PLAN M6). Take "mark out-of-range pixels in Manual mode instead of clipping them silently" to pass 2 item 6.
 
 ### Pass 1 (M0, 2026-09-24)
 
