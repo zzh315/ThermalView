@@ -1,0 +1,9 @@
+[submodule "native/third_party/libusb"]
+	path = native/third_party/libusb
+	url = https://github.com/libusb/libusb.git
+[submodule "native/third_party/libuvc"]
+	path = native/third_party/libuvc
+	url = https://github.com/libuvc/libuvc.git
+[submodule "native/third_party/doctest"]
+	path = native/third_party/doctest
+	url = https://github.com/doctest/doctest.git

@@ -24,3 +24,6 @@ bench/**/*.mp4
 
 # macOS
 .DS_Store
+
+# clangd compile database (generate from build/core)
+/compile_commands.json

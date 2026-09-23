@@ -1,0 +1,808 @@
+#include "session.h"
+
+#include <sys/stat.h>
+
+#include <algorithm>
+#include <cinttypes>
+#include <cstdarg>
+#include <cstring>
+#include <ctime>
+
+#include "command_sender.h"
+#include "field_log.h"
+#include "libusb.h"
+#include "libuvc/libuvc.h"
+#include "log.h"
+
+namespace tv {
+namespace {
+
+constexpr int64_t kMs = 1'000'000;
+constexpr int kRawModeDelayMs = 300;   // InfiRay's demo sends 0x8004 300 ms after the stream starts
+constexpr int kRangeToShutterMs = 500; // and 0x8000 about 0.5 s after a range command
+constexpr int kShutterHoldMs = 1000;   // frames withheld after 0x8000 (M1 measures the real cycle)
+constexpr int kAwaitValidMs = 5000;    // start-up gives up after this long without valid frames
+constexpr int kValidStreak = 3;        // consecutive valid frames before 0x8020
+constexpr int kStallMs = 500;          // watchdog (docs/PLAN.md M1, tunable)
+constexpr int kFailStreak = 50;        // 2 s of failing frames after start-up -> stop
+
+int64_t nowNs() {
+  timespec t{};
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return int64_t(t.tv_sec) * 1'000'000'000 + t.tv_nsec;
+}
+
+std::string wallClock(const char* format) {
+  timespec wall{};
+  clock_gettime(CLOCK_REALTIME, &wall);
+  tm local{};
+  localtime_r(&wall.tv_sec, &local);
+  char buf[64];
+  std::strftime(buf, sizeof buf, format, &local);
+  return buf;
+}
+
+uint64_t hashImage(const uint16_t* image) {
+  const auto* words = reinterpret_cast<const uint64_t*>(image);  // RawFrame::data is 64-byte aligned
+  uint64_t h = 1469598103934665603ull;
+  for (size_t i = 0; i < kImagePixels / 4; ++i) {
+    h ^= words[i];
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+std::string format(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+std::string format(const char* fmt, ...) {
+  char buf[512];
+  va_list args;
+  va_start(args, fmt);
+  std::vsnprintf(buf, sizeof buf, fmt, args);
+  va_end(args);
+  return buf;
+}
+
+uvc_stream_ctrl_t* asCtrl(const std::unique_ptr<unsigned char[]>& p) {
+  return reinterpret_cast<uvc_stream_ctrl_t*>(p.get());
+}
+
+}  // namespace
+
+const char* stateName(State state) {
+  switch (state) {
+    case State::Idle: return "Idle";
+    case State::Starting: return "Starting";
+    case State::AwaitValid: return "AwaitValid";
+    case State::RangeWait: return "RangeWait";
+    case State::ShutterHold: return "ShutterHold";
+    case State::Running: return "Running";
+    case State::Failed: return "Failed";
+    case State::Replay: return "Replay";
+  }
+  return "?";
+}
+
+struct Session::Snapshot {
+  State state = State::Idle;
+  bool fallbackOrder = false;
+  std::string startOrderNote;
+  double fps = 0, jitterMs = 0, maxIntervalMs = 0, procP95Ms = 0;
+  uint64_t frames = 0, seqGaps = 0, arrivalGaps = 0, rejectedSize = 0, rejectedChecks = 0;
+  uint64_t startupDiscarded = 0, overruns = 0, restarts = 0, frozen = 0;
+  uint64_t shutterCommanded = 0, shutterDetected = 0, shutterUncommanded = 0;
+  double lastCycleMs = 0;
+  uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
+  // Metadata of the latest frame.
+  uint16_t fpaAvg = 0, fpaRaw = 0, maxRaw = 0, minRaw = 0, avgRaw = 0, centerRaw = 0, cal00 = 0;
+  uint16_t maxX = 0, maxY = 0, minX = 0, minY = 0, distance = 0;
+  double fpaC = 0, shutterC = 0, coreC = 0;
+  float cal[5] = {};
+  float correction = 0, reflectedC = 0, airC = 0, humidity = 0, emissivity = 0;
+  std::string firmware;
+  std::vector<TextRun> texts;
+  ImageStats image;
+};
+
+Session& Session::get() {
+  static Session instance;
+  return instance;
+}
+
+void Session::init(const std::string& storageDir, const std::string& appVersion) {
+  if (!storageDir_.empty()) return;
+  storageDir_ = storageDir;
+  appVersion_ = appVersion;
+  dumpsDir_ = storageDir + "/dumps";
+  statsDir_ = storageDir + "/stats";
+  mkdir(dumpsDir_.c_str(), 0770);
+  mkdir(statsDir_.c_str(), 0770);
+  FieldLog::get().open(storageDir + "/fieldlog");
+  FLOG("app start %s", appVersion.c_str());
+  ring_ = std::make_unique<FrameRing<8>>();
+  snapshot_ = std::make_unique<Snapshot>();
+  ctrl_ = std::make_unique<unsigned char[]>(sizeof(uvc_stream_ctrl_t));
+  renderer_.start();
+}
+
+// --- Camera lifecycle (UI thread) ----------------------------------------------------------------
+
+bool Session::openCamera(int fd, const std::string& manufacturer, const std::string& product,
+                         const std::string& serial) {
+  stopReplay();
+  std::unique_lock lock(streamMutex_);
+  if (cameraOpen_) return true;
+  manufacturer_ = manufacturer;
+  product_ = product;
+  serial_ = serial;
+  FLOG("open camera fd=%d (%s / %s / %s)", fd, manufacturer.c_str(), product.c_str(), serial.c_str());
+
+  // Android forbids device discovery; wrap the UsbManager file descriptor (docs/PROTOCOL.md).
+  libusb_init_option option{};
+  option.option = LIBUSB_OPTION_NO_DEVICE_DISCOVERY;
+  int r = libusb_init_context(&usb_, &option, 1);
+  if (r != LIBUSB_SUCCESS) {
+    setBanner(std::string("libusb init failed: ") + libusb_error_name(r));
+    return false;
+  }
+  eventRun_ = true;
+  eventThread_ = std::thread([this] {
+    while (eventRun_) {
+      timeval timeout{0, 100'000};
+      libusb_handle_events_timeout_completed(usb_, &timeout, nullptr);
+    }
+  });
+
+  const auto bail = [&](const std::string& why) {
+    FLOG("open failed: %s", why.c_str());
+    setBanner("Camera open failed: " + why);
+    if (devh_) uvc_close(devh_);
+    devh_ = nullptr;
+    if (uvc_) uvc_exit(uvc_);
+    uvc_ = nullptr;
+    eventRun_ = false;
+    libusb_interrupt_event_handler(usb_);
+    eventThread_.join();
+    libusb_exit(usb_);
+    usb_ = nullptr;
+    return false;
+  };
+
+  uvc_error_t u = uvc_init(&uvc_, usb_);
+  if (u != UVC_SUCCESS) return bail(std::string("uvc_init: ") + uvc_strerror(u));
+  u = uvc_wrap(fd, uvc_, &devh_);
+  if (u != UVC_SUCCESS) return bail(std::string("uvc_wrap: ") + uvc_strerror(u));
+
+  // The descriptors M0 verified: one uncompressed format, one 256×196 frame (docs/DEVICE.md).
+  bool found = false;
+  for (const uvc_format_desc_t* f = uvc_get_format_descs(devh_); f && !found; f = f->next)
+    for (const uvc_frame_desc_t* fr = f->frame_descs; fr && !found; fr = fr->next)
+      found = f->bDescriptorSubtype == UVC_VS_FORMAT_UNCOMPRESSED && fr->wWidth == kFrameWidth &&
+              fr->wHeight == kFrameRows;
+  if (!found) return bail("no uncompressed 256x196 frame descriptor");
+
+  gate_ = std::make_unique<CameraCommands>(makeCameraSender(devh_));
+  gate_->setSink([](const CommandLogEntry& e) {
+    FLOG("command 0x%04x: %s", e.value, commandResultText(e.result));
+  });
+  {
+    std::lock_guard o(optionsMutex_);
+    fallbackOrder_ = options_.fallbackOrder;
+  }
+  fallbackTried_ = false;
+  startOrderNote_.clear();
+  cameraOpen_ = true;
+  setBanner("");
+  ring_->clear();
+  if (!startStreaming()) {
+    cameraOpen_ = false;
+    gate_.reset();
+    return bail("could not start streaming");
+  }
+  lock.unlock();
+  startProcessing();
+  return true;
+}
+
+void Session::closeCamera() {
+  stopProcessing();  // first: the processing thread may take streamMutex_ to restart a stream
+  std::lock_guard lock(streamMutex_);
+  if (!cameraOpen_) return;
+  stopStreaming();
+  if (dumpWriter_.joinable()) dumpWriter_.join();
+  dumpWanted_ = 0;
+  dumpFrames_.clear();
+  closeCsv();
+  uvc_close(devh_);  // stop and close before the event thread stops: cancellations need events
+  devh_ = nullptr;
+  uvc_exit(uvc_);
+  uvc_ = nullptr;
+  eventRun_ = false;
+  libusb_interrupt_event_handler(usb_);
+  eventThread_.join();
+  libusb_exit(usb_);
+  usb_ = nullptr;
+  cameraOpen_ = false;
+  enter(State::Idle, nowNs());
+  renderer_.clear();
+  FLOG("camera closed");
+}
+
+bool Session::startStreaming() {
+  uvc_error_t r = uvc_get_stream_ctrl_format_size(devh_, asCtrl(ctrl_), UVC_FRAME_FORMAT_YUYV,
+                                                  kFrameWidth, kFrameRows, 25);
+  if (r != UVC_SUCCESS) {
+    FLOG("stream negotiation failed: %s", uvc_strerror(r));
+    return false;
+  }
+  validStreak_ = 0;
+  lastHash_ = 0;
+  uniform_ = false;
+  rangeWindow_.clear();
+  arrivals_.reset();
+  if (fallbackOrder_) {
+    // Approved fallback: InfiCam's order, mode and range before streaming (CLAUDE.md rule 1).
+    command(kCmdRawOutput);
+    command(kCmdRangeNormal);
+  }
+  r = uvc_start_streaming(devh_, asCtrl(ctrl_), &Session::frameCallback, this, 0);
+  if (r != UVC_SUCCESS) {
+    FLOG("start streaming failed: %s", uvc_strerror(r));
+    return false;
+  }
+  streaming_ = true;
+  const int64_t now = nowNs();
+  streamStartNs_ = now;
+  FLOG("streaming started (%s order)", fallbackOrder_ ? "fallback" : "stream-first");
+  enter(fallbackOrder_ ? State::AwaitValid : State::Starting, now);
+  return true;
+}
+
+void Session::stopStreaming() {
+  if (!streaming_) return;
+  uvc_stop_streaming(devh_);
+  streaming_ = false;
+  FLOG("streaming stopped");
+}
+
+void Session::restartStream(const char* reason) {
+  FLOG("restarting stream: %s", reason);
+  ++restarts_;
+  setBanner(std::string("Restarting stream: ") + reason);
+  std::lock_guard lock(streamMutex_);
+  if (!cameraOpen_) return;
+  stopStreaming();
+  ring_->clear();  // safe: the capture callback has stopped and this is the consumer
+  if (!startStreaming()) {
+    enter(State::Failed, nowNs());
+    setBanner("Stream restart failed — replug the camera");
+  }
+}
+
+// --- Capture callback (libuvc's thread): copy and return ----------------------------------------
+
+void Session::frameCallback(uvc_frame* frame, void* user) {
+  auto* self = static_cast<Session*>(user);
+  RawFrame* slot = self->ring_->beginWrite();
+  if (!slot) return;  // ring full: counted as an overrun
+  std::memcpy(slot->data.data(), frame->data, std::min(frame->data_bytes, kFrameBytes));
+  slot->bytes = uint32_t(frame->data_bytes);
+  slot->arrivalNs = nowNs();
+  slot->sequence = frame->sequence;
+  slot->replay = false;
+  self->ring_->commitWrite();
+}
+
+// --- Processing thread ---------------------------------------------------------------------------
+
+void Session::startProcessing() {
+  if (procRun_.exchange(true)) return;
+  procThread_ = std::thread(&Session::processLoop, this);
+}
+
+void Session::stopProcessing() {
+  if (!procRun_.exchange(false)) return;
+  ring_->wake();
+  procThread_.join();
+}
+
+void Session::processLoop() {
+  while (procRun_) {
+    if (ring_->waitReadable(std::chrono::milliseconds(50))) {
+      while (RawFrame* frame = ring_->beginRead()) {
+        handleFrame(*frame);
+        ring_->commitRead();
+        if (!procRun_) break;
+      }
+    }
+    tick(nowNs());
+  }
+}
+
+CommandResult Session::command(uint16_t value) {
+  const CommandResult result = gate_ ? gate_->send(value) : CommandResult::SendFailed;
+  if (value == kCmdShutter && result == CommandResult::Sent) {
+    ++shutterCommanded_;
+    lastShutterNs_ = nowNs();
+  }
+  return result;
+}
+
+void Session::enter(State state, int64_t now) {
+  const State previous = state_.exchange(state);
+  stateSinceNs_ = now;
+  if (previous != state) FLOG("state %s -> %s", stateName(previous), stateName(state));
+  if (state == State::Running && previous != State::ShutterHold) setBanner("");
+}
+
+void Session::fail(const std::string& reason) {
+  FLOG("FAILED: %s", reason.c_str());
+  setBanner(reason + " — streaming stopped. Tell the owner.");
+  enter(State::Failed, nowNs());
+  std::lock_guard lock(streamMutex_);
+  stopStreaming();
+}
+
+void Session::tick(int64_t now) {
+  const auto since = [now](int64_t t) { return (now - t) / kMs; };
+  switch (state_.load()) {
+    case State::Starting:
+      if (since(streamStartNs_) >= kRawModeDelayMs) {
+        command(kCmdRawOutput);
+        validStreak_ = 0;
+        enter(State::AwaitValid, now);
+      }
+      break;
+    case State::AwaitValid:
+      if (since(stateSinceNs_) >= kAwaitValidMs) {
+        const std::string why =
+            "no valid frame within " + std::to_string(kAwaitValidMs / 1000) + " s (" +
+            describeSanity(lastFlags_) + ")";
+        if (!fallbackOrder_ && !fallbackTried_) {
+          fallbackTried_ = true;
+          fallbackOrder_ = true;
+          startOrderNote_ = "fallback, because stream-first gave " + why;
+          FLOG("switching to the fallback start order: %s", why.c_str());
+          restartStream("switching to the fallback start order");
+        } else {
+          fail(why);
+        }
+      }
+      break;
+    case State::RangeWait:
+      if (since(rangeSentNs_) >= kRangeToShutterMs) {
+        bool skip;
+        {
+          std::lock_guard o(optionsMutex_);
+          skip = options_.skipStartupShutter;
+        }
+        if (skip) {
+          FLOG("start-up 0x8000 skipped (debug option)");
+          enter(State::Running, now);
+        } else {
+          command(kCmdShutter);
+          holdUntilNs_ = now + kShutterHoldMs * kMs;
+          enter(State::ShutterHold, now);
+        }
+      }
+      break;
+    case State::ShutterHold:
+      if (now >= holdUntilNs_) enter(State::Running, now);
+      break;
+    case State::Running: {
+      if (const int64_t sent = manualShutterNs_.exchange(0)) {
+        ++shutterCommanded_;
+        lastShutterNs_ = sent;
+        holdUntilNs_ = now + kShutterHoldMs * kMs;
+        enter(State::ShutterHold, now);
+        break;
+      }
+      const int64_t last = arrivals_.lastArrivalNs();
+      if (last && since(last) > kStallMs && since(lastShutterNs_) > 2000)
+        restartStream(format("stall: no frame for %" PRId64 " ms", since(last)).c_str());
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void Session::handleFrame(const RawFrame& frame) {
+  const int64_t t0 = nowNs();
+  const State state = state_.load();
+  arrivals_.onFrame(frame.arrivalNs, frame.sequence);
+  if (frame.bytes != kFrameBytes) {
+    ++rejectedSize_;
+    if (rejectedSize_ <= 10 || rejectedSize_ % 100 == 0)
+      FLOG("rejected frame #%" PRIu64 ": %u bytes, expected %zu", rejectedSize_, frame.bytes, kFrameBytes);
+    return;
+  }
+
+  const FrameView view(frame.data.data());
+  const ImageStats stats = computeImageStats(view.image());
+  const bool steady = state == State::Running || state == State::Replay;
+  const uint32_t flags = checkFrame(view, stats, !steady);
+  const uint64_t hash = hashImage(view.image());
+  const bool frozen = hash == lastHash_;
+  lastHash_ = hash;
+  if (flags) lastFlags_ = flags;
+
+  {
+    bool wantCsv;
+    {
+      std::lock_guard o(optionsMutex_);
+      wantCsv = options_.statsCsv;
+    }
+    if (wantCsv && !csv_) openCsv();
+    if (!wantCsv && csv_) closeCsv();
+    if (csv_) writeCsvRow(frame, view, stats, flags, frozen);
+  }
+
+  bool accepted = false;
+  switch (state) {
+    case State::Starting:
+    case State::RangeWait:
+    case State::ShutterHold:
+      ++startupDiscarded_;
+      break;
+    case State::AwaitValid:
+      ++startupDiscarded_;
+      if (flags) {
+        validStreak_ = 0;
+      } else if (++validStreak_ >= kValidStreak) {
+        if (!fallbackOrder_) command(kCmdRangeNormal);  // the fallback sent it before streaming
+        rangeSentNs_ = nowNs();
+        enter(State::RangeWait, rangeSentNs_);
+      }
+      break;
+    case State::Running:
+    case State::Replay:
+      if (flags) {
+        ++rejectedChecks_;
+        if (rejectedChecks_ <= 10 || rejectedChecks_ % 100 == 0)
+          FLOG("frame failed checks: %s", describeSanity(flags).c_str());
+        if (++sanityStreak_ >= kFailStreak && state == State::Running)
+          fail("Frames keep failing the sanity checks (" + describeSanity(flags) + ")");
+        break;
+      }
+      sanityStreak_ = 0;
+      accepted = true;
+      break;
+    default:
+      break;
+  }
+
+  if (accepted) {
+    // Shutter-like frames: frozen (identical) or near-uniform relative to recent frames.
+    const double range = double(stats.max) - double(stats.min);
+    const bool haveMedian = rangeWindow_.size() >= 25;
+    const double median = haveMedian ? rangeWindow_.percentile(50) : 0;
+    const bool uniformNow = frozen || (haveMedian && range < 0.3 * median);
+    if (!uniformNow) rangeWindow_.push(range);
+    if (frozen) ++frozenFrames_;
+    if (uniformNow && !uniform_) {
+      uniform_ = true;
+      uniformStartNs_ = frame.arrivalNs;
+      ++shutterDetected_;
+      const bool commanded = lastShutterNs_ && frame.arrivalNs - lastShutterNs_ < 3000 * kMs;
+      if (!commanded) ++shutterUncommanded_;
+      FLOG("shutter-like frames start (%s, %s; range %.0f vs median %.0f)",
+           frozen ? "frozen" : "near-uniform", commanded ? "after our 0x8000" : "NOT commanded",
+           range, median);
+    } else if (!uniformNow && uniform_) {
+      uniform_ = false;
+      lastCycleMs_ = double(frame.arrivalNs - uniformStartNs_) / 1e6;
+      FLOG("shutter-like frames end after %.0f ms", lastCycleMs_);
+    }
+
+    captureForDump(frame);
+
+    DisplayFrame& out = renderer_.frameSlot();
+    std::memcpy(out.image.data(), view.image(), kImagePixels * sizeof(uint16_t));
+    out.min = stats.min;
+    out.max = stats.max;
+    out.arrivalNs = frame.arrivalNs;
+    renderer_.publishFrame();
+    procMs_.push(double(nowNs() - t0) / 1e6);
+  }
+
+  // Overlay snapshot.
+  std::lock_guard lock(snapshotMutex_);
+  Snapshot& s = *snapshot_;
+  s.state = state_.load();
+  s.fallbackOrder = fallbackOrder_;
+  s.startOrderNote = startOrderNote_;
+  s.fps = arrivals_.fps();
+  s.jitterMs = arrivals_.jitterMs();
+  s.maxIntervalMs = arrivals_.maxIntervalMs();
+  s.frames = arrivals_.frames();
+  s.seqGaps = arrivals_.sequenceGaps();
+  s.arrivalGaps = arrivals_.arrivalGaps();
+  s.rejectedSize = rejectedSize_;
+  s.rejectedChecks = rejectedChecks_;
+  s.startupDiscarded = startupDiscarded_;
+  s.overruns = ring_->overruns();
+  s.restarts = restarts_;
+  s.frozen = frozenFrames_;
+  s.shutterCommanded = shutterCommanded_;
+  s.shutterDetected = shutterDetected_;
+  s.shutterUncommanded = shutterUncommanded_;
+  s.lastCycleMs = lastCycleMs_;
+  s.procP95Ms = procMs_.percentile(95);
+  s.bytes = frame.bytes;
+  s.flags = flags;
+  s.lastBadFlags = lastFlags_;
+  s.fpaAvg = view.fpaAverage();
+  s.fpaRaw = view.fpaRaw();
+  s.maxRaw = view.maxRaw();
+  s.minRaw = view.minRaw();
+  s.avgRaw = view.avgRaw();
+  s.centerRaw = view.centerRaw();
+  s.maxX = view.maxX();
+  s.maxY = view.maxY();
+  s.minX = view.minX();
+  s.minY = view.minY();
+  s.cal00 = view.cal00();
+  s.fpaC = view.fpaC();
+  s.shutterC = view.shutterC();
+  s.coreC = view.coreC();
+  for (int i = 0; i < 5; ++i) s.cal[i] = view.cal(i + 1);
+  s.correction = view.correction();
+  s.reflectedC = view.reflectedC();
+  s.airC = view.airC();
+  s.humidity = view.humidity();
+  s.emissivity = view.emissivity();
+  s.distance = view.distance();
+  s.image = stats;
+  if (arrivals_.frames() % 25 == 1) {
+    s.firmware = view.firmware();
+    s.texts = findTextRuns(view);
+  }
+}
+
+// --- Dumps ---------------------------------------------------------------------------------------
+
+std::string Session::startDump(int frames) {
+  const State state = state_.load();
+  if (state != State::Running && state != State::Replay) return "not streaming";
+  if (dumpWanted_.load() > 0) return "a dump is already in progress";
+  dumpBase_ = dumpsDir_ + "/dump_" + wallClock("%Y%m%d_%H%M%S");
+  {
+    std::lock_guard lock(snapshotMutex_);
+    dumpStatus_ = "capturing " + std::to_string(frames) + " frames";
+  }
+  dumpWanted_.store(std::max(1, frames), std::memory_order_release);
+  FLOG("dump requested: %d frames -> %s", frames, dumpBase_.c_str());
+  return dumpBase_.substr(dumpBase_.find_last_of('/') + 1);
+}
+
+void Session::captureForDump(const RawFrame& frame) {
+  const int wanted = dumpWanted_.load(std::memory_order_acquire);
+  if (wanted <= 0) return;
+  if (dumpInfo_.timestampsNs.empty()) {
+    dumpFrames_.clear();
+    dumpFrames_.reserve(size_t(wanted) * kFramePixels);
+    dumpInfo_ = DumpInfo{};
+    dumpInfo_.wallClockStart = wallClock("%Y-%m-%dT%H:%M:%S%z");
+  }
+  dumpFrames_.insert(dumpFrames_.end(), frame.data.begin(), frame.data.end());
+  dumpInfo_.timestampsNs.push_back(frame.arrivalNs);
+  dumpInfo_.sequence.push_back(frame.sequence);
+  if (int(dumpInfo_.timestampsNs.size()) >= wanted) finishDump();
+}
+
+void Session::finishDump() {
+  dumpWanted_ = 0;
+  dumpInfo_.manufacturer = manufacturer_;
+  dumpInfo_.product = product_;
+  dumpInfo_.serial = serial_;
+  dumpInfo_.appVersion = appVersion_;
+  dumpInfo_.source = state_.load() == State::Replay ? "replay" : "camera";
+  dumpInfo_.startOrder = fallbackOrder_ ? "fallback" : "stream-first";
+  {
+    std::lock_guard lock(snapshotMutex_);
+    dumpInfo_.firmware = snapshot_->firmware;
+  }
+  if (gate_) {
+    const auto start = gate_->history().empty() ? std::chrono::steady_clock::time_point{}
+                                                : gate_->history().front().time;
+    for (const auto& e : gate_->history()) {
+      const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(e.time - start).count();
+      dumpInfo_.commandLog.push_back(format("+%lld ms 0x%04x %s", (long long)ms, e.value,
+                                            commandResultText(e.result)));
+    }
+  }
+  if (dumpWriter_.joinable()) dumpWriter_.join();
+  dumpWriter_ = std::thread([this, frames = std::move(dumpFrames_), info = std::move(dumpInfo_),
+                             base = dumpBase_] {
+    std::string error;
+    const bool ok = writeDump(base, frames, info, &error);
+    const std::string name = base.substr(base.find_last_of('/') + 1);
+    FLOG("dump %s: %s", name.c_str(), ok ? "saved" : error.c_str());
+    std::lock_guard lock(snapshotMutex_);
+    dumpStatus_ = ok ? "saved " + name + " (" + std::to_string(info.timestampsNs.size()) + " frames)"
+                     : "dump failed: " + error;
+  });
+  dumpFrames_ = {};
+  dumpInfo_ = DumpInfo{};
+}
+
+// --- Stats CSV (debug) ---------------------------------------------------------------------------
+
+void Session::openCsv() {
+  const std::string path = statsDir_ + "/stats_" + wallClock("%Y%m%d_%H%M%S") + ".csv";
+  csv_ = std::fopen(path.c_str(), "w");
+  if (!csv_) {
+    FLOG("stats CSV: cannot open %s", path.c_str());
+    return;
+  }
+  std::fprintf(csv_, "t_ms,seq,state,bytes,flags,img_min,img_max,img_mean,img_sd,frozen");
+  for (int i = 0; i < 16; ++i) std::fprintf(csv_, ",P%d", i);
+  for (int i : {0, 1, 2}) std::fprintf(csv_, ",Q%d", i);
+  for (int i = 13; i < 24; ++i) std::fprintf(csv_, ",Q%d", i);
+  std::fprintf(csv_, "\n");
+  FLOG("stats CSV started: %s", path.c_str());
+}
+
+void Session::closeCsv() {
+  if (!csv_) return;
+  std::fclose(csv_);
+  csv_ = nullptr;
+  FLOG("stats CSV closed");
+}
+
+void Session::writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
+                          uint32_t flags, bool frozen) {
+  std::fprintf(csv_, "%.3f,%u,%s,%u,%u,%u,%u,%.2f,%.2f,%d", double(frame.arrivalNs - streamStartNs_) / 1e6,
+               frame.sequence, stateName(state_.load()), frame.bytes, flags, stats.min, stats.max,
+               stats.mean, stats.stddev, frozen ? 1 : 0);
+  for (int i = 0; i < 16; ++i) std::fprintf(csv_, ",%u", view.at(kOffsetP + i));
+  for (int i : {0, 1, 2}) std::fprintf(csv_, ",%u", view.at(kOffsetQ + i));
+  for (int i = 13; i < 24; ++i) std::fprintf(csv_, ",%u", view.at(kOffsetQ + i));
+  std::fprintf(csv_, "\n");
+}
+
+// --- Replay (debug) ------------------------------------------------------------------------------
+
+std::string Session::startReplay(const std::string& base) {
+  {
+    std::lock_guard lock(streamMutex_);
+    if (cameraOpen_) return "a camera is connected; unplug it first";
+  }
+  stopReplay();
+  LoadedDump dump;
+  std::string error;
+  if (!loadDump(base, &dump, &error)) return error;
+  replay_ = std::move(dump);
+  replayName_ = base.substr(base.find_last_of('/') + 1);
+  arrivals_.reset();
+  rangeWindow_.clear();
+  lastHash_ = 0;
+  uniform_ = false;
+  enter(State::Replay, nowNs());
+  startProcessing();
+  replayRun_ = true;
+  replayThread_ = std::thread(&Session::replayLoop, this);
+  FLOG("replay started: %s (%zu frames%s)", replayName_.c_str(), replay_.frameCount,
+       replay_.timestampsNs.empty() ? ", nominal 40 ms spacing" : "");
+  return "";
+}
+
+void Session::stopReplay() {
+  if (!replayRun_.exchange(false)) return;
+  replayThread_.join();
+  stopProcessing();
+  enter(State::Idle, nowNs());
+  renderer_.clear();
+  FLOG("replay stopped");
+}
+
+void Session::replayLoop() {
+  const auto& ts = replay_.timestampsNs;
+  uint32_t sequence = 1;
+  size_t i = 0;
+  int64_t loopStart = nowNs();
+  while (replayRun_) {
+    const int64_t offset = ts.empty() ? int64_t(i) * 40 * kMs : ts[i] - ts[0];
+    const int64_t due = loopStart + offset;
+    while (replayRun_ && nowNs() < due) {
+      const int64_t wait = std::min<int64_t>(due - nowNs(), 20 * kMs);
+      if (wait > 0) std::this_thread::sleep_for(std::chrono::nanoseconds(wait));
+    }
+    if (!replayRun_) break;
+    if (RawFrame* slot = ring_->beginWrite()) {
+      std::memcpy(slot->data.data(), &replay_.frames[i * kFramePixels], kFrameBytes);
+      slot->bytes = uint32_t(kFrameBytes);
+      slot->arrivalNs = nowNs();
+      slot->sequence = sequence;
+      slot->replay = true;
+      ring_->commitWrite();
+    }
+    ++sequence;
+    if (++i == replay_.frameCount) {
+      i = 0;
+      loopStart = nowNs() + 40 * kMs;
+    }
+  }
+}
+
+// --- UI queries and commands ---------------------------------------------------------------------
+
+std::string Session::sendShutter() {
+  std::lock_guard lock(streamMutex_);
+  if (!cameraOpen_ || !gate_) return "no camera";
+  const CommandResult result = gate_->send(kCmdShutter);
+  if (result == CommandResult::Sent) manualShutterNs_ = nowNs();
+  return commandResultText(result);
+}
+
+void Session::setOptions(const Options& options) {
+  std::lock_guard lock(optionsMutex_);
+  options_ = options;
+}
+
+void Session::setBanner(const std::string& text) {
+  std::lock_guard lock(snapshotMutex_);
+  banner_ = text;
+}
+
+std::string Session::statusLine() {
+  std::lock_guard lock(snapshotMutex_);
+  const State state = state_.load();
+  const bool streaming = state == State::Starting || state == State::AwaitValid ||
+                         state == State::RangeWait || state == State::ShutterHold ||
+                         state == State::Running || state == State::Replay;
+  std::string banner = banner_;
+  std::replace(banner.begin(), banner.end(), ';', ',');
+  std::string dump = dumpStatus_;
+  std::replace(dump.begin(), dump.end(), ';', ',');
+  return std::string("state=") + stateName(state) + ";streaming=" + (streaming ? "1" : "0") +
+         ";banner=" + banner + ";dump=" + dump + ";replay=" + (replayRun_ ? replayName_ : "");
+}
+
+std::string Session::overlayText() {
+  std::vector<CommandLogEntry> commands;
+  if (gate_) commands = gate_->history();
+  const double p50 = renderer_.latencyP50Ms(), p95 = renderer_.latencyP95Ms();
+
+  std::lock_guard lock(snapshotMutex_);
+  const Snapshot& s = *snapshot_;
+  std::string o;
+  const std::string note = s.startOrderNote.empty() ? "" : " (" + s.startOrderNote + ")";
+  o += format("ThermalView %s  %s  %s order%s\n", appVersion_.c_str(), stateName(s.state),
+              s.fallbackOrder ? "fallback" : "stream-first", note.c_str());
+  o += format("fps %.2f  jitter %.2f ms  max %.1f ms  latency p50 %.1f / p95 %.1f ms  proc p95 %.2f ms\n",
+              s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms);
+  o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
+              " (size %" PRIu64 ")  overrun %" PRIu64 "  start-up %" PRIu64 "  restarts %" PRIu64 "\n",
+              s.frames, s.seqGaps, s.arrivalGaps, s.rejectedSize + s.rejectedChecks, s.rejectedSize,
+              s.overruns, s.startupDiscarded, s.restarts);
+  o += format("frame 256x196 (%u B)  checks: %s  last failure: %s\n", s.bytes,
+              describeSanity(s.flags).c_str(), describeSanity(s.lastBadFlags).c_str());
+  o += format("FPA raw %u (%.2f C)  avg %u   shutter %.2f C   core %.2f C   cal_00 %u\n", s.fpaRaw,
+              s.fpaC, s.fpaAvg, s.shutterC, s.coreC, s.cal00);
+  o += format("cal_01..05  %.6g  %.6g  %.6g  %.6g  %.6g\n", s.cal[0], s.cal[1], s.cal[2], s.cal[3],
+              s.cal[4]);
+  o += format("user area: corr %.3f  refl %.2f C  air %.2f C  hum %.3f  emis %.3f  dist %u\n",
+              s.correction, s.reflectedC, s.airC, s.humidity, s.emissivity, s.distance);
+  o += format("block A: max %u @(%u,%u)  min %u @(%u,%u)  avg %u  center %u   image: min %u max %u "
+              "mean %.0f sd %.1f\n",
+              s.maxRaw, s.maxX, s.maxY, s.minRaw, s.minX, s.minY, s.avgRaw, s.centerRaw, s.image.min,
+              s.image.max, s.image.mean, s.image.stddev);
+  o += "firmware \"" + s.firmware + "\"  text:";
+  for (const auto& t : s.texts) o += format(" [P+%zu \"%s\"]", t.byteOffsetFromP, t.text.c_str());
+  o += "\n";
+  o += format("shutter: commanded %" PRIu64 "  shutter-like %" PRIu64 " (not commanded %" PRIu64
+              ")  last %.0f ms  frozen frames %" PRIu64 "\n",
+              s.shutterCommanded, s.shutterDetected, s.shutterUncommanded, s.lastCycleMs, s.frozen);
+  o += "commands:";
+  const size_t first = commands.size() > 6 ? commands.size() - 6 : 0;
+  const auto origin = commands.empty() ? std::chrono::steady_clock::time_point{} : commands.front().time;
+  for (size_t i = first; i < commands.size(); ++i) {
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(commands[i].time - origin).count();
+    o += format("  +%lld ms 0x%04x %s", (long long)ms, commands[i].value, commandResultText(commands[i].result));
+  }
+  if (!dumpStatus_.empty()) o += "\ndump: " + dumpStatus_;
+  return o;
+}
+
+}  // namespace tv

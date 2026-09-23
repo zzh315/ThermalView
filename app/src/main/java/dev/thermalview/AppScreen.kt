@@ -1,0 +1,187 @@
+package dev.thermalview
+
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import java.io.File
+import kotlinx.coroutines.delay
+
+private object SurfaceCallbacks : SurfaceHolder.Callback {
+    override fun surfaceCreated(holder: SurfaceHolder) = NativeBridge.setSurface(holder.surface)
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+    override fun surfaceDestroyed(holder: SurfaceHolder) = NativeBridge.setSurface(null)
+}
+
+@Composable
+fun AppScreen(message: String, dumpsDir: String) {
+    var status by remember { mutableStateOf(Status()) }
+    var overlay by remember { mutableStateOf("") }
+    var showOverlay by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
+    var skipShutter by rememberSaveable { mutableStateOf(false) }
+    var statsCsv by rememberSaveable { mutableStateOf(false) }
+    var fallbackOrder by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            status = Status.parse(NativeBridge.status())
+            if (showOverlay) overlay = NativeBridge.overlayText()
+            delay(250)
+        }
+    }
+    LaunchedEffect(skipShutter, statsCsv, fallbackOrder) {
+        NativeBridge.setOptions(skipShutter, statsCsv, fallbackOrder)
+    }
+    val view = LocalView.current
+    DisposableEffect(status.streaming) {
+        view.keepScreenOn = status.streaming
+        onDispose { view.keepScreenOn = false }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(SurfaceCallbacks) } },
+            modifier = Modifier.fillMaxSize(),
+        )
+        val banner = status.banner.ifEmpty { message }
+        if (banner.isNotEmpty()) {
+            Text(
+                banner,
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center).background(Color(0xCC000000)).padding(16.dp),
+            )
+        }
+        if (BuildConfig.DEBUG) {
+            if (showOverlay && overlay.isNotEmpty()) {
+                Text(
+                    overlay,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                    modifier = Modifier.align(Alignment.TopStart).background(Color(0x99000000)).padding(6.dp),
+                )
+            }
+            DebugPanel(
+                modifier = Modifier.align(Alignment.BottomEnd),
+                dumpsDir = dumpsDir,
+                showOverlay = showOverlay,
+                onShowOverlay = { showOverlay = it },
+                skipShutter = skipShutter,
+                onSkipShutter = { skipShutter = it },
+                statsCsv = statsCsv,
+                onStatsCsv = { statsCsv = it },
+                fallbackOrder = fallbackOrder,
+                onFallbackOrder = { fallbackOrder = it },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DebugPanel(
+    modifier: Modifier,
+    dumpsDir: String,
+    showOverlay: Boolean,
+    onShowOverlay: (Boolean) -> Unit,
+    skipShutter: Boolean,
+    onSkipShutter: (Boolean) -> Unit,
+    statsCsv: Boolean,
+    onStatsCsv: (Boolean) -> Unit,
+    fallbackOrder: Boolean,
+    onFallbackOrder: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val toast = { text: String -> Toast.makeText(context, text, Toast.LENGTH_SHORT).show() }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var choosingReplay by remember { mutableStateOf(false) }
+
+    Column(modifier.padding(8.dp), horizontalAlignment = Alignment.End) {
+        if (expanded) {
+            Surface(color = Color(0xE0202020), shape = RoundedCornerShape(8.dp)) {
+                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Toggle("Overlay", showOverlay, onShowOverlay)
+                    Toggle("Skip start-up 0x8000 (next start)", skipShutter, onSkipShutter)
+                    Toggle("Stats CSV", statsCsv, onStatsCsv)
+                    Toggle("Fallback start order (next start)", fallbackOrder, onFallbackOrder)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { toast("Dump: " + NativeBridge.startDump(200)) }) { Text("Dump 200") }
+                        Button(onClick = { toast("0x8000: " + NativeBridge.sendShutter()) }) { Text("Send 0x8000") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { choosingReplay = true }) { Text("Replay…") }
+                        Button(onClick = { NativeBridge.stopReplay() }) { Text("Stop replay") }
+                    }
+                }
+            }
+        }
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "Close debug" else "Debug", color = Color.White)
+        }
+    }
+
+    if (choosingReplay) {
+        val dumps = File(dumpsDir).listFiles { f -> f.name.endsWith(".raw") }
+            ?.map { it.path.removeSuffix(".raw") }?.sortedDescending().orEmpty()
+        AlertDialog(
+            onDismissRequest = { choosingReplay = false },
+            confirmButton = { TextButton(onClick = { choosingReplay = false }) { Text("Cancel") } },
+            title = { Text("Replay a dump") },
+            text = {
+                if (dumps.isEmpty()) {
+                    Text("No dumps in $dumpsDir")
+                } else {
+                    LazyColumn {
+                        items(dumps) { base ->
+                            TextButton(onClick = {
+                                choosingReplay = false
+                                val error = NativeBridge.startReplay(base)
+                                toast(if (error.isEmpty()) "Replaying ${File(base).name}" else "Replay: $error")
+                            }) { Text(File(base).name) }
+                        }
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChange)
+        Text(label, color = Color.White)
+    }
+}
