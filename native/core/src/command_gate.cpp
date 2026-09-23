@@ -17,15 +17,24 @@ const char* commandResultText(CommandResult result) {
 CameraCommands::CameraCommands(Sender sender, Clock clock)
     : sender_(std::move(sender)), clock_(std::move(clock)) {}
 
-CommandResult CameraCommands::send(uint16_t value) {
+CommandResult CameraCommands::send(uint16_t value, CommandPurpose purpose) {
   const auto now = clock_();
   std::unique_lock lock(mutex_);
-  if (!isAllowedCommand(value)) {
+  if (!isAllowedCommand(value) || (purpose == CommandPurpose::Lockout && value != kCmdShutter)) {
     record(value, CommandResult::RefusedNotAllowed, now);
     return CommandResult::RefusedNotAllowed;
   }
   if (value == kCmdShutter) {
-    if (shutterSent_ && now - lastShutter_ < kShutterMinInterval) {
+    if (purpose == CommandPurpose::Lockout) {
+      const bool continuing = lockoutSent_ && now - lastLockout_ < kLockoutGap;
+      if (continuing && (now - lastLockout_ < kLockoutSpacing || now - holdStart_ > kLockoutMaxHold)) {
+        record(value, CommandResult::RefusedRateLimited, now);
+        return CommandResult::RefusedRateLimited;
+      }
+      if (!continuing) holdStart_ = now;
+      lockoutSent_ = true;
+      lastLockout_ = now;
+    } else if (shutterSent_ && now - lastShutter_ < kShutterMinInterval) {
       record(value, CommandResult::RefusedRateLimited, now);
       return CommandResult::RefusedRateLimited;
     }

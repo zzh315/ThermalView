@@ -28,15 +28,21 @@ Vendor commands are 16-bit values written with UVC SET_CUR to the Camera Termina
 | --- | --- | --- |
 | `0x8004` | Select raw 16-bit output | Once per stream start, after streaming begins |
 | `0x8020` | Select normal range (-20 to 120 °C) | Once, after `0x8004` has taken effect |
-| `0x8000` | Shutter close + dark-frame (NUC) refresh — the runtime calibration Xtherm and InfiRay's demo trigger on connect and every 380 s, and the camera runs by itself for ~65 s after power-up; it does not touch factory calibration | Once ~0.5 s after `0x8020`, unless the camera is still calibrating after power-up; the Recalibrate button; a periodic policy once the owner approves its numbers (docs/PLAN.md M4). Max once per 10 s |
+| `0x8000` | Shutter close + dark-frame (NUC) refresh — the runtime calibration Xtherm and InfiRay's demo trigger on connect and every 380 s, and the camera runs by itself for ~65 s after power-up; it does not touch factory calibration | Once ~0.5 s after `0x8020`, unless the camera is still calibrating after power-up; the Recalibrate button; a periodic policy once the owner approves its numbers (docs/PLAN.md M4); the over-range lockout (below). Max once per 10 s, except in a lockout |
 
 Start sequence: stream → `0x8004` → drop frames until they pass the sanity checks (docs/PROTOCOL.md) → `0x8020` → `0x8000` about 0.5 s later → drop frames through the shutter cycle. If the stream began with repeated frames, the camera is calibrating after power-up: skip that `0x8000` and just wait the calibration out (owner decision, 2026-09-24; docs/DEVICE.md). If M1 shows trouble with streaming first, the owner-approved fallback is InfiCam's order: `0x8004` and `0x8020` before streaming starts, the rest unchanged.
+
+Over-range lockout (owner decision, 2026-09-24): protects the sensor from very hot scenes and the sun.
+- **Trigger:** at least 4 pixels at or above 140 °C, in 2 consecutive frames. 140 °C sits just under the normal range's ~144 °C ceiling, the most this range can measure.
+- **Hold:** `0x8000` repeated at least 250 ms apart for at most 5 s. Repeating it before each cycle ends is meant to keep the shutter closed; that's verified or not in the M1 lockout test (docs/DEVICE.md).
+- **Peek:** at least 1.5 s with no command, so the shutter reopens and the view is checked again.
+- **Enforcement:** the gate enforces all of these limits (`CommandPurpose::Lockout`), not just the app's logic.
 
 Everything else is forbidden, including: `0x80FF` (writes the user area to non-volatile memory), `0xEC..`/`0xEE..` (write the camera's dead-pixel table), `0x8081` (asks raw-sensor cameras for per-pixel calibration data), `0x8001`, `0x8002`, `0x8003`, `0x8005`, `0x8021`, any value below `0x8000` (user-area byte writes), and `0xF0..`–`0xFB..` (measurement points).
 
 Enforcement:
 
-- One function owns this channel: `CameraCommands::send(uint16_t)`. It checks a compile-time allowlist, refuses and logs anything else, and rate-limits `0x8000`. Its logic lives in `native/core`, so its unit tests run on the Mac: one asserts the allowlist is exactly `{0x8000, 0x8004, 0x8020}`, another checks the rate limit. `native/android` supplies the single sender that calls `uvc_set_zoom_abs`.
+- One function owns this channel: `CameraCommands::send(uint16_t)`. It checks a compile-time allowlist, refuses and logs anything else, and rate-limits `0x8000`. Its logic lives in `native/core`, so its unit tests run on the Mac: one asserts the allowlist is exactly `{0x8000, 0x8004, 0x8020}`, others check the rate limit and the lockout limits. `native/android` supplies the single sender that calls `uvc_set_zoom_abs`.
 - A test fails the build if our code (anything outside `native/third_party`) calls a `uvc_set_*` function or `libusb_control_transfer` anywhere but that sender.
 - The only other SET_CUR requests allowed are libuvc's standard stream negotiation (VideoStreaming probe/commit). No SET_CUR on any other control.
 - Never extend the allowlist or send a command "to see what happens". If a problem seems to need one, stop and ask the owner.

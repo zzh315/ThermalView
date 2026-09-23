@@ -27,7 +27,8 @@ object NativeBridge {
     external fun stopReplay()
 
     external fun sendShutter(): String
-    external fun setOptions(skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean)
+    external fun setOptions(skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean, dumpOnLockout: Boolean)
+    external fun triggerLockout(): String
 }
 
 data class Status(

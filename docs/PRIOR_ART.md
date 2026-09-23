@@ -125,6 +125,20 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 - **Capture internals, from their logs:** Hti Image runs libuvc with 192 packets per transfer (stock libuvc uses 32) and initializes OpenCL. ThruTracker queues 16 URBs × 32 packets. InfiCamPlus renders through a CPU canvas in 17–27 ms per frame. Compare transfer sizing in M1 if our capture drops frames.
 - **Verdict:** keep our box-driven color range, and zoom 1×–8× with double-tap back to 1× (PLAN M6). Take "mark out-of-range pixels in Manual mode instead of clipping them silently" to pass 2 item 6.
 
+### Over-temperature protection (2026-09-24)
+
+- **InfiCam** (`app/.../MainActivity.java` `onFrame` and `overTempLockout`, setting "Overtemperature Protection", on by default):
+  - Triggers when the frame's maximum exceeds the range's top (120 or 400 °C), after the first 50 frames.
+  - Shows "Warning! Do not point at very hot objects!" and calls `calibrate()` (`0x8000`) every 250 ms for 5 s.
+  - Its notes list "user setting for protection max temp" as a to-do.
+- **The P2 Pro and HIKMICRO** close the shutter in firmware (PROTOCOL.md "Heat, hot scenes and the sun"). This module has no known hold command.
+- **Verdict: adopt InfiCam's approach, adapted.**
+  - Trigger at ≥ 140 °C on ≥ 4 pixels for 2 frames, so a single bad pixel can't hold it closed.
+  - Repeat `0x8000` every 260 ms for 5 s, then peek: fresh frames only, at least 1.5 s after the last command.
+  - Hold again if the view is still hot; resume after 3 clear frames.
+  - The limits live in the command gate, not only in the app logic.
+  - Owner decision; CLAUDE.md rule 1.
+
 ### Pass 1 (M0, 2026-09-24)
 
 Pointers confirmed in the clones at the commits in the catalog (InfiCam `531aa81`, InfiCamPlus `6fad1f3` and its v1.0.1 tag, libuvc upstream `4e9fc77`).

@@ -6,6 +6,7 @@
 
 using namespace std::chrono_literals;
 using tv::CameraCommands;
+using tv::CommandPurpose;
 using tv::CommandResult;
 
 namespace {
@@ -110,4 +111,61 @@ TEST_CASE("every attempt is logged, bounded, and passed to the sink") {
   CHECK(sunk == std::vector<uint16_t>{0x8004, 0x80FF});
   for (int i = 0; i < 100; ++i) gate.send(0x1234);
   CHECK(gate.history().size() == CameraCommands::kLogCapacity);
+}
+
+TEST_CASE("a lockout holds 0x8000 at >= 250 ms spacing for at most 5 s") {
+  FakeCamera camera;
+  FakeClock clock;
+  CameraCommands gate(camera.sender(), clock.clock());
+  const auto lockout = [&] { return gate.send(0x8000, CommandPurpose::Lockout); };
+  CHECK(lockout() == CommandResult::Sent);
+  clock.now += 249ms;
+  CHECK(lockout() == CommandResult::RefusedRateLimited);
+  clock.now += 1ms;
+  CHECK(lockout() == CommandResult::Sent);
+  for (int i = 0; i < 19; ++i) {  // up to 5.0 s after the first command
+    clock.now += 250ms;
+    CHECK(lockout() == CommandResult::Sent);
+  }
+  clock.now += 250ms;  // 5.25 s: the hold is over
+  CHECK(lockout() == CommandResult::RefusedRateLimited);
+  CHECK(std::count(camera.received.begin(), camera.received.end(), 0x8000) == 21);
+}
+
+TEST_CASE("a lockout must go quiet for 1.5 s before the next hold") {
+  FakeCamera camera;
+  FakeClock clock;
+  CameraCommands gate(camera.sender(), clock.clock());
+  const auto lockout = [&] { return gate.send(0x8000, CommandPurpose::Lockout); };
+  for (int i = 0; i <= 20; ++i) {
+    CHECK(lockout() == CommandResult::Sent);
+    clock.now += 250ms;
+  }
+  clock.now -= 250ms;  // at the last command (5 s)
+  clock.now += 1499ms;
+  CHECK(lockout() == CommandResult::RefusedRateLimited);  // still within the gap: refused
+  clock.now += 1ms;  // a refused attempt doesn't restart the gap
+  CHECK(lockout() == CommandResult::Sent);  // a new hold
+  clock.now += 250ms;
+  CHECK(lockout() == CommandResult::Sent);
+}
+
+TEST_CASE("a normal 0x8000 still waits 10 s after a lockout command") {
+  FakeCamera camera;
+  FakeClock clock;
+  CameraCommands gate(camera.sender(), clock.clock());
+  CHECK(gate.send(0x8000, CommandPurpose::Lockout) == CommandResult::Sent);
+  clock.now += 9s;
+  CHECK(gate.send(0x8000) == CommandResult::RefusedRateLimited);
+  clock.now += 1s;
+  CHECK(gate.send(0x8000) == CommandResult::Sent);
+}
+
+TEST_CASE("the lockout purpose carries only 0x8000") {
+  FakeCamera camera;
+  CameraCommands gate(camera.sender());
+  CHECK(gate.send(0x8004, CommandPurpose::Lockout) == CommandResult::RefusedNotAllowed);
+  CHECK(gate.send(0x8020, CommandPurpose::Lockout) == CommandResult::RefusedNotAllowed);
+  CHECK(gate.send(0x80FF, CommandPurpose::Lockout) == CommandResult::RefusedNotAllowed);
+  CHECK(camera.received.empty());
 }

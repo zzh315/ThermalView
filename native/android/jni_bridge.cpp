@@ -71,8 +71,13 @@ JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_sendShutter(JNIEnv* 
 }
 
 JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setOptions(JNIEnv*, jobject, jboolean skipStartupShutter,
-                                                                    jboolean statsCsv, jboolean fallbackOrder) {
-  session().setOptions({bool(skipStartupShutter), bool(statsCsv), bool(fallbackOrder)});
+                                                                    jboolean statsCsv, jboolean fallbackOrder,
+                                                                    jboolean dumpOnLockout) {
+  session().setOptions({bool(skipStartupShutter), bool(statsCsv), bool(fallbackOrder), bool(dumpOnLockout)});
+}
+
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {
+  return env->NewStringUTF(session().triggerLockout().c_str());
 }
 
 }  // extern "C"

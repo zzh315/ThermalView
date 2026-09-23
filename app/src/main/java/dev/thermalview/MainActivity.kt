@@ -17,6 +17,7 @@ data class DebugOptions(
     val skipStartupShutter: Boolean = false,
     val statsCsv: Boolean = false,
     val fallbackOrder: Boolean = false,
+    val dumpOnLockout: Boolean = false,
 )
 
 class MainActivity : ComponentActivity() {
@@ -73,14 +74,15 @@ class MainActivity : ComponentActivity() {
 
     private fun setOptions(value: DebugOptions) {
         options.value = value
-        NativeBridge.setOptions(value.skipStartupShutter, value.statsCsv, value.fallbackOrder)
+        NativeBridge.setOptions(value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout)
     }
 
     /**
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
-     * Extras: csv, skipStartupShutter, fallbackOrder (booleans, applied first); reconnect,
-     * shutter, stopReplay (booleans); dump (frames); replay (dump path without extension).
+     * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump (booleans, applied first);
+     * reconnect, shutter, lockout, stopReplay (booleans); dump (frames); replay (dump path
+     * without extension).
      */
     private fun applyDebugExtras(intent: Intent?) {
         val extras = intent?.extras ?: return
@@ -89,6 +91,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("csv")) o = o.copy(statsCsv = extras.getBoolean("csv"))
         if (extras.containsKey("skipStartupShutter")) o = o.copy(skipStartupShutter = extras.getBoolean("skipStartupShutter"))
         if (extras.containsKey("fallbackOrder")) o = o.copy(fallbackOrder = extras.getBoolean("fallbackOrder"))
+        if (extras.containsKey("lockoutDump")) o = o.copy(dumpOnLockout = extras.getBoolean("lockoutDump"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -97,6 +100,7 @@ class MainActivity : ComponentActivity() {
         }
         if (extras.containsKey("dump")) Log.i(TAG, "adb: dump " + NativeBridge.startDump(extras.getInt("dump")))
         if (extras.getBoolean("shutter")) Log.i(TAG, "adb: 0x8000 " + NativeBridge.sendShutter())
+        if (extras.getBoolean("lockout")) Log.i(TAG, "adb: " + NativeBridge.triggerLockout())
         if (extras.getBoolean("stopReplay")) NativeBridge.stopReplay()
         extras.getString("replay")?.let { Log.i(TAG, "adb: replay " + NativeBridge.startReplay(it).ifEmpty { "started" }) }
         intent.replaceExtras(Bundle())  // don't re-apply on configuration changes

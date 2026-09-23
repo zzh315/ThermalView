@@ -166,6 +166,28 @@ Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004`
 - **Dropped frames.** libuvc hands the callback only the newest completed frame, so frames the callback missed show up as gaps in `frame->sequence`; frames lost on the bus show up as arrival gaps.
 - **libuvc quirks.** Request an explicit frame interval (25 fps): with `fps = 0` libuvc divides by zero on a continuous-interval descriptor. `UVC_FRAME_FORMAT_ANY` only matches the YUYV, UYVY, GRAY8, GRAY16, NV12 and BGR GUIDs, so pass the format M0 verifies.
 
+## Heat, hot scenes and the sun
+
+Researched 2026-09-24. Quotes are from the manufacturers' own documents unless marked.
+
+- **Long runs.** No InfiRay document warns that these cameras overheat; they give only ambient limits. Examples: T2L "-10℃～+50℃" (manualslib.com/manual/3916557/Infiray-T2l.html), T2S+ "-20°C ~ +50°C" (xinfrared.com), P2 Pro "-10℃～55℃", and the Xmodule S0 "-15°C~+60°C" (a reseller copy of its datasheet, bbs.16rd.com/thread-574966-1-1.html). Our camera settles ~11 °C above the room (DEVICE.md "Long run").
+- **Hot scenes and the sun.** Manufacturer guidance:
+  - InfiRay's T2/T2 Pro/T3 manual: "Do not expose the lens to high-intensity radiation sources such as the sun, cigarette butts, and bonfires … the detector is easily damaged by the above operation" (manuals.plus/infrared/t2-pro-smartphone-thermal-eye-manual).
+  - P2 Pro: "do not direct its lens to the sun or other heat sources at temperatures above 300℃ for a long time" (manuals.plus/infiray/p2-pro-thermal-camera-for-android-manual).
+  - FLIR: "For uncooled vanadium oxide detectors (VOx microbolometers), the burn-in from the sun is generally non-permanent", but "these effects can become permanent if you are not careful"; a flat-field correction helps (flir.custhelp.com/app/answers/detail/a_id/3192).
+- **Protection in other products.** The P2 Pro closes its shutter when "the infrared image temperature measurement exceeds the specified time of threshold temperature", with a "burn protection" prompt. HIKMICRO closes its shield when "the grey scale of the detector reaches a certain value". InfiCam holds the shutter closed with `0x8000` every 250 ms for 5 s whenever the frame's maximum exceeds the range (MainActivity `overTempLockout`, on by default). Our lockout follows InfiCam (CLAUDE.md rule 1).
+- **How bright hot things are to the sensor** (Planck's law, 8–14 µm, relative to a 22 °C scene; our calculation):
+  - 144 °C (our range's top): 4×
+  - a 350 °C soldering iron: 13×
+  - 400 °C (the top of the core's own high range): 16×
+  - 800 °C glowing charcoal: 43×
+  - 1000 °C: 58×
+  - the sun: ~440×
+
+  These are blackbody figures; shiny metal gives off much less.
+- **Pixel speed and shutter wear.** InfiRay's 12 µm Tiny1-C quotes a thermal time constant "＜10ms", and FLIR's cores are 8–12 ms. So pixels settle to what they see within a frame, and pulsing the shutter cuts exposure time, not the peak. No shutter lifetime (rated actuations) was found for any of these modules.
+- **Measurement ranges of related products:** T2L −20 to 120 °C; T2S+ −20 to 120 °C and 120 to 450 °C; P2 Pro up to 550 °C; the S0 sheet says "-20℃~+120℃（可扩展至600℃）" (extendable to 600 °C). The extended ranges need `0x8021`, which rule 1 forbids.
+
 ## Android USB notes
 
 - Request the CAMERA runtime permission before USB permission (InfiCam does the same). Since targetSdk 28, `UsbManager` grants USB permission for video-class devices only to apps holding CAMERA; ThruTracker's README says the same. The app never uses the tablet's own cameras. On Android 12+, the camera privacy toggle also blocks it: with the toggle on, permission for video-class devices is denied, so detect that and tell the owner.

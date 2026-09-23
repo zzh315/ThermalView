@@ -26,13 +26,14 @@ struct uvc_frame;
 
 namespace tv {
 
-enum class State { Idle, Starting, AwaitValid, RangeWait, ShutterHold, Running, Failed, Replay };
+enum class State { Idle, Starting, AwaitValid, RangeWait, ShutterHold, Running, Lockout, Failed, Replay };
 const char* stateName(State state);
 
 struct Options {
   bool skipStartupShutter = false;  // debug: learn whether 0x8020 alone triggers a cycle
   bool statsCsv = false;            // debug: per-frame metadata and statistics to CSV
   bool fallbackOrder = false;       // debug: InfiCam's order (0x8004, 0x8020 before streaming)
+  bool dumpOnLockout = false;       // debug: save the frames that trigger an over-range lockout
 };
 
 class Session {
@@ -55,6 +56,7 @@ class Session {
   std::string startReplay(const std::string& base);  // "" on success, else the reason
   void stopReplay();
   std::string sendShutter();  // debug / Recalibrate
+  std::string triggerLockout();  // debug: run one over-range lockout without a hot scene
   void setOptions(const Options& options);
 
  private:
@@ -75,11 +77,13 @@ class Session {
   void trackFreezes(const RawFrame& frame, const FrameView& view, uint32_t flags, bool frozen,
                     State state);
   void fail(const std::string& reason);
-  CommandResult command(uint16_t value);
+  CommandResult command(uint16_t value, CommandPurpose purpose = CommandPurpose::Normal);
+  void beginLockout(int64_t now, int hotPixels, uint16_t maxRaw, bool manual);
+  void endLockout(int64_t now);
   void captureForDump(const RawFrame& frame);
   void finishDump();
   void writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
-                   uint32_t flags, bool frozen);
+                   uint32_t flags, bool frozen, int hotPixels);
   void openCsv();
   void closeCsv();
   void replayLoop();
@@ -125,6 +129,16 @@ class Session {
   bool fallbackOrder_ = false;
   bool fallbackTried_ = false;
   std::atomic<int64_t> manualShutterNs_{0};
+  std::atomic<bool> manualLockout_{false};
+
+  // Over-range lockout (processing thread).
+  int hotStreak_ = 0;
+  int64_t lockoutSinceNs_ = 0, lockoutHoldStartNs_ = 0, lockoutLastCmdNs_ = 0, lockoutPeekStartNs_ = 0;
+  bool lockoutPeekHot_ = false;
+  int lockoutClear_ = 0;
+  uint64_t lockouts_ = 0, lockoutCommands_ = 0;
+  uint32_t lastHotPixels_ = 0;
+  uint16_t lastHotMax_ = 0;
 
   // Statistics.
   ArrivalTracker arrivals_;

@@ -21,6 +21,13 @@ inline constexpr std::array<uint16_t, 3> kAllowedCommands = {kCmdShutter, kCmdRa
                                                              kCmdRangeNormal};
 inline constexpr std::chrono::seconds kShutterMinInterval{10};
 
+// Over-range lockout (owner decision, 2026-09-24): while the scene is hotter than the camera can
+// measure, the app holds the shutter closed by repeating 0x8000 before each cycle ends, then lets it
+// reopen so the view can be checked again. These limits hold even if the caller misbehaves.
+inline constexpr std::chrono::milliseconds kLockoutSpacing{250};  // between commands of one hold
+inline constexpr std::chrono::seconds kLockoutMaxHold{5};         // first to last command of a hold
+inline constexpr std::chrono::milliseconds kLockoutGap{1500};     // quiet time that ends a hold
+
 constexpr bool isAllowedCommand(uint16_t value) {
   for (uint16_t allowed : kAllowedCommands)
     if (value == allowed) return true;
@@ -28,6 +35,7 @@ constexpr bool isAllowedCommand(uint16_t value) {
 }
 
 enum class CommandResult { Sent, RefusedNotAllowed, RefusedRateLimited, SendFailed };
+enum class CommandPurpose { Normal, Lockout };  // Lockout: 0x8000 only, under the lockout limits
 const char* commandResultText(CommandResult result);
 
 struct CommandLogEntry {
@@ -45,8 +53,11 @@ class CameraCommands {
 
   explicit CameraCommands(Sender sender, Clock clock = std::chrono::steady_clock::now);
 
-  // Refuses anything outside the allowlist, rate-limits 0x8000, and logs every attempt.
-  CommandResult send(uint16_t value);
+  // Refuses anything outside the allowlist, rate-limits 0x8000, and logs every attempt. A normal
+  // 0x8000 needs 10 s since the last one of either purpose; a lockout 0x8000 either continues the
+  // current hold (>= 250 ms after the previous command, <= 5 s after the hold's first) or, after a
+  // 1.5 s quiet gap, starts a new one.
+  CommandResult send(uint16_t value, CommandPurpose purpose = CommandPurpose::Normal);
 
   // Most recent last; bounded to the last kLogCapacity attempts.
   std::vector<CommandLogEntry> history() const;
@@ -67,6 +78,8 @@ class CameraCommands {
   std::deque<CommandLogEntry> history_;
   bool shutterSent_ = false;
   std::chrono::steady_clock::time_point lastShutter_{};
+  bool lockoutSent_ = false;
+  std::chrono::steady_clock::time_point holdStart_{}, lastLockout_{};
 };
 
 }  // namespace tv

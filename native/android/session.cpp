@@ -30,6 +30,17 @@ constexpr int kValidStreak = 3;        // consecutive valid frames before 0x8020
 constexpr int kStallMs = 500;          // watchdog (docs/PLAN.md M1, tunable)
 constexpr int kFailStreak = 50;        // 2 s of failing frames after start-up -> stop
 
+// Over-range lockout (owner decision, 2026-09-24; CLAUDE.md rule 1). The normal range can't measure
+// above ~144 °C (raw 16383), so the trigger sits just below that.
+constexpr uint16_t kLockoutRaw = 15835;  // ~140 °C at FPA ~32 °C (oracle); M2 derives it from our LUT
+constexpr int kLockoutPixels = 4;        // pixels at or above it, in...
+constexpr int kLockoutFrames = 2;        // ...this many consecutive frames, trigger a lockout
+constexpr int kLockoutRepeatMs = 260;    // 0x8000 spacing that keeps the shutter closed (gate: >= 250)
+constexpr int kLockoutHoldMs = 5000;     // hold, then let the shutter reopen and look again
+constexpr int kLockoutClearFrames = 3;   // fresh frames with no hot pixels end the lockout
+constexpr int kLockoutPeekMaxMs = 4000;  // resume anyway if no fresh frame arrives after a hold
+constexpr int kLockoutDumpFrames = 25;   // debug: frames saved when a lockout triggers
+
 int64_t nowNs() {
   timespec t{};
   clock_gettime(CLOCK_MONOTONIC, &t);
@@ -79,6 +90,7 @@ const char* stateName(State state) {
     case State::AwaitValid: return "AwaitValid";
     case State::RangeWait: return "RangeWait";
     case State::ShutterHold: return "ShutterHold";
+    case State::Lockout: return "Lockout";
     case State::Running: return "Running";
     case State::Failed: return "Failed";
     case State::Replay: return "Replay";
@@ -95,6 +107,9 @@ struct Session::Snapshot {
   uint64_t frames = 0, seqGaps = 0, arrivalGaps = 0, rejectedSize = 0, rejectedChecks = 0;
   uint64_t startupDiscarded = 0, overruns = 0, restarts = 0, frozen = 0;
   uint64_t shutterCommanded = 0, shutterDetected = 0, shutterUncommanded = 0;
+  uint64_t lockouts = 0, lockoutCommands = 0;
+  uint32_t lastHotPixels = 0;
+  uint16_t lastHotMax = 0;
   double lastCycleMs = 0;
   uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
   // Metadata of the latest frame.
@@ -245,6 +260,9 @@ bool Session::startStreaming() {
   lastFreshNs_ = 0;
   liveStreak_ = 0;
   coldStart_ = false;
+  hotStreak_ = 0;
+  lockoutHoldStartNs_ = 0;
+  lockoutPeekHot_ = false;
   lastShutterNs_ = 0;
   rangeWindow_.clear();
   arrivals_.reset();
@@ -328,13 +346,45 @@ void Session::processLoop() {
   }
 }
 
-CommandResult Session::command(uint16_t value) {
-  const CommandResult result = gate_ ? gate_->send(value) : CommandResult::SendFailed;
+CommandResult Session::command(uint16_t value, CommandPurpose purpose) {
+  const CommandResult result = gate_ ? gate_->send(value, purpose) : CommandResult::SendFailed;
   if (value == kCmdShutter && result == CommandResult::Sent) {
-    ++shutterCommanded_;
+    if (purpose == CommandPurpose::Lockout)
+      ++lockoutCommands_;
+    else
+      ++shutterCommanded_;
     lastShutterNs_ = nowNs();
   }
   return result;
+}
+
+void Session::beginLockout(int64_t now, int hotPixels, uint16_t maxRaw, bool manual) {
+  ++lockouts_;
+  hotStreak_ = 0;
+  lockoutSinceNs_ = now;
+  lockoutHoldStartNs_ = now;
+  lockoutLastCmdNs_ = 0;
+  lockoutPeekHot_ = false;
+  lockoutClear_ = 0;
+  bool dump;
+  {
+    std::lock_guard o(optionsMutex_);
+    dump = options_.dumpOnLockout;
+  }
+  if (dump && !manual) startDump(kLockoutDumpFrames);  // before leaving Running
+  enter(State::Lockout, now);
+  if (command(kCmdShutter, CommandPurpose::Lockout) == CommandResult::Sent) lockoutLastCmdNs_ = nowNs();
+  setBanner("Too hot to measure (above ~140 °C): shutter closed to protect the sensor");
+  if (manual)
+    FLOG("lockout #%" PRIu64 " (manual)", lockouts_);
+  else
+    FLOG("lockout #%" PRIu64 ": %d pixels >= %u (max %u)", lockouts_, hotPixels, kLockoutRaw, maxRaw);
+}
+
+void Session::endLockout(int64_t now) {
+  FLOG("lockout ended after %.1f s", double(now - lockoutSinceNs_) / 1e9);
+  enter(State::Running, now);
+  setBanner("");
 }
 
 void Session::beginHold(int64_t now) {
@@ -432,6 +482,10 @@ void Session::tick(int64_t now) {
       break;
     }
     case State::Running: {
+      if (manualLockout_.exchange(false)) {
+        beginLockout(now, 0, 0, true);
+        break;
+      }
       if (const int64_t sent = manualShutterNs_.exchange(0)) {
         ++shutterCommanded_;
         lastShutterNs_ = sent;
@@ -439,6 +493,34 @@ void Session::tick(int64_t now) {
         break;
       }
       stalled();
+      break;
+    }
+    case State::Lockout: {
+      if (stalled()) break;
+      if (lockoutHoldStartNs_) {
+        // Holding: repeat 0x8000 before the cycle ends so the shutter stays closed.
+        if (since(lockoutHoldStartNs_) >= kLockoutHoldMs) {
+          lockoutHoldStartNs_ = 0;
+          lockoutPeekStartNs_ = now;
+          lockoutPeekHot_ = false;
+          lockoutClear_ = 0;
+          FLOG("lockout: hold over, waiting for the shutter to reopen");
+        } else if (!lockoutLastCmdNs_ || since(lockoutLastCmdNs_) >= kLockoutRepeatMs) {
+          if (command(kCmdShutter, CommandPurpose::Lockout) == CommandResult::Sent)
+            lockoutLastCmdNs_ = nowNs();
+        }
+      } else if (lockoutPeekHot_) {
+        // Still too hot after the shutter reopened: hold again once the gate's quiet gap is over.
+        if (command(kCmdShutter, CommandPurpose::Lockout) == CommandResult::Sent) {
+          lockoutHoldStartNs_ = now;
+          lockoutLastCmdNs_ = nowNs();
+          lockoutPeekHot_ = false;
+          FLOG("lockout: still too hot, holding again");
+        }
+      } else if (since(lockoutPeekStartNs_) >= kLockoutPeekMaxMs) {
+        FLOG("lockout: no fresh frame %d ms after the hold", kLockoutPeekMaxMs);
+        endLockout(now);
+      }
       break;
     }
     default:
@@ -512,6 +594,19 @@ void Session::handleFrame(const RawFrame& frame) {
   if (flags) lastFlags_ = flags;
   trackFreezes(frame, view, flags, frozen, state);
 
+  // Pixels too hot to measure. A frame whose only failure is values above 14 bits counts too, in
+  // case saturated pixels read that way (unverified until the hot-object test).
+  int hotPixels = 0;
+  const bool usable = !flags || flags == kSanityOver14Bit;
+  if (usable && stats.max >= kLockoutRaw) {
+    const uint16_t* img = view.image();
+    for (size_t i = 0; i < kImagePixels; ++i) hotPixels += img[i] >= kLockoutRaw;
+  }
+  if (hotPixels) {
+    lastHotPixels_ = hotPixels;
+    lastHotMax_ = stats.max;
+  }
+
   {
     bool wantCsv;
     {
@@ -520,8 +615,20 @@ void Session::handleFrame(const RawFrame& frame) {
     }
     if (wantCsv && !csv_) openCsv();
     if (!wantCsv && csv_) closeCsv();
-    if (csv_) writeCsvRow(frame, view, stats, flags, frozen);
+    if (csv_) writeCsvRow(frame, view, stats, flags, frozen, hotPixels);
   }
+
+  if (state == State::Running) {
+    hotStreak_ = hotPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
+    if (hotStreak_ >= kLockoutFrames) beginLockout(frame.arrivalNs, hotPixels, stats.max, false);
+  } else if (state == State::Lockout && !lockoutHoldStartNs_ && usable && !frozen) {
+    // Peeking: judge fresh frames only (repeated ones still show the scene before the shutter).
+    if (hotPixels >= kLockoutPixels)
+      lockoutPeekHot_ = true;
+    else if (!lockoutPeekHot_ && ++lockoutClear_ >= kLockoutClearFrames)
+      endLockout(frame.arrivalNs);
+  }
+  captureForDump(frame);  // every full frame, so a dump also shows cycles and lockouts
 
   bool accepted = false;
   switch (state) {
@@ -530,6 +637,8 @@ void Session::handleFrame(const RawFrame& frame) {
     case State::ShutterHold:
       ++startupDiscarded_;
       break;
+    case State::Lockout:
+      break;  // the display keeps the last frame from before the lockout
     case State::AwaitValid:
       ++startupDiscarded_;
       if (flags) {
@@ -564,8 +673,6 @@ void Session::handleFrame(const RawFrame& frame) {
   }
 
   if (accepted) {
-    captureForDump(frame);
-
     DisplayFrame& out = renderer_.frameSlot();
     std::memcpy(out.image.data(), view.image(), kImagePixels * sizeof(uint16_t));
     out.min = stats.min;
@@ -597,6 +704,10 @@ void Session::handleFrame(const RawFrame& frame) {
   s.shutterCommanded = shutterCommanded_;
   s.shutterDetected = shutterDetected_;
   s.shutterUncommanded = shutterUncommanded_;
+  s.lockouts = lockouts_;
+  s.lockoutCommands = lockoutCommands_;
+  s.lastHotPixels = lastHotPixels_;
+  s.lastHotMax = lastHotMax_;
   s.lastCycleMs = lastCycleMs_;
   s.procP95Ms = procMs_.percentile(95);
   s.bytes = frame.bytes;
@@ -706,7 +817,7 @@ void Session::openCsv() {
     FLOG("stats CSV: cannot open %s", path.c_str());
     return;
   }
-  std::fprintf(csv_, "t_ms,seq,state,bytes,flags,img_min,img_max,img_mean,img_sd,frozen");
+  std::fprintf(csv_, "t_ms,seq,state,bytes,flags,img_min,img_max,img_mean,img_sd,frozen,hot");
   for (int i = 0; i < 16; ++i) std::fprintf(csv_, ",P%d", i);
   for (int i : {0, 1, 2}) std::fprintf(csv_, ",Q%d", i);
   for (int i = 13; i < 24; ++i) std::fprintf(csv_, ",Q%d", i);
@@ -722,10 +833,11 @@ void Session::closeCsv() {
 }
 
 void Session::writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
-                          uint32_t flags, bool frozen) {
-  std::fprintf(csv_, "%.3f,%u,%s,%u,%u,%u,%u,%.2f,%.2f,%d", double(frame.arrivalNs - streamStartNs_) / 1e6,
-               frame.sequence, stateName(state_.load()), frame.bytes, flags, stats.min, stats.max,
-               stats.mean, stats.stddev, frozen ? 1 : 0);
+                          uint32_t flags, bool frozen, int hotPixels) {
+  std::fprintf(csv_, "%.3f,%u,%s,%u,%u,%u,%u,%.2f,%.2f,%d,%d",
+               double(frame.arrivalNs - streamStartNs_) / 1e6, frame.sequence, stateName(state_.load()),
+               frame.bytes, flags, stats.min, stats.max, stats.mean, stats.stddev, frozen ? 1 : 0,
+               hotPixels);
   for (int i = 0; i < 16; ++i) std::fprintf(csv_, ",%u", view.at(kOffsetP + i));
   for (int i : {0, 1, 2}) std::fprintf(csv_, ",%u", view.at(kOffsetQ + i));
   for (int i = 13; i < 24; ++i) std::fprintf(csv_, ",%u", view.at(kOffsetQ + i));
@@ -808,6 +920,12 @@ std::string Session::sendShutter() {
   return commandResultText(result);
 }
 
+std::string Session::triggerLockout() {
+  if (state_.load() != State::Running) return "not running";
+  manualLockout_ = true;
+  return "lockout requested";
+}
+
 void Session::setOptions(const Options& options) {
   std::lock_guard lock(optionsMutex_);
   options_ = options;
@@ -871,6 +989,8 @@ std::string Session::overlayText() {
   o += format("shutter: commanded %" PRIu64 "  shutter-like %" PRIu64 " (not commanded %" PRIu64
               ")  last %.0f ms  frozen frames %" PRIu64 "\n",
               s.shutterCommanded, s.shutterDetected, s.shutterUncommanded, s.lastCycleMs, s.frozen);
+  o += format("lockout: %" PRIu64 " (%" PRIu64 " commands)  trigger %d px >= raw %u  last hot: %u px, max %u\n",
+              s.lockouts, s.lockoutCommands, kLockoutPixels, kLockoutRaw, s.lastHotPixels, s.lastHotMax);
   o += "commands:";
   const size_t first = commands.size() > 6 ? commands.size() - 6 : 0;
   const auto origin = commands.empty() ? std::chrono::steady_clock::time_point{} : commands.front().time;
