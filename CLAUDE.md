@@ -15,7 +15,7 @@ Known facts (docs/DEVICE.md holds the verified record once M0 creates it):
 - **Module spec:** 256×192, 12 µm VOx, 4.0 mm lens, FOV 42.0°×32.1°, 25/15 Hz (this unit offers 25 fps only — docs/DEVICE.md), NETD ≤ 60 mK, mechanical shutter, -20 to 120 °C. This is InfiRay's sheet for the Xmodule **S0** (212-40), and it matches the seller's claims. But the USB product string says S0H, and the only S0H listing found (a bbs.16rd.com reseller page) differs: NETD ≤ 50 mK, measurement range 30–45 °C at ±0.5–0.8 °C, operating ambient 10–40 °C. That reads like a body-temperature variant. Treat accuracy outside 30–45 °C, and use below 10 °C ambient, as unverified until M2's absolute check.
 - It shares VID:PID with the HTI HT-301 (a 384×288 camera) because both speak InfiRay's "Xtherm" UVC protocol. That's why the Xtherm app calls it a "T3" device. Nothing 384×288-specific applies here.
 - **Focus:** manual focus ring on the housing; the seller says it focuses near and far. Software can't control it; don't try.
-- **Host:** Xiaomi Pad 5 Pro 12.4 (codename `dagu`): Snapdragon 870, Adreno 650 (GLES 3.2), 12.4" 2560×1600 IPS LCD at 244 ppi, 60/120 Hz, one USB-C port (USB 3.2 Gen 1). Launched on Android 12 (MIUI 13); third-party trackers list HyperOS 2 on Android 14 as its last update (2025, end of life). Verify the actual version in M0.
+- **Host:** Xiaomi Pad 5 Pro 12.4 (codename `dagu`): Snapdragon 870, Adreno 650 (GLES 3.2), 12.4" 2560×1600 IPS LCD at 244 ppi, 60/120 Hz, one USB-C port (USB 3.2 Gen 1). Launched on Android 12 (MIUI 13); it now runs HyperOS OS2.0.10.0.ULZCNXM (China ROM) on Android 14, API 34, its last update (verified in M0 — docs/DEVICE.md).
 - **Dev machine:** MacBook Pro, Apple Silicon (M5 Pro).
 
 ## Hard rules

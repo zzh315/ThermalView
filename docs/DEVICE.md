@@ -45,8 +45,22 @@ For M1: open 256 × 196 with `UVC_FRAME_FORMAT_YUYV` (`ANY` also recognizes YUY2
 
 ### Hello-world build (M0 step 3, part 1)
 
-2026-09-24: a throwaway project in the session scratchpad — Compose UI showing a string from a C++20 JNI library; minSdk 31, compileSdk 37, targetSdk 34, `arm64-v8a` only. `JAVA_HOME=… ./gradlew :app:assembleDebug` → BUILD SUCCESSFUL; the APK contains `lib/arm64-v8a/libhello.so`, built by NDK 28.1.13356709 and CMake 3.31.6 for `android-31`. Installing it over wireless adb is pending (next section).
+2026-09-24: a throwaway project in the session scratchpad — Compose UI showing a string from a C++20 JNI library; minSdk 31, compileSdk 37, targetSdk 34, `arm64-v8a` only. `JAVA_HOME=… ./gradlew :app:assembleDebug` → BUILD SUCCESSFUL; the APK contains `lib/arm64-v8a/libhello.so`, built by NDK 28.1.13356709 and CMake 3.31.6 for `android-31`. On the tablet: `adb install` → Success; `adb shell am start -W` → cold launch in 991 ms; logcat shows `Hello from C++ (__cplusplus = 202002)`, and a screenshot shows Compose rendering it in landscape at 2560 × 1600. Uninstalled afterwards.
 
-## Tablet (M0 step 3 — pending)
+## Tablet — Xiaomi Pad 5 Pro 12.4 (verified 2026-09-24, over wireless adb)
 
-Not yet reachable: `adb devices` lists nothing, and `adb mdns services` finds no wireless-debugging service. Needs wireless debugging turned on and paired.
+Commands: `adb shell getprop <prop>`, `pm list features`, `wm size`, `wm density`, `dumpsys display`, `dumpsys SurfaceFlinger`, `dumpsys sensor_privacy`, `dumpsys package <pkg>`.
+
+| Fact | Value | Against the docs |
+|---|---|---|
+| Model | "Xiaomi Pad 5 Pro 12.4", model 22081281AC, device `dagu` | Matches |
+| OS | Android 14, API 34, security patch 2025-06-01. HyperOS OS2.0.10.0.ULZCNXM, the China ROM (region CN, locale zh-CN). Build UKQ1.240624.001 (`ro.build.display.id`) | Matches (HyperOS 2 on Android 14). M1's targetSdk = 34 |
+| ABI | arm64-v8a (also lists armeabi-v7a, armeabi) | Matches |
+| USB | `android.hardware.usb.host` and `android.hardware.usb.accessory` present | Matches |
+| Display | Native 1600 × 2560 (portrait), so 2560 × 1600 in landscape. `wm density` 320 is the logical density; the panel reports 244.52 × 244.45 dpi (`dumpsys display`, and SurfaceFlinger x-dpi/y-dpi). The full 4:3 fit, 2133 × 1600 px, is therefore 10.9" diagonal | Matches Xiaomi's 244 ppi |
+| Refresh modes | Exactly two: id 1 = 120 Hz, id 2 = 60 Hz. No 50 or 100 Hz mode, so M5 keeps the panel at 120 Hz. SurfaceFlinger showed 60 Hz while idle at check time | Matches (60/120 Hz) |
+| GPU | Adreno 650, OpenGL ES 3.2, driver V@0502.0 dated 2021-10-04; `ro.opengles.version` 196610 = 0x30002 | Matches |
+| Camera privacy toggle | Not set (`dumpsys sensor_privacy` lists no toggles) | — |
+| App storage | The adb shell can read `/sdcard/Android/data`, M1's dump pull path | Confirms PLAN M1 |
+| App stores | Xiaomi app store (`com.xiaomi.market`) and Google Play both installed | — |
+| adb | Wireless debugging at 192.168.1.114; this Mac was already paired. The connect port changes whenever wireless debugging restarts | — |

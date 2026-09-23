@@ -74,6 +74,12 @@ Pass 2 adds the strongest papers and code per pipeline stage here.
 
 | App | Version | Connects | Streams | Messages / errors | Image size on screen | Zoom / area tools | Notes |
 |---|---|---|---|---|---|---|---|
+| Hti Image (`com.hti.Xtherm`) | 6.4.20240702 (targetSdk 34) | | | | | | Installed by the owner |
+| Xtherm (`com.infiRay.Xtherm`) | 7.0.260325 (targetSdk 34) | | | | | | Installed by the owner (Xiaomi store build) |
+| InfiCamPlus (`be.ntmn.inficam`) | 1.0.5 (targetSdk 34) | | | | | | From GitHub releases. Uses the original InfiCam package name, so the two can't coexist. Writes its environment settings to the camera's user area on every connect (volatile — it never sends `0x80FF`); replug after testing it |
+| ThruTracker Recorder (`com.thrutracker.thermalrecorder`) | 1.1.0 (targetSdk 35) | | | | | | From GitHub releases |
+| 天眼热成像 (`com.infiRayX.Search`) | — | | | | | | Not installed; available in the tablet's Xiaomi store |
+| Xtherm Power (`com.infiRay.XthermPower`) | — | | | | | | Not installed; available in the tablet's Xiaomi store |
 
 ## Pass 1 — capture and protocol (during M0)
 
