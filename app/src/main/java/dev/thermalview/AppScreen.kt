@@ -69,7 +69,8 @@ fun AppScreen(message: String, dumpsDir: String, options: DebugOptions, onOption
             factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(SurfaceCallbacks) } },
             modifier = Modifier.fillMaxSize(),
         )
-        val banner = status.banner.ifEmpty { message }
+        // A replay runs without the camera, so the "plug in" prompt doesn't apply then.
+        val banner = status.banner.ifEmpty { if (status.replay.isNotEmpty()) "" else message }
         if (banner.isNotEmpty()) {
             Text(
                 banner,
@@ -86,6 +87,16 @@ fun AppScreen(message: String, dumpsDir: String, options: DebugOptions, onOption
                     fontSize = 11.sp,
                     lineHeight = 14.sp,
                     modifier = Modifier.align(Alignment.TopStart).background(Color(0x99000000)).padding(6.dp),
+                )
+            }
+            if (status.replay.isNotEmpty()) {
+                Text(
+                    "REPLAY  ${status.replay}",
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
+                        .background(Color(0xCCB00020)).padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
             DebugPanel(

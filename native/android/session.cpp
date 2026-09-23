@@ -841,9 +841,12 @@ std::string Session::overlayText() {
   const Snapshot& s = *snapshot_;
   std::string o;
   const std::string note = s.startOrderNote.empty() ? "" : " (" + s.startOrderNote + ")";
-  o += format("ThermalView %s  %s  %s order%s  %s start\n", appVersion_.c_str(),
-              stateName(state_.load()), s.fallbackOrder ? "fallback" : "stream-first", note.c_str(),
-              s.coldStart ? "power-up (camera calibrating)" : "live");
+  const State state = state_.load();
+  const char* start = state == State::Replay ? ""
+                      : s.coldStart          ? "  power-up start (camera calibrating)"
+                                             : "  warm start";
+  o += format("ThermalView %s  %s  %s order%s%s\n", appVersion_.c_str(), stateName(state),
+              s.fallbackOrder ? "fallback" : "stream-first", note.c_str(), start);
   o += format("fps %.2f  jitter %.2f ms  max %.1f ms  latency p50 %.1f / p95 %.1f ms  proc p95 %.2f ms\n",
               s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms);
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
