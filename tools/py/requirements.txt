@@ -1,0 +1,3 @@
+# Mac-side tools (docs/PLAN.md). Python 3.13 (CPython 3.13.13 on the dev Mac).
+# M2 adds numpy and opencv-python-headless for the oracle; pin them then.
+pyusb==1.3.1

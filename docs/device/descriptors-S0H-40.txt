@@ -1,0 +1,41 @@
+libusb: /opt/homebrew/lib/libusb-1.0.dylib
+Bus 2 address 1 port path (1,), speed high (480 Mb/s)
+DEVICE: bcdUSB 0x0200, class 0xef subclass 0x02 protocol 0x01, bMaxPacketSize0 64
+  idVendor 0x1514, idProduct 0x0001, bcdDevice 0x0200, bNumConfigurations 1
+  iManufacturer 1 "Infiray", iProduct 2 "S0H-40", iSerialNumber 3 "KA1213"
+CONFIGURATION 1: wTotalLength 162, bNumInterfaces 2, bmAttributes 0x80, MaxPower 500 mA, iConfiguration 4 "High Speed"
+  INTERFACE_ASSOCIATION: interfaces 0..1, function class 0x0e subclass 0x03 protocol 0x00, iFunction 0
+  INTERFACE 0 alt 0: class 0x0e subclass 0x01 protocol 0x00, 0 endpoint(s), iInterface 0
+    VC_HEADER: bcdUVC 1.00, wTotalLength 40, dwClockFrequency 6000000 Hz, streaming interfaces [1]
+    INPUT_TERMINAL id 1: ITT_CAMERA, bAssocTerminal 2, iTerminal 6 "<unreadable: [Errno None] Invalid descriptor>"
+      wObjectiveFocalLengthMin 0, Max 0, wOcularFocalLength 0
+      bmControls 0x000220: Focus (Absolute), Zoom (Absolute)
+    OUTPUT_TERMINAL id 2: TT_STREAMING, bSourceID 1, iTerminal 0
+  INTERFACE 1 alt 0: class 0x0e subclass 0x02 protocol 0x00, 0 endpoint(s), iInterface 9 "<unreadable: [Errno None] Invalid descriptor>"
+    VS_INPUT_HEADER: bNumFormats 1, wTotalLength 71, bEndpointAddress 0x81, bmInfo 0x00, bTerminalLink 2, bStillCaptureMethod 0, bTriggerSupport 0, bTriggerUsage 0
+    VS_FORMAT_UNCOMPRESSED #1: 1 frame descriptor(s), bBitsPerPixel 16, bDefaultFrameIndex 1, aspect 0:0, bmInterlaceFlags 0x00, bCopyProtect 0
+      guidFormat 32595559-0000-0010-8000-00aa00389b71 (FourCC 'YUY2'; YUY2 (YUYV 4:2:2))
+    VS_FRAME #1: 256×196, bmCapabilities 0x00, bit rate 2508800..2508800 b/s, dwMaxVideoFrameBufferSize 100352 (= 2.00 bytes/pixel)
+      dwDefaultFrameInterval 400000 (25.00 fps); intervals: 400000 (25.00 fps)
+  INTERFACE 1 alt 1: class 0x0e subclass 0x02 protocol 0x00, 1 endpoint(s), iInterface 0
+    ENDPOINT 0x81 IN isochronous, wMaxPacketSize 0x020c = 524 bytes, bInterval 1 (every 1 microframe(s)), sync async, usage data → 4.192 MB/s
+
+== Summary ==
+Frame sizes: 256×196 (format #1 YUY2 (YUYV 4:2:2))
+Expected 256×196 @ 25 fps: FOUND (format #1 YUY2 (YUYV 4:2:2))
+Streaming interface 1 alt 1: isochronous EP 0x81, 524 bytes/microframe = 4.192 MB/s (enough for 256×196×2 bytes @ 25 fps = 2.509 MB/s)
+Camera terminal advertises Zoom (Absolute), our command channel: yes
+Speed: high (480 Mb/s)
+
+== Raw configuration 1 (162 bytes, matches wTotalLength 162) ==
+0000  09 02 a2 00 02 01 04 80 fa 08 0b 00 02 0e 03 00
+0010  00 09 04 00 00 00 0e 01 00 00 0d 24 01 00 01 28
+0020  00 80 8d 5b 00 01 01 12 24 02 01 01 02 02 06 00
+0030  00 00 00 00 00 03 20 02 00 09 24 03 02 01 01 01
+0040  01 00 09 04 01 00 00 0e 02 00 09 0e 24 01 01 47
+0050  00 81 00 02 00 00 00 01 00 1b 24 04 01 01 59 55
+0060  59 32 00 00 10 00 80 00 00 aa 00 38 9b 71 10 01
+0070  00 00 00 00 1e 24 05 01 00 00 01 c4 00 00 48 26
+0080  00 00 48 26 00 00 88 01 00 80 1a 06 00 01 80 1a
+0090  06 00 09 04 01 01 01 0e 02 00 00 07 05 81 05 0c
+00a0  02 01

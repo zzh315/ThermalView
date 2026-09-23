@@ -1,0 +1,26 @@
+# Android / Gradle / CMake build outputs
+build/
+.gradle/
+.cxx/
+.externalNativeBuild/
+local.properties
+captures/
+*.apk
+*.aab
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# Python
+tools/py/.venv/
+__pycache__/
+*.pyc
+
+# Benchmark data: large, kept locally (docs/PLAN.md M3)
+bench/**/*.raw
+bench/**/*.mp4
+
+# macOS
+.DS_Store
