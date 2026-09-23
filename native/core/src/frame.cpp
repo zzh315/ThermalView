@@ -59,7 +59,7 @@ uint32_t checkFrame(const FrameView& f, const ImageStats& s, bool startup) {
   const float e = f.emissivity(), h = f.humidity();
   if (!(e > 0.0f && e <= 1.0f)) flags |= kSanityEmissivity;
   if (!(h >= 0.0f && h <= 1.0f)) flags |= kSanityHumidity;
-  if (f.distance() == 0) flags |= kSanityDistance;
+  // No distance check: this camera reports distance 0 after power-up (docs/DEVICE.md).
   return flags;
 }
 
@@ -69,7 +69,6 @@ std::string describeSanity(uint32_t flags) {
       {kSanityBlockAOrder, "blockA max<min"}, {kSanityBlockAExtremes, "blockA!=image"},
       {kSanityShutterTemp, "shutter temp"},   {kSanityCoreTemp, "core temp"},
       {kSanityEmissivity, "emissivity"},      {kSanityHumidity, "humidity"},
-      {kSanityDistance, "distance"},
   };
   std::string out;
   for (const auto& n : kNames) {

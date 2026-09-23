@@ -95,7 +95,6 @@ enum SanityFlag : uint32_t {
   kSanityCoreTemp = 1u << 5,
   kSanityEmissivity = 1u << 6,
   kSanityHumidity = 1u << 7,
-  kSanityDistance = 1u << 8,
 };
 uint32_t checkFrame(const FrameView& frame, const ImageStats& stats, bool startup);
 std::string describeSanity(uint32_t flags);

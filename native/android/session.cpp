@@ -20,7 +20,11 @@ namespace {
 constexpr int64_t kMs = 1'000'000;
 constexpr int kRawModeDelayMs = 300;   // InfiRay's demo sends 0x8004 300 ms after the stream starts
 constexpr int kRangeToShutterMs = 500; // and 0x8000 about 0.5 s after a range command
-constexpr int kShutterHoldMs = 1000;   // frames withheld after 0x8000 (M1 measures the real cycle)
+constexpr int kNoFreezeMs = 1000;      // a hold ends if no freeze starts this long after 0x8000
+constexpr int kLiveStreak = 10;        // fresh frames after a freeze that end a hold (docs/DEVICE.md:
+                                       // after power-up a single fresh frame separates two freezes)
+constexpr int kHoldMaxMs = 8000;       // a hold ends after this long regardless (after power-up the
+                                       // camera repeats frames until ~10.4 s after plug-in)
 constexpr int kAwaitValidMs = 5000;    // start-up gives up after this long without valid frames
 constexpr int kValidStreak = 3;        // consecutive valid frames before 0x8020
 constexpr int kStallMs = 500;          // watchdog (docs/PLAN.md M1, tunable)
@@ -85,6 +89,7 @@ const char* stateName(State state) {
 struct Session::Snapshot {
   State state = State::Idle;
   bool fallbackOrder = false;
+  bool coldStart = false;  // the stream began with repeated frames (camera calibrating)
   std::string startOrderNote;
   double fps = 0, jitterMs = 0, maxIntervalMs = 0, procP95Ms = 0;
   uint64_t frames = 0, seqGaps = 0, arrivalGaps = 0, rejectedSize = 0, rejectedChecks = 0;
@@ -236,9 +241,13 @@ bool Session::startStreaming() {
   }
   validStreak_ = 0;
   lastHash_ = 0;
-  uniform_ = false;
+  inFreeze_ = false;
+  liveStreak_ = 0;
+  coldStart_ = false;
+  lastShutterNs_ = 0;
   rangeWindow_.clear();
   arrivals_.reset();
+  countersResetPending_ = true;
   if (fallbackOrder_) {
     // Approved fallback: InfiCam's order, mode and range before streaming (CLAUDE.md rule 1).
     command(kCmdRawOutput);
@@ -327,11 +336,25 @@ CommandResult Session::command(uint16_t value) {
   return result;
 }
 
+void Session::beginHold(int64_t now) {
+  holdSawFreeze_ = false;
+  liveStreak_ = 0;
+  enter(State::ShutterHold, now);
+}
+
 void Session::enter(State state, int64_t now) {
   const State previous = state_.exchange(state);
   stateSinceNs_ = now;
   if (previous != state) FLOG("state %s -> %s", stateName(previous), stateName(state));
-  if (state == State::Running && previous != State::ShutterHold) setBanner("");
+  if (state == State::Running && countersResetPending_) {
+    // Drops count from here: start-up bursts (e.g. the short frames after 0x8020) aren't drops.
+    countersResetPending_ = false;
+    arrivals_.reset();
+    rejectedSize_ = rejectedChecks_ = 0;
+    overrunBase_ = ring_->overruns();
+    procMs_.clear();
+    setBanner("");
+  }
 }
 
 void Session::fail(const std::string& reason) {
@@ -344,6 +367,13 @@ void Session::fail(const std::string& reason) {
 
 void Session::tick(int64_t now) {
   const auto since = [now](int64_t t) { return (now - t) / kMs; };
+  // Frames keep arriving (repeated) through a shutter cycle, so a silent stream is a stall.
+  const auto stalled = [&] {
+    const int64_t last = arrivals_.lastArrivalNs();
+    if (!last || since(last) <= kStallMs || since(lastShutterNs_) <= 2000) return false;
+    restartStream(format("stall: no frame for %" PRId64 " ms", since(last)).c_str());
+    return true;
+  };
   switch (state_.load()) {
     case State::Starting:
       if (since(streamStartNs_) >= kRawModeDelayMs) {
@@ -375,30 +405,35 @@ void Session::tick(int64_t now) {
           std::lock_guard o(optionsMutex_);
           skip = options_.skipStartupShutter;
         }
-        if (skip) {
+        if (skip)
           FLOG("start-up 0x8000 skipped (debug option)");
-          enter(State::Running, now);
-        } else {
+        else
           command(kCmdShutter);
-          holdUntilNs_ = now + kShutterHoldMs * kMs;
-          enter(State::ShutterHold, now);
-        }
+        beginHold(now);  // also when skipped: a camera calibrating after power-up is mid-cycle
       }
       break;
-    case State::ShutterHold:
-      if (now >= holdUntilNs_) enter(State::Running, now);
+    case State::ShutterHold: {
+      // A shutter cycle repeats the last frame for ~1.2 s (M1). After power-up the camera runs
+      // its own calibration first: repeated frames, a single fresh one, then another cycle
+      // (docs/DEVICE.md). So the hold ends with a run of fresh frames after a freeze.
+      if (stalled()) break;
+      const int64_t held = since(stateSinceNs_);
+      if (holdSawFreeze_ ? liveStreak_ >= kLiveStreak : held >= kNoFreezeMs) {
+        enter(State::Running, now);
+      } else if (held >= kHoldMaxMs) {
+        FLOG("shutter hold ends after %d ms without a run of fresh frames", kHoldMaxMs);
+        enter(State::Running, now);
+      }
       break;
+    }
     case State::Running: {
       if (const int64_t sent = manualShutterNs_.exchange(0)) {
         ++shutterCommanded_;
         lastShutterNs_ = sent;
-        holdUntilNs_ = now + kShutterHoldMs * kMs;
-        enter(State::ShutterHold, now);
+        beginHold(now);
         break;
       }
-      const int64_t last = arrivals_.lastArrivalNs();
-      if (last && since(last) > kStallMs && since(lastShutterNs_) > 2000)
-        restartStream(format("stall: no frame for %" PRId64 " ms", since(last)).c_str());
+      stalled();
       break;
     }
     default:
@@ -406,10 +441,51 @@ void Session::tick(int64_t now) {
   }
 }
 
+// Shutter cycles: the camera repeats its last frame while the shutter is closed (M1), so a run of
+// identical frames marks one. Tracked in every state, so the log also shows the start-up and
+// power-up cycles. (Comparing contrast with recent frames misfired on scene changes.)
+void Session::trackFreezes(const RawFrame& frame, const FrameView& view, uint32_t flags,
+                           bool frozen, State state) {
+  if (flags) {
+    liveStreak_ = 0;
+  } else if (frozen) {
+    liveStreak_ = 0;
+    ++frozenFrames_;
+    ++freezeRepeats_;
+    if (state == State::ShutterHold) holdSawFreeze_ = true;
+    if (!inFreeze_) {
+      inFreeze_ = true;
+      freezeStartNs_ = frame.arrivalNs;
+      freezeRepeats_ = 1;
+      ++shutterDetected_;
+      const int64_t sinceCommand = frame.arrivalNs - lastShutterNs_;
+      const bool commanded = lastShutterNs_ && sinceCommand >= 0 && sinceCommand < 3000 * kMs;
+      if (!commanded) ++shutterUncommanded_;
+      FLOG("frozen frames start (%s, %s)", commanded ? "after our 0x8000" : "NOT commanded",
+           stateName(state));
+    }
+  } else {
+    ++liveStreak_;
+    if (inFreeze_) {
+      inFreeze_ = false;
+      lastCycleMs_ = double(frame.arrivalNs - freezeStartNs_) / 1e6;
+      FLOG("frozen frames end after %.0f ms (%d repeats); FPA %.2f C, shutter %.2f C", lastCycleMs_,
+           freezeRepeats_, view.fpaC(), view.shutterC());
+    }
+  }
+}
+
 void Session::handleFrame(const RawFrame& frame) {
   const int64_t t0 = nowNs();
   const State state = state_.load();
+  const uint64_t gapsBefore = arrivals_.sequenceGaps();
   arrivals_.onFrame(frame.arrivalNs, frame.sequence);
+  if (state == State::Running && arrivals_.sequenceGaps() > gapsBefore) {
+    ++seqGapsLogged_;
+    if (seqGapsLogged_ <= 20 || seqGapsLogged_ % 100 == 0)
+      FLOG("sequence gap: %" PRIu64 " frame(s) missed before seq %u (%u bytes)",
+           arrivals_.sequenceGaps() - gapsBefore, frame.sequence, frame.bytes);
+  }
   if (frame.bytes != kFrameBytes) {
     ++rejectedSize_;
     if (rejectedSize_ <= 10 || rejectedSize_ % 100 == 0)
@@ -421,10 +497,13 @@ void Session::handleFrame(const RawFrame& frame) {
   const ImageStats stats = computeImageStats(view.image());
   const bool steady = state == State::Running || state == State::Replay;
   const uint32_t flags = checkFrame(view, stats, !steady);
+  // Frozen = identical to the last frame that passed the checks, so a stray bad frame (one
+  // follows 0x8020) doesn't split a freeze in two.
   const uint64_t hash = hashImage(view.image());
-  const bool frozen = hash == lastHash_;
-  lastHash_ = hash;
+  const bool frozen = !flags && hash == lastHash_;
+  if (!flags) lastHash_ = hash;
   if (flags) lastFlags_ = flags;
+  trackFreezes(frame, view, flags, frozen, state);
 
   {
     bool wantCsv;
@@ -449,6 +528,12 @@ void Session::handleFrame(const RawFrame& frame) {
       if (flags) {
         validStreak_ = 0;
       } else if (++validStreak_ >= kValidStreak) {
+        // Repeated frames right at the start: the camera is calibrating, as after power-up.
+        coldStart_ = inFreeze_;
+        if (coldStart_) {
+          FLOG("stream began with repeated frames: the camera is calibrating (power-up)");
+          setBanner("Camera calibrating after power-up…");
+        }
         if (!fallbackOrder_) command(kCmdRangeNormal);  // the fallback sent it before streaming
         rangeSentNs_ = nowNs();
         enter(State::RangeWait, rangeSentNs_);
@@ -472,28 +557,6 @@ void Session::handleFrame(const RawFrame& frame) {
   }
 
   if (accepted) {
-    // Shutter-like frames: frozen (identical) or near-uniform relative to recent frames.
-    const double range = double(stats.max) - double(stats.min);
-    const bool haveMedian = rangeWindow_.size() >= 25;
-    const double median = haveMedian ? rangeWindow_.percentile(50) : 0;
-    const bool uniformNow = frozen || (haveMedian && range < 0.3 * median);
-    if (!uniformNow) rangeWindow_.push(range);
-    if (frozen) ++frozenFrames_;
-    if (uniformNow && !uniform_) {
-      uniform_ = true;
-      uniformStartNs_ = frame.arrivalNs;
-      ++shutterDetected_;
-      const bool commanded = lastShutterNs_ && frame.arrivalNs - lastShutterNs_ < 3000 * kMs;
-      if (!commanded) ++shutterUncommanded_;
-      FLOG("shutter-like frames start (%s, %s; range %.0f vs median %.0f)",
-           frozen ? "frozen" : "near-uniform", commanded ? "after our 0x8000" : "NOT commanded",
-           range, median);
-    } else if (!uniformNow && uniform_) {
-      uniform_ = false;
-      lastCycleMs_ = double(frame.arrivalNs - uniformStartNs_) / 1e6;
-      FLOG("shutter-like frames end after %.0f ms", lastCycleMs_);
-    }
-
     captureForDump(frame);
 
     DisplayFrame& out = renderer_.frameSlot();
@@ -510,6 +573,7 @@ void Session::handleFrame(const RawFrame& frame) {
   Snapshot& s = *snapshot_;
   s.state = state_.load();
   s.fallbackOrder = fallbackOrder_;
+  s.coldStart = coldStart_;
   s.startOrderNote = startOrderNote_;
   s.fps = arrivals_.fps();
   s.jitterMs = arrivals_.jitterMs();
@@ -520,7 +584,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.rejectedSize = rejectedSize_;
   s.rejectedChecks = rejectedChecks_;
   s.startupDiscarded = startupDiscarded_;
-  s.overruns = ring_->overruns();
+  s.overruns = ring_->overruns() - overrunBase_;
   s.restarts = restarts_;
   s.frozen = frozenFrames_;
   s.shutterCommanded = shutterCommanded_;
@@ -677,7 +741,8 @@ std::string Session::startReplay(const std::string& base) {
   arrivals_.reset();
   rangeWindow_.clear();
   lastHash_ = 0;
-  uniform_ = false;
+  inFreeze_ = false;
+  liveStreak_ = 0;
   enter(State::Replay, nowNs());
   startProcessing();
   replayRun_ = true;
@@ -768,8 +833,9 @@ std::string Session::overlayText() {
   const Snapshot& s = *snapshot_;
   std::string o;
   const std::string note = s.startOrderNote.empty() ? "" : " (" + s.startOrderNote + ")";
-  o += format("ThermalView %s  %s  %s order%s\n", appVersion_.c_str(), stateName(s.state),
-              s.fallbackOrder ? "fallback" : "stream-first", note.c_str());
+  o += format("ThermalView %s  %s  %s order%s  %s start\n", appVersion_.c_str(),
+              stateName(state_.load()), s.fallbackOrder ? "fallback" : "stream-first", note.c_str(),
+              s.coldStart ? "power-up (camera calibrating)" : "live");
   o += format("fps %.2f  jitter %.2f ms  max %.1f ms  latency p50 %.1f / p95 %.1f ms  proc p95 %.2f ms\n",
               s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms);
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64

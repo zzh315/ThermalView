@@ -46,13 +46,10 @@ private object SurfaceCallbacks : SurfaceHolder.Callback {
 }
 
 @Composable
-fun AppScreen(message: String, dumpsDir: String) {
+fun AppScreen(message: String, dumpsDir: String, options: DebugOptions, onOptions: (DebugOptions) -> Unit) {
     var status by remember { mutableStateOf(Status()) }
     var overlay by remember { mutableStateOf("") }
     var showOverlay by rememberSaveable { mutableStateOf(BuildConfig.DEBUG) }
-    var skipShutter by rememberSaveable { mutableStateOf(false) }
-    var statsCsv by rememberSaveable { mutableStateOf(false) }
-    var fallbackOrder by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -60,9 +57,6 @@ fun AppScreen(message: String, dumpsDir: String) {
             if (showOverlay) overlay = NativeBridge.overlayText()
             delay(250)
         }
-    }
-    LaunchedEffect(skipShutter, statsCsv, fallbackOrder) {
-        NativeBridge.setOptions(skipShutter, statsCsv, fallbackOrder)
     }
     val view = LocalView.current
     DisposableEffect(status.streaming) {
@@ -99,12 +93,8 @@ fun AppScreen(message: String, dumpsDir: String) {
                 dumpsDir = dumpsDir,
                 showOverlay = showOverlay,
                 onShowOverlay = { showOverlay = it },
-                skipShutter = skipShutter,
-                onSkipShutter = { skipShutter = it },
-                statsCsv = statsCsv,
-                onStatsCsv = { statsCsv = it },
-                fallbackOrder = fallbackOrder,
-                onFallbackOrder = { fallbackOrder = it },
+                options = options,
+                onOptions = onOptions,
             )
         }
     }
@@ -116,12 +106,8 @@ private fun DebugPanel(
     dumpsDir: String,
     showOverlay: Boolean,
     onShowOverlay: (Boolean) -> Unit,
-    skipShutter: Boolean,
-    onSkipShutter: (Boolean) -> Unit,
-    statsCsv: Boolean,
-    onStatsCsv: (Boolean) -> Unit,
-    fallbackOrder: Boolean,
-    onFallbackOrder: (Boolean) -> Unit,
+    options: DebugOptions,
+    onOptions: (DebugOptions) -> Unit,
 ) {
     val context = LocalContext.current
     val toast = { text: String -> Toast.makeText(context, text, Toast.LENGTH_SHORT).show() }
@@ -133,9 +119,13 @@ private fun DebugPanel(
             Surface(color = Color(0xE0202020), shape = RoundedCornerShape(8.dp)) {
                 Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Toggle("Overlay", showOverlay, onShowOverlay)
-                    Toggle("Skip start-up 0x8000 (next start)", skipShutter, onSkipShutter)
-                    Toggle("Stats CSV", statsCsv, onStatsCsv)
-                    Toggle("Fallback start order (next start)", fallbackOrder, onFallbackOrder)
+                    Toggle("Skip start-up 0x8000 (next start)", options.skipStartupShutter) {
+                        onOptions(options.copy(skipStartupShutter = it))
+                    }
+                    Toggle("Stats CSV", options.statsCsv) { onOptions(options.copy(statsCsv = it)) }
+                    Toggle("Fallback start order (next start)", options.fallbackOrder) {
+                        onOptions(options.copy(fallbackOrder = it))
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { toast("Dump: " + NativeBridge.startDump(200)) }) { Text("Dump 200") }
                         Button(onClick = { toast("0x8000: " + NativeBridge.sendShutter()) }) { Text("Send 0x8000") }

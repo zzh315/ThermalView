@@ -110,7 +110,13 @@ TEST_CASE("each sanity check fires on its own fault") {
   check([](auto& d) { d[tv::kOffsetQ + 2] = 0; }, tv::kSanityCoreTemp);
   check([](auto& d) { putF32(d, tv::kOffsetU + 8, 0.0f); }, tv::kSanityEmissivity);
   check([](auto& d) { putF32(d, tv::kOffsetU + 6, 1.5f); }, tv::kSanityHumidity);
-  check([](auto& d) { d[tv::kOffsetU + 10] = 0; }, tv::kSanityDistance);
+}
+
+TEST_CASE("distance 0 is valid: the camera reports it after power-up") {
+  auto data = goodFrame();
+  data[tv::kOffsetU + 10] = 0;
+  const tv::FrameView f(data.data());
+  CHECK(tv::checkFrame(f, tv::computeImageStats(f.image()), true) == 0);
 }
 
 TEST_CASE("Block A may disagree with the image after start-up") {

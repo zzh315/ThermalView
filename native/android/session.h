@@ -71,6 +71,9 @@ class Session {
   void handleFrame(const RawFrame& frame);
   void tick(int64_t now);
   void enter(State state, int64_t now);
+  void beginHold(int64_t now);  // withhold frames through a shutter cycle
+  void trackFreezes(const RawFrame& frame, const FrameView& view, uint32_t flags, bool frozen,
+                    State state);
   void fail(const std::string& reason);
   CommandResult command(uint16_t value);
   void captureForDump(const RawFrame& frame);
@@ -111,9 +114,14 @@ class Session {
   int64_t stateSinceNs_ = 0;
   int64_t streamStartNs_ = 0;
   int64_t rangeSentNs_ = 0;
-  int64_t holdUntilNs_ = 0;
   int64_t lastShutterNs_ = 0;
   int validStreak_ = 0;
+  bool countersResetPending_ = false;  // reset drop statistics when Running begins
+  int liveStreak_ = 0;          // consecutive fresh frames that passed the checks
+  bool holdSawFreeze_ = false;  // a freeze began during the current hold
+  bool coldStart_ = false;      // the stream began with repeated frames
+  uint64_t overrunBase_ = 0;
+  uint64_t seqGapsLogged_ = 0;
   bool fallbackOrder_ = false;
   bool fallbackTried_ = false;
   std::atomic<int64_t> manualShutterNs_{0};
@@ -127,8 +135,9 @@ class Session {
   int sanityStreak_ = 0;
   uint32_t lastFlags_ = 0;
   uint64_t lastHash_ = 0;
-  bool uniform_ = false;
-  int64_t uniformStartNs_ = 0;
+  bool inFreeze_ = false;
+  int64_t freezeStartNs_ = 0;
+  int freezeRepeats_ = 0;
   double lastCycleMs_ = 0;
   std::unique_ptr<Snapshot> snapshot_;
   std::mutex snapshotMutex_;

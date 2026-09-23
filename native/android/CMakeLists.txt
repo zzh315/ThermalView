@@ -8,6 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(TV_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(TP ${TV_ROOT}/native/third_party)
 
+# Debug APKs carry the overlay that measures the performance budget, so their native code is
+# optimized too (symbols kept).
+set(CMAKE_C_FLAGS_DEBUG "-O2 -g")
+set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g")
+
 # Portable core (decode, command-gate logic, dump format, stats).
 add_subdirectory(${TV_ROOT}/native/core ${CMAKE_CURRENT_BINARY_DIR}/core)
 

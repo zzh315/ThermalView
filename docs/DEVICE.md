@@ -36,7 +36,54 @@ From `adb logcat --pid=<app>` during the M0 compatibility matrix:
   - shutter temperature 3050 (K × 10) = 31.85 °C;
   - FPA temperature 32.26 °C.
 
-  All are plausible, which supports "V1 camera, compensated output" and PROTOCOL.md's offsets. InfiCamPlus then wrote its own defaults into the user area (emissivity 0.95, reflected and air temperature 20 °C, humidity 0.5, distance 1); the camera was unplugged afterwards. M1 should record the user area after a fresh plug-in, to learn what the camera holds when no app has written to it.
+  All are plausible, which supports "V1 camera, compensated output" and PROTOCOL.md's offsets. InfiCamPlus then wrote its own defaults into the user area (emissivity 0.95, reflected and air temperature 20 °C, humidity 0.5, distance 1); the camera was unplugged afterwards. Our own decoder confirmed all of this in M1 (next section).
+
+### Verified by our app on the tablet (M1, 2026-09-24)
+
+From ThermalView's debug overlay and field log (`adb logcat -s 'ThermalView:*'`), camera plugged straight into the tablet:
+
+| Fact | Value |
+|---|---|
+| Orientation | Correct as-is: the camera faces the same way as the tablet's rear camera, and the image looks like a window. No transform (checked with the owner) |
+| Metadata strings | Firmware "1.00.201203" at Q+24. Serial "KA1213" at Q+32 and product "S0H-40" at Q+40 (InfiCam's layout). Both repeat as `KA1213\0S0H-40` at P+512 (metadata row 2), the layout seen on the T2S+ v2 |
+| Calibration constants | cal_00 = 6000; cal_01…05 = 0.2333, 27.867, 4e-05, 0.0053, 0.5351 — the values InfiCamPlus decoded |
+| Block A | max/min agree exactly with the image's own extremes; avg within a few counts of the image mean |
+| User area after power-up (no app has written it) | correction 0, reflected 25.00 °C, air 25.00 °C, humidity 0.450, emissivity 0.980, **distance 0**. InfiCamPlus's writes were gone after a replug, so user-area writes are volatile |
+| Temperatures | FPA 21.7 °C at plug-in, warming to ~31 °C over 20 minutes on the tablet; shutter and core temperatures track it within ~1–2 °C |
+| Frame rate | 25.15 fps by the tablet's clock, jitter ~1 ms, max interval ~41 ms |
+| Start sequence (stream first) | One 512-byte partial frame at stream start. `0x8004` accepted at +0.3 s; frames pass the checks within 3 frames. `0x8020` accepted, then one burst of short frames (from 2 frames of 40–55 KB to 9 frames of ~460 bytes). `0x8000` 0.5 s later |
+| Shutter cycle after `0x8000` (camera already warm) | Repeated frames start ~0.1 s after the command: the camera repeats one frame 30 times (1.23 s), then fresh frames resume. Q+1 (shutter temperature) updates during the cycle unless it moved less than 0.1 K. Four commands behaved alike: one at start-up and three 14.5 s apart |
+| `0x8020` alone (camera already warm) | No cycle. In two reconnects with the start-up `0x8000` skipped, fresh frames continued throughout. One malformed frame follows the command |
+| Warm camera, no commands | No cycle in 929 s (FPA 30.88 → 31.07 °C). While the camera stays powered, a reconnect's first frame arrives within 0.1 s of stream start, already in raw mode before `0x8004` is sent |
+| After power-up | The camera runs its own calibration cycles for ~65 s, then none. See "Power-up calibration" below |
+| Noise, flat wall (FPA ~31 °C) | Temporal 1.22–1.30 counts, ~26 mK at 20.8 mK/count (the oracle's LUT slope at the wall's level). Fixed pattern after removing a 2nd-order surface: 3.2–3.4 counts, mostly column stripes (2.0–2.2 counts; rows 0.4). It didn't grow over 14 minutes at a steady FPA |
+| Reconnect and replug | Clean teardown and reopen. 178–180 fds (always one USB fd) and 33–34 threads before and after, so nothing leaks |
+| Performance (optimized native code) | Latency p50 3.2 / p95 4.3 ms (callback to buffer swap); processing p95 ~1 ms; no drops, overruns or rejects over 8700+ frames |
+
+Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.
+
+### Power-up calibration (M1, 2026-09-24)
+
+After power-up the camera calibrates itself on a fixed schedule, then stops. Times below are from power-up: the Type-C attach in logcat (`android.hardware.usb@1.2-service-qti: partner added`). The owner listened to one power-up with the start-up `0x8000` skipped and heard pairs of clicks at about 0, 6, 8, 15, 30 and 60 s. Each pair is a close and an open; within counting accuracy they match:
+
+| Time after power-up | Event | Seen as |
+|---|---|---|
+| 0 s | Clicks | Heard |
+| 3.1 s | USB enumeration; the app starts streaming | logcat `UsbHostManager: USB device attached` |
+| 5.1 s | First frame, 2 s after stream start (a warm camera takes under 0.1 s). One near-uniform image repeats (raw mean ~11350, sd ~120) | CSV |
+| ~6 s | Clicks, during the repeated frames | Heard |
+| 9.1 s | One fresh frame: raw mean ~11290, sd ~1040, apparently uncorrected | CSV |
+| 9.15 s | Cycle: 31 repeated frames, 1.23–1.27 s | CSV, field log |
+| 10.4 s | Fresh frames at the normal level (raw mean ~5340, sd ~9 on a wall) | CSV |
+| 13.1 s, 37.0 s, 64.8 s | Cycles, same length | CSV, field log |
+| after 65 s | No cycle in the following 392 s, although the FPA rose 30.91 → 31.65 °C | CSV |
+
+- **Timer, not temperature.** Two power-ups gave the same gaps between the last three cycles to within 5 ms: 23.85 s and 27.83 s. Meanwhile the FPA moved by different amounts (+0.13, +0.61 and +0.24 °C).
+- **Our `0x8000` has no visible effect during the calibration.** In the earlier power-up, streaming began 7.2 s after power-up and the start-up `0x8000` went out at 8.3 s. The timeline still matched the uncommanded run: the 9.15 s cycle ended at 10.35 s (10.44 s without the command), and the later cycles fell on the same times to the millisecond. That power-up's time comes from logcat's `USB_DEVICE_ATTACHED` event minus the 3.1 s enumeration delay, and the schedule itself puts it within 0.04 s of that.
+- **We can't tell whether `0x8020` matters at power-up.** It went out at 5.3 s, during the repeated frames. The later level matches warm starts. Either the camera applied the range or it already starts in the normal range.
+- **Cold vs warm starts are easy to tell apart.** After power-up the stream opens with repeated frames; a warm camera's first frames are fresh. The app logs which kind of start it saw ("stream began with repeated frames").
+
+Commands: `adb logcat -d -b all` (plug-in and enumeration times), the field log, and `tools/py/shutter_stats.py STATS.csv --offset 3.13` on the power-up CSV.
 
 ## Mac toolchain (verified 2026-09-24)
 

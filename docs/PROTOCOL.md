@@ -53,18 +53,21 @@ Block B, at `Q = P + amountPixels`, where `amountPixels = 256` for width 256 (it
 | Offset | Type | Field |
 |---|---|---|
 | +0 | u16 | cal_00 |
-| +1 | u16 | shutter temperature, kelvin × 10 |
+| +1 | u16 | shutter temperature, kelvin × 10 — on our camera it changes only during a shutter cycle (M1) |
 | +2 | u16 | core temperature, kelvin × 10 |
 | +3 | f32 (2 × u16) | cal_01 |
 | +5 | f32 | cal_02 |
 | +7 | f32 | cal_03 |
 | +9 | f32 | cal_04 |
 | +11 | f32 | cal_05 |
+| +13..+23 | f32 × 5, u16 | not in any source: a second environment block with the user area's layout (correction, reflected, air, humidity, emissivity, distance). Our camera: 0.0, 25.0, 25.0, 0.45, 0.98, **1** — distance 1 where the user area says 0 (M1) |
 | +24..+31 | 16-byte ASCII | firmware version |
-| +32..+39 | 16-byte ASCII | serial number (location unproven for width 256 — see below) |
-| +40..+47 | 16-byte ASCII | product name (location unproven for width 256 — see below) |
+| +32..+39 | 16-byte ASCII | serial number (verified on our camera — see below) |
+| +40..+47 | 16-byte ASCII | product name (verified on our camera — see below) |
 
-The firmware string at Q+24 is solid in every source. The 16-byte serial and product fields at Q+32/Q+40 are InfiCam's layout. ht301_hacklib reads only 6 bytes of serial at Q+32 and no product name, and on the T2S+ v2 test frame, serial and product (`ME1299\0T2S+`) sat at `P + 512` (metadata row 2) instead. Parse all strings as NUL-terminated and tolerate non-ASCII bytes.
+**Open question for M2:** which environment block the vendor's math uses. ht301_hacklib (our reference) reads the user area. The final correction term `(distance × 0.85 − 1.125) × (T − air) / 100` makes distance 0 vs 1 worth about 0.5 °C at 80 °C, so the M2 cross-check against Xtherm may show exactly that gap.
+
+The firmware string at Q+24 is solid in every source. The 16-byte serial and product fields at Q+32/Q+40 are InfiCam's layout. ht301_hacklib reads only 6 bytes of serial at Q+32 and no product name, and on the T2S+ v2 test frame, serial and product (`ME1299\0T2S+`) sat at `P + 512` (metadata row 2) instead. **Verified on our camera (M1):** firmware "1.00.201203" at Q+24, serial "KA1213" at Q+32, product "S0H-40" at Q+40 — and the pair repeats as `KA1213\0S0H-40` at P+512 (docs/DEVICE.md). Parse all strings as NUL-terminated and tolerate non-ASCII bytes.
 
 User area, at `U = Q + 127`. The camera fills it; we only ever read it:
 
@@ -77,9 +80,7 @@ User area, at `U = Q + 127`. The camera fills it; we only ever read it:
 | +8 | f32 | emissivity |
 | +10 | u16 | distance |
 
-Distance is a u16 in the vendor software; InfiCam alone reads it as a float. On the test frame the user area read 0.0 / 25.0 / 25.0 / 0.45 / 0.98 / 1, matching the vendor log.
-
-**VERIFY (M1):** the firmware string decodes as readable text. Locate the serial and product strings by searching all four metadata rows for the USB serial "KA1213", and record their offsets in docs/DEVICE.md. If the firmware string doesn't decode, the offsets are wrong — stop and investigate before M2.
+Distance is a u16 in the vendor software; InfiCam alone reads it as a float. On the test frame the user area read 0.0 / 25.0 / 25.0 / 0.45 / 0.98 / 1, matching the vendor log. Our camera, freshly powered, reads 0.0 / 25.0 / 25.0 / 0.45 / 0.98 / **0** (M1). InfiCamPlus's writes didn't survive a replug, which fits its source never sending `0x80FF`. Whether the closed apps save their settings to the camera is unknown.
 
 ## Sanity checks (every frame)
 
@@ -88,8 +89,10 @@ Reject any frame that fails one of these. If failures persist once start-up is o
 - The frame is exactly 256 × 196 × 2 bytes, and every image value is ≤ `0x3FFF`.
 - Block A's max/min/center fields are non-zero and max ≥ min. At start-up, also check that they roughly match the image's own extremes.
 - Shutter and core temperatures decode to plausible values (between −20 and 80 °C).
-- User-area values are in range: emissivity in (0, 1], humidity in [0, 1], distance > 0.
-- The LUT built from this frame is finite and increasing above its vertex.
+- User-area values are in range: emissivity in (0, 1], humidity in [0, 1]. (Distance isn't checked: 0 is what this camera reports after power-up.)
+- The LUT built from this frame is finite and increasing above its vertex (from M2, when the LUT exists).
+
+Partial frames are normal at two moments: one short frame when streaming starts (512 bytes), and a few when `0x8020` switches the range mid-frame (seen: 2 frames of 40–55 KB, or 9 of ~460 bytes). The size check drops them.
 
 A camera streaming uncompensated ("V2") data fails them: on the T2S+ v2 test frame Block A +2..+15 were all zero, and the shutter and core fields decoded to −219.95 °C and −273.15 °C. We don't expect that here. InfiCamPlus decides V2 purely from USB strings — manufacturer "Xinfrared", or product names such as "T2S+_V2" or ones containing "_R", "_A" or "_C" — so "S0H-40" from "Infiray" takes its V1 path, and its older builds treated every VID 0x1514 device as V1. A V2 camera would need `0x8081` (download the per-pixel gain), held-shutter `0x8000` bursts and a libuvc patched to keep payload headers — all outside our rules, so that's an owner decision, not a code fix.
 
@@ -125,14 +128,14 @@ Transport: UVC SET_CUR on CT_ZOOM_ABSOLUTE_CONTROL with a 16-bit value (`uvc_set
 - ht301_hacklib and IR-Py-Thermal send `0x8004` before OpenCV starts streaming (V4L2 starts on the first read). ht301_hacklib waits 50 frames after a range change before `0x8000` ("some delay is needed before calibration").
 - P2Pro-Viewer reports that libusb commands hang unless the video stream is open. That's on Windows with the libusb-win32 filter driver, for a P2 Pro using a different transport — a hint, not evidence for this camera.
 
-No source shows a range command triggering a shutter cycle by itself. InfiRay's demo, InfiCam and ht301_hacklib all follow it with `0x8000`; IR-Py-Thermal sends nothing and just waits for a non-uniform frame.
+No source shows a range command triggering a shutter cycle by itself, and on our camera it doesn't, at least when the camera is warm (M1). InfiRay's demo, InfiCam and ht301_hacklib all follow it with `0x8000`; IR-Py-Thermal sends nothing and just waits for a non-uniform frame.
 
 Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004` → drop frames until they pass the sanity checks → `0x8020` → `0x8000` about 0.5 s later → drop frames through the shutter cycle. Fallback, if M1 shows trouble with streaming first: InfiCam's order, with `0x8004` and `0x8020` before streaming.
 
 | Value | Meaning (source) | Status |
 |---|---|---|
 | 0x8004 | Raw 16-bit output; sent at start. The original SDK comment, quoted in InfiCam's notes: "切换数据输出8004原始8005yuv,80ff保存" (8004 = raw, 8005 = YUV, 80ff = save) | **Allowed** — once at start |
-| 0x8020 | Range −20 to 120 °C, "(followed by shutter)" per InfiCam's notes — whether the camera cycles by itself or the host must send `0x8000` is unclear | **Allowed** — once at start |
+| 0x8020 | Range −20 to 120 °C, "(followed by shutter)" per InfiCam's notes. On a warm camera it triggers no cycle (M1), so the host sends `0x8000` | **Allowed** — once at start |
 | 0x8000 | Click shutter + dark-frame calibration | **Allowed** — at start, on Recalibrate, and by an owner-approved policy; max once per 10 s |
 | 0x8001 | Dark-frame calibration without closing the shutter; effect on the image unclear | Forbidden |
 | 0x8002 | Raw output without dark-frame compensation | Forbidden |
@@ -151,8 +154,15 @@ Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004`
 
 ## Runtime behavior to expect
 
-- **Shutter cycles.** No source confirms that the camera runs periodic shutter cycles on its own, and no app detects cycles it didn't request. The apps drive them: InfiRay's demo and Xtherm send `0x8000` 1 s after connect and then every 380 s, and InfiCamPlus ramps its interval from 7.5 s to 180 s during warm-up. The demo refreshes the temperature table from the next frame after each shutter ("打快门更新表", shutter → update table). During a cycle, frames freeze or turn near-uniform. InfiCamPlus treats 350–800 ms after `0x8000` as shutter-closed and withholds 800 ms of frames; it gives no source for those numbers. Detect cycles and hold the last good image (PLAN M4).
-- **VERIFY (M1):** stream for at least 15 minutes without sending `0x8000` after start-up, and log whether the camera cycles by itself, how often and for how long. Record whether `0x8020` alone triggers a cycle, the actual frame rate, and whether any metadata field changes during a cycle (usable as a detector).
+- **Shutter cycles (verified in M1; details in DEVICE.md).**
+  - After power-up, our camera calibrates itself on a fixed timer. Frames repeat until ~9.1 s, and cycles start at ~9.15, 13.1, 37.0 and 64.8 s. After that it never cycles on its own: none in 929 s warm, and none in 392 s after the power-up series while the FPA rose 0.74 °C.
+  - So once warm-up is over, only the host corrects drift. The apps do this: InfiRay's demo and Xtherm send `0x8000` 1 s after connect and then every 380 s. InfiCamPlus ramps its interval from 7.5 s to 180 s during warm-up; that ramp resembles the camera's own power-up schedule.
+  - The demo refreshes the temperature table from the next frame after each shutter ("打快门更新表", shutter → update table).
+  - During a cycle the camera repeats its last frame. Each cycle is 30–31 identical frames (1.23–1.27 s), commanded or not, starting ~0.1 s after `0x8000`. Identical frames are the detector. Q+1 (shutter temperature) also updates at each cycle, but not when it moved less than 0.1 K, so it isn't a reliable signal on its own.
+  - InfiCamPlus treats 350–800 ms after `0x8000` as shutter-closed and withholds 800 ms of frames. On our camera the freeze is longer, so its numbers don't transfer.
+  - Detect cycles and hold the last good image (PLAN M4). Count the camera's own cycles as calibrations too.
+- **`0x8020`** triggers no cycle on a warm camera; one malformed frame follows it. At power-up its effect can't be separated from the camera's own calibration.
+- **Start-up.** After power-up the stream opens with repeated frames, and a `0x8000` sent then has no visible effect (DEVICE.md). The start-up hold therefore ends only after 10 fresh frames following a freeze, and gives up after 8 s. A warm camera streams fresh raw frames within 0.1 s. Frame rate: 25.15 fps by the tablet's clock.
 - **Dropped frames.** libuvc hands the callback only the newest completed frame, so frames the callback missed show up as gaps in `frame->sequence`; frames lost on the bus show up as arrival gaps.
 - **libuvc quirks.** Request an explicit frame interval (25 fps): with `fps = 0` libuvc divides by zero on a continuous-interval descriptor. `UVC_FRAME_FORMAT_ANY` only matches the YUYV, UYVY, GRAY8, GRAY16, NV12 and BGR GUIDs, so pass the format M0 verifies.
 
