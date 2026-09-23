@@ -242,6 +242,7 @@ bool Session::startStreaming() {
   validStreak_ = 0;
   lastHash_ = 0;
   inFreeze_ = false;
+  lastFreshNs_ = 0;
   liveStreak_ = 0;
   coldStart_ = false;
   lastShutterNs_ = 0;
@@ -405,11 +406,15 @@ void Session::tick(int64_t now) {
           std::lock_guard o(optionsMutex_);
           skip = options_.skipStartupShutter;
         }
+        // After power-up the camera calibrates itself for ~65 s, and a 0x8000 sent meanwhile has
+        // no visible effect (docs/DEVICE.md), so only a warm camera gets one (owner decision).
         if (skip)
           FLOG("start-up 0x8000 skipped (debug option)");
+        else if (coldStart_)
+          FLOG("start-up 0x8000 skipped: the camera is calibrating after power-up");
         else
           command(kCmdShutter);
-        beginHold(now);  // also when skipped: a camera calibrating after power-up is mid-cycle
+        beginHold(now);  // the hold also covers a camera still calibrating after power-up
       }
       break;
     case State::ShutterHold: {
@@ -455,7 +460,7 @@ void Session::trackFreezes(const RawFrame& frame, const FrameView& view, uint32_
     if (state == State::ShutterHold) holdSawFreeze_ = true;
     if (!inFreeze_) {
       inFreeze_ = true;
-      freezeStartNs_ = frame.arrivalNs;
+      freezeStartNs_ = lastFreshNs_ ? lastFreshNs_ : frame.arrivalNs;  // the repeated frame's own
       freezeRepeats_ = 1;
       ++shutterDetected_;
       const int64_t sinceCommand = frame.arrivalNs - lastShutterNs_;
@@ -468,10 +473,12 @@ void Session::trackFreezes(const RawFrame& frame, const FrameView& view, uint32_
     ++liveStreak_;
     if (inFreeze_) {
       inFreeze_ = false;
+      // Measured like tools/py/shutter_stats.py: from the repeated frame to the next fresh one.
       lastCycleMs_ = double(frame.arrivalNs - freezeStartNs_) / 1e6;
-      FLOG("frozen frames end after %.0f ms (%d repeats); FPA %.2f C, shutter %.2f C", lastCycleMs_,
-           freezeRepeats_, view.fpaC(), view.shutterC());
+      FLOG("frozen frames end: %d repeats, one image for %.0f ms; FPA %.2f C, shutter %.2f C",
+           freezeRepeats_, lastCycleMs_, view.fpaC(), view.shutterC());
     }
+    lastFreshNs_ = frame.arrivalNs;
   }
 }
 
@@ -742,6 +749,7 @@ std::string Session::startReplay(const std::string& base) {
   rangeWindow_.clear();
   lastHash_ = 0;
   inFreeze_ = false;
+  lastFreshNs_ = 0;
   liveStreak_ = 0;
   enter(State::Replay, nowNs());
   startProcessing();

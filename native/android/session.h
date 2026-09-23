@@ -137,6 +137,7 @@ class Session {
   uint64_t lastHash_ = 0;
   bool inFreeze_ = false;
   int64_t freezeStartNs_ = 0;
+  int64_t lastFreshNs_ = 0;  // arrival of the last fresh frame that passed the checks
   int freezeRepeats_ = 0;
   double lastCycleMs_ = 0;
   std::unique_ptr<Snapshot> snapshot_;

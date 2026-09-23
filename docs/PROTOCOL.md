@@ -130,7 +130,7 @@ Transport: UVC SET_CUR on CT_ZOOM_ABSOLUTE_CONTROL with a 16-bit value (`uvc_set
 
 No source shows a range command triggering a shutter cycle by itself, and on our camera it doesn't, at least when the camera is warm (M1). InfiRay's demo, InfiCam and ht301_hacklib all follow it with `0x8000`; IR-Py-Thermal sends nothing and just waits for a non-uniform frame.
 
-Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004` → drop frames until they pass the sanity checks → `0x8020` → `0x8000` about 0.5 s later → drop frames through the shutter cycle. Fallback, if M1 shows trouble with streaming first: InfiCam's order, with `0x8004` and `0x8020` before streaming.
+Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004` → drop frames until they pass the sanity checks → `0x8020` → `0x8000` about 0.5 s later → drop frames through the shutter cycle. If the stream began with repeated frames, the camera is calibrating after power-up, so the start-up `0x8000` is skipped and the hold waits the calibration out (owner decision after M1's power-up finding). Fallback, if M1 shows trouble with streaming first: InfiCam's order, with `0x8004` and `0x8020` before streaming.
 
 | Value | Meaning (source) | Status |
 |---|---|---|
@@ -162,7 +162,7 @@ Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004`
   - InfiCamPlus treats 350–800 ms after `0x8000` as shutter-closed and withholds 800 ms of frames. On our camera the freeze is longer, so its numbers don't transfer.
   - Detect cycles and hold the last good image (PLAN M4). Count the camera's own cycles as calibrations too.
 - **`0x8020`** triggers no cycle on a warm camera; one malformed frame follows it. At power-up its effect can't be separated from the camera's own calibration.
-- **Start-up.** After power-up the stream opens with repeated frames, and a `0x8000` sent then has no visible effect (DEVICE.md). The start-up hold therefore ends only after 10 fresh frames following a freeze, and gives up after 8 s. A warm camera streams fresh raw frames within 0.1 s. Frame rate: 25.15 fps by the tablet's clock.
+- **Start-up.** After power-up the stream opens with repeated frames, and a `0x8000` sent then has no visible effect (DEVICE.md), so we skip it. The start-up hold ends after 10 fresh frames following a freeze, and gives up after 8 s. A warm camera streams fresh raw frames within 0.1 s. It stays warm while the app is in the background: the camera remains powered, so no power-up series follows. Frame rate: 25.15 fps by the tablet's clock.
 - **Dropped frames.** libuvc hands the callback only the newest completed frame, so frames the callback missed show up as gaps in `frame->sequence`; frames lost on the bus show up as arrival gaps.
 - **libuvc quirks.** Request an explicit frame interval (25 fps): with `fps = 0` libuvc divides by zero on a continuous-interval descriptor. `UVC_FRAME_FORMAT_ANY` only matches the YUYV, UYVY, GRAY8, GRAY16, NV12 and BGR GUIDs, so pass the format M0 verifies.
 

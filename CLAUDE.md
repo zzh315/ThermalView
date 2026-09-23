@@ -28,9 +28,9 @@ Vendor commands are 16-bit values written with UVC SET_CUR to the Camera Termina
 | --- | --- | --- |
 | `0x8004` | Select raw 16-bit output | Once per stream start, after streaming begins |
 | `0x8020` | Select normal range (-20 to 120 °C) | Once, after `0x8004` has taken effect |
-| `0x8000` | Shutter close + dark-frame (NUC) refresh — the runtime calibration Xtherm and InfiRay's demo trigger on connect and every 380 s; it does not touch factory calibration | Once ~0.5 s after `0x8020`; the Recalibrate button; a periodic policy once the owner approves its numbers (docs/PLAN.md M4). Max once per 10 s |
+| `0x8000` | Shutter close + dark-frame (NUC) refresh — the runtime calibration Xtherm and InfiRay's demo trigger on connect and every 380 s, and the camera runs by itself for ~65 s after power-up; it does not touch factory calibration | Once ~0.5 s after `0x8020`, unless the camera is still calibrating after power-up; the Recalibrate button; a periodic policy once the owner approves its numbers (docs/PLAN.md M4). Max once per 10 s |
 
-Start sequence: stream → `0x8004` → drop frames until they pass the sanity checks (docs/PROTOCOL.md) → `0x8020` → `0x8000` about 0.5 s later. If M1 shows trouble with streaming first, the owner-approved fallback is InfiCam's order: `0x8004` and `0x8020` before streaming starts, the rest unchanged.
+Start sequence: stream → `0x8004` → drop frames until they pass the sanity checks (docs/PROTOCOL.md) → `0x8020` → `0x8000` about 0.5 s later → drop frames through the shutter cycle. If the stream began with repeated frames, the camera is calibrating after power-up: skip that `0x8000` and just wait the calibration out (owner decision, 2026-09-24; docs/DEVICE.md). If M1 shows trouble with streaming first, the owner-approved fallback is InfiCam's order: `0x8004` and `0x8020` before streaming starts, the rest unchanged.
 
 Everything else is forbidden, including: `0x80FF` (writes the user area to non-volatile memory), `0xEC..`/`0xEE..` (write the camera's dead-pixel table), `0x8081` (asks raw-sensor cameras for per-pixel calibration data), `0x8001`, `0x8002`, `0x8003`, `0x8005`, `0x8021`, any value below `0x8000` (user-area byte writes), and `0xF0..`–`0xFB..` (measurement points).
 

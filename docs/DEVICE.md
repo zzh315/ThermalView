@@ -58,6 +58,7 @@ From ThermalView's debug overlay and field log (`adb logcat -s 'ThermalView:*'`)
 | After power-up | The camera runs its own calibration cycles for ~65 s, then none. See "Power-up calibration" below |
 | Noise, flat wall (FPA ~31 °C) | Temporal 1.22–1.30 counts, ~26 mK at 20.8 mK/count (the oracle's LUT slope at the wall's level). Fixed pattern after removing a 2nd-order surface: 3.2–3.4 counts, mostly column stripes (2.0–2.2 counts; rows 0.4). It didn't grow over 14 minutes at a steady FPA |
 | Reconnect and replug | Clean teardown and reopen. 178–180 fds (always one USB fd) and 33–34 threads before and after, so nothing leaks |
+| Background and foreground | Home, then back after 35 s and after 69 s. The camera stays warm: no power-up series. Our start-up `0x8000` gave one cycle each time (the owner heard one pair of clicks), and Running began 0.36 s after the freeze. Afterwards 178 fds (one USB) and 34 threads |
 | Performance (optimized native code) | Latency p50 3.2 / p95 4.3 ms (callback to buffer swap); processing p95 ~1 ms; no drops, overruns or rejects over 8700+ frames |
 
 Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.
