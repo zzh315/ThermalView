@@ -16,10 +16,16 @@ std::vector<uint16_t> image(uint16_t base, uint16_t seed) {
   return img;
 }
 
+tv::PipelineOptions allOff() {
+  tv::PipelineOptions o;
+  o.shutterHold = false;
+  return o;
+}
+
 }  // namespace
 
 TEST_CASE("with every stage off the pipeline equals the baseline") {
-  tv::Pipeline p;
+  tv::Pipeline p(allOff());
   std::vector<float> out(tv::kImagePixels), ref(tv::kImagePixels), sig(tv::kImagePixels);
   for (uint16_t k = 0; k < 3; ++k) {
     const auto img = image(5000, k);
@@ -61,8 +67,12 @@ TEST_CASE("stage 1 holds the last output through repeated frames, then crossfade
   }
 }
 
+TEST_CASE("the defaults are the approved stages") {
+  CHECK(tv::PipelineOptions{}.shutterHold);
+}
+
 TEST_CASE("stage 1 off: repeated frames pass straight through") {
-  tv::Pipeline p;
+  tv::Pipeline p(allOff());
   std::vector<float> a(tv::kImagePixels), b(tv::kImagePixels);
   const auto img = image(5000, 3);
   p.process(img.data(), a.data());

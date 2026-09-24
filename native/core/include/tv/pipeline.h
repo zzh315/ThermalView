@@ -11,11 +11,13 @@
 namespace tv {
 
 struct PipelineOptions {
-  // Stage 1: while the camera repeats one frame (a shutter cycle), hold the last output without
-  // advancing any stage; when fresh frames return, crossfade from the held output over this many
-  // frames (0 = jump). A motion gate is left out on purpose: the NUC's own correction change is
-  // large and coherent (PIPELINE_LOG, stage 1), so it would read as motion.
-  bool shutterHold = false;
+  // Defaults are the approved stages (docs/PIPELINE_LOG.md); the rest start off.
+  //
+  // Stage 1 (approved 2026-09-25): while the camera repeats one frame (a shutter cycle), hold the
+  // last output without advancing any stage; when fresh frames return, crossfade from the held output
+  // over this many frames (0 = jump). A motion gate is left out on purpose: the NUC's own correction
+  // change is large and coherent (PIPELINE_LOG, stage 1), so it would read as motion.
+  bool shutterHold = true;
   int shutterBlendFrames = 8;  // ~0.3 s at 25 fps
 };
 

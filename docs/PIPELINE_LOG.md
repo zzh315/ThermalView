@@ -28,7 +28,7 @@ The other seven scenes are identical to the baseline, since none of them contain
 
 **Clip:** `bench/out/clips/shutter.mp4` (local): baseline left, stage 1 right; the switch comes at ~3.6 s.
 
-**Verdict:** pending the owner.
+**Verdict:** approved by the owner (2026-09-25): keep the 0.3 s crossfade. Stage 1 is on by default (`PipelineOptions`), and later "pipeline" columns include it.
 
 ## 2026-09-24 — M1 baseline (`31051f5`)
 

@@ -13,8 +13,9 @@
 // (frames × 192 × 256 float32 in [0, 1]); baseline_c.f32, the signal the display path started
 // from in °C, through the table of the dump's middle frame (NaN where it's undefined); and
 // info.json, with that frame's environment inputs (the camera's user area, used as-is) and FPA.
-// --pipeline also runs native/core's Pipeline with those stages on (comma-separated: shutter,
-// shutterBlend=N) and writes pipeline.f32 and pipeline_c.f32 the same way.
+// --pipeline also runs native/core's Pipeline, starting from its defaults (the approved stages) and
+// changed by a comma-separated list ("default", "shutter=0", "shutterBlend=N", ...), and writes
+// pipeline.f32 and pipeline_c.f32 the same way.
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
 #include <algorithm>
 #include <cmath>
@@ -124,7 +125,8 @@ bool writeFloats(const std::filesystem::path& path, const std::vector<float>& da
   return bool(out);
 }
 
-// "shutter,shutterBlend=8" -> options; false on an unknown stage.
+// Starts from the defaults (the approved stages). "default" changes nothing; "shutter" or
+// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade. False on an unknown item.
 bool parseStages(const std::string& text, tv::PipelineOptions* o) {
   size_t start = 0;
   while (start <= text.size()) {
@@ -133,8 +135,10 @@ bool parseStages(const std::string& text, tv::PipelineOptions* o) {
     const size_t eq = item.find('=');
     const std::string key = item.substr(0, eq);
     const std::string value = eq == std::string::npos ? "" : item.substr(eq + 1);
-    if (key == "shutter") {
-      o->shutterHold = true;
+    const bool on = value != "0";
+    if (key == "default") {
+    } else if (key == "shutter") {
+      o->shutterHold = on;
     } else if (key == "shutterBlend" && !value.empty()) {
       o->shutterBlendFrames = std::atoi(value.c_str());
     } else if (!key.empty()) {
