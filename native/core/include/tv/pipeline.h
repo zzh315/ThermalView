@@ -52,7 +52,9 @@ struct PipelineOptions {
   // estimate over the frame, smoothed over time): smoothstep(motionLo, motionHi, |box| / sigma).
   // Starts over (K = 1) after a calibration. The camera already filters in time (DEVICE.md
   // "Onboard filtering"), so this gains less than it would on white noise.
-  bool denoise = true;  // approved 2026-09-25 (owner: "do what you think is best"), at 0.25
+  // Removed from the pipeline (owner, 2026-09-25): moving the camera left after-images of
+  // low-contrast structure, and it gave no visible gain. The code stays, off; the app can't enable it.
+  bool denoise = false;
   float denoiseKMin = 0.25f;
   float denoiseMotionLo = 2.0f, denoiseMotionHi = 4.0f;  // in sigmas of the pooled difference
 

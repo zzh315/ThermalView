@@ -27,7 +27,6 @@ data class DebugOptions(
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
-    val denoise: Boolean = true,            // M4 stage 4 (approved): motion-adaptive temporal filter
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val detail: Boolean = true,             // M4 stage 6 (approved): the mid-scale texture layer; a setting
     val textureStrength: Float = 1.5f,      // stage 6's strength: owner, 1.5 by default, up to 3 (TEXTURE_STRENGTHS)
@@ -40,7 +39,7 @@ data class DebugOptions(
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
         "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
-        "denoise=" + bit(denoise), "tone=" + bit(tone), "detail=" + bit(detail),
+        "denoise=0", "tone=" + bit(tone), "detail=" + bit(detail),  // stage 4 removed (owner, 2026-09-25)
         "detailMid=" + textureStrength,
     ).joinToString(",")
 
@@ -119,7 +118,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores, perfHint (booleans), upscaler, palette, viewSize (ints), textureStrength (float; applied first); reconnect, shutter, lockout, stopReplay, readback, logOverlay (booleans);
+     * shutterHold, badPixels, drift, tone, detail, bigCores, perfHint (booleans), upscaler, palette, viewSize (ints), textureStrength (float; applied first); reconnect, shutter, lockout, stopReplay, readback, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -139,7 +138,6 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("shutterHold")) o = o.copy(shutterHold = extras.getBoolean("shutterHold"))
         if (extras.containsKey("badPixels")) o = o.copy(badPixels = extras.getBoolean("badPixels"))
         if (extras.containsKey("drift")) o = o.copy(drift = extras.getBoolean("drift"))
-        if (extras.containsKey("denoise")) o = o.copy(denoise = extras.getBoolean("denoise"))
         if (extras.containsKey("tone")) o = o.copy(tone = extras.getBoolean("tone"))
         if (extras.containsKey("detail")) o = o.copy(detail = extras.getBoolean("detail"))
         if (extras.containsKey("bigCores")) o = o.copy(bigCores = extras.getBoolean("bigCores"))

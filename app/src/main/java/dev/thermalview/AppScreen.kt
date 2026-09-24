@@ -3,7 +3,10 @@ package dev.thermalview
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -129,10 +132,16 @@ private fun DebugPanel(
     var expanded by rememberSaveable { mutableStateOf(false) }
     var choosingReplay by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = expanded) { expanded = false }  // the back gesture closes the panel
     Column(modifier.padding(8.dp), horizontalAlignment = Alignment.End) {
         if (expanded) {
-            Surface(color = Color(0xE0202020), shape = RoundedCornerShape(8.dp)) {
-                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            // Takes only the height left after the Ready / Close row, and scrolls, so every item and
+            // the Close button stay reachable however long the panel grows.
+            Surface(color = Color(0xE0202020), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f, fill = false)) {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()).padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Toggle("Overlay", showOverlay, onShowOverlay)
                     Toggle("Skip start-up 0x8000 (next start)", options.skipStartupShutter) {
                         onOptions(options.copy(skipStartupShutter = it))
@@ -151,7 +160,6 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
-                    Toggle("Stage 4: temporal filter", options.denoise) { onOptions(options.copy(denoise = it)) }
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
                     Toggle("Stage 6: texture (mid-scale contrast)", options.detail) { onOptions(options.copy(detail = it)) }
                     Button(onClick = {

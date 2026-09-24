@@ -79,7 +79,7 @@ TEST_CASE("the defaults are the approved stages") {
   CHECK(o.badPixels);
   CHECK(o.drift);
   CHECK(o.destripe);
-  CHECK(o.denoise);
+  CHECK_FALSE(o.denoise);  // stage 4 removed (owner, 2026-09-25: after-images on camera motion)
   CHECK(o.tone);
   CHECK(o.detail);  // stage 6 as approved (2026-09-25): the mid-scale texture layer at x1.5 alone
   CHECK(o.detailMidGain == doctest::Approx(1.5f));
