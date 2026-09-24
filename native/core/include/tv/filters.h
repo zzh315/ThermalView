@@ -19,6 +19,11 @@ void guidedFilterSelf(const float* src, float* dst, int r, float eps, std::vecto
 // pixels. dst may not alias src.
 void localRange(const float* src, float* dst, int r, std::vector<float>& scratch);
 
+// localRange for wide windows at a quarter of the cost: 2x2 max/min pooling, the range over radius
+// ceil(r/2) on the pooled image, each pixel then taking its 2x2 cell's value. Its window contains the
+// full-resolution one (a pixel more at most), so a guard built on it errs on the side of caution.
+void localRangeHalf(const float* src, float* dst, int r, std::vector<float>& scratch);
+
 // Separable Gaussian blur with the given sigma (pixels; at most 7 pixels of radius), borders
 // clamped. dst may not alias src.
 void gaussianBlur(const float* src, float* dst, float sigma, std::vector<float>& scratch);

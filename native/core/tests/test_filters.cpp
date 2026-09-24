@@ -57,6 +57,21 @@ TEST_CASE("the fast blur, local range and 3x3 bounds match brute force") {
       CHECK(b[size_t(p[1]) * W + p[0]] == doctest::Approx(hi - lo));
     }
   }
+  // The half-resolution range contains the full-resolution one, and is at most the range a pixel
+  // wider.
+  for (int r : {8, 16}) {
+    std::vector<float> full(tv::kImagePixels), wider(tv::kImagePixels);
+    tv::localRange(a.data(), full.data(), r, scratch);
+    tv::localRange(a.data(), wider.data(), r + 1, scratch);
+    tv::localRangeHalf(a.data(), b.data(), r, scratch);
+    int below = 0, above = 0;
+    for (size_t i = 0; i < tv::kImagePixels; ++i) {
+      below += b[i] < full[i] - 1e-6f;
+      above += b[i] > wider[i] + 1e-6f;
+    }
+    CHECK(below == 0);
+    CHECK(above == 0);
+  }
   tv::localMinMax3(a.data(), b.data(), c.data(), scratch);
   for (const auto& p : probes) {
     float hi = -1e9f, lo = 1e9f;

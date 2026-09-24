@@ -310,6 +310,7 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
   detailLayer_.resize(kImagePixels);
   energy_.resize(kImagePixels);
   gate_.resize(kImagePixels);
+  range_.resize(kImagePixels);
   float* base = base_.data();
   float* det = detailLayer_.data();
   float* e = energy_.data();
@@ -320,85 +321,87 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
     const float x = std::clamp((v - lo) / std::max(hi - lo, 1e-6f), 0.0f, 1.0f);
     return x * x * (3.0f - 2.0f * x);
   };
-
-  // The noise gate: the detail's local energy (RMS over 3x3) against the frame's floor (its 10th
-  // percentile, from a subsample). Closed where the detail is only noise, so neither the gain nor
-  // the unsharp pass boosts it.
-  for (size_t i = 0; i < kImagePixels; ++i) gate[i] = det[i] * det[i];
-  boxFilter(gate, e, 1);  // the local energy, kept in energy_ for the halo guard
-  std::copy(e, e + kImagePixels, gate);
+  // A local-energy map's floor: its 10th percentile, from a subsample over every column.
   float* sample = colAcc_.data();
-  int n = 0;
-  for (size_t i = 5; i < kImagePixels && n < kFrameWidth; i += 191) sample[n++] = gate[i];  // every column
-  std::nth_element(sample, sample + n / 10, sample + n);
-  const float floorE = std::sqrt(std::max(sample[n / 10], 1e-6f));
-  const float nLo = options_.detailNoiseLo * floorE, nHi = options_.detailNoiseHi * floorE;
-  // (Running sums can leave a hair below zero where the energy is nil: a flat or clipped patch.)
-  for (size_t i = 0; i < kImagePixels; ++i) gate[i] = smooth(nLo, nHi, std::sqrt(std::max(gate[i], 0.0f)));
+  auto floorOf = [&](const float* energy) {
+    int n = 0;
+    for (size_t i = 5; i < kImagePixels && n < kFrameWidth; i += 191) sample[n++] = energy[i];
+    std::nth_element(sample, sample + n / 10, sample + n);
+    return std::sqrt(std::max(sample[n / 10], 1e-6f));
+  };
+  // Only what's switched on is computed: the fine layer's gain, the unsharp pass, the mid layer.
+  const bool fine = options_.detailGain > 1.0f, sharpen = options_.unsharpAmount > 0.0f,
+             mid = options_.detailMidGain > 1.0f;
+  const float lim = options_.detailLimit;
 
-  // The halo guard: beside a step, the filter leaves a faint rim along it (a residual of ~2% of the
-  // step, up to ~5 pixels out), not texture. Where the nearest big step (the base's local range)
-  // dwarfs the local detail (ratio detailEdgeLo..Hi), the gain fades out: scale-free, so it holds for
-  // a 50-count edge and a 1000-count one alike, while texture, a good fraction of its own local
-  // range, keeps its gain.
-  range_.resize(kImagePixels);
-  localRange(base, range_.data(), options_.detailEdgeRadius, gfScratch_);
-  const float g = options_.detailGain, lim = options_.detailLimit;
-  if (options_.detailSmooth > 0.0f) {
-    // The added contrast, smoothed: texture (a few pixels across) keeps its gain, while pixel-scale
-    // structure (noise, the stair-steps of a slanted edge) passes through at gain 1.
-    float* extra = range_.data();  // (range_ is spent once each pixel's ratio is read)
-    for (size_t i = 0; i < kImagePixels; ++i) {
-      const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
-      extra[i] = (g - 1.0f) * gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio)) * det[i];
-    }
-    gaussianBlur(extra, e, options_.detailSmooth, gfScratch_);  // e: the local energy is spent too
-    for (size_t i = 0; i < kImagePixels; ++i) det[i] = std::clamp(det[i] + e[i], -lim, lim);
-  } else {
-    for (size_t i = 0; i < kImagePixels; ++i) {
-      const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
-      const float boost = gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio));
-      det[i] = std::clamp((1.0f + (g - 1.0f) * boost) * det[i], -lim, lim);
+  // The fine layer's noise gate: its local energy (RMS over 3x3) against the frame's floor. Closed
+  // where the detail is only noise, so neither the gain nor the unsharp pass boosts it. (Running
+  // sums can leave a hair below zero where the energy is nil: a flat or clipped patch.)
+  float floorE = 0.0f;
+  if (fine || sharpen) {
+    for (size_t i = 0; i < kImagePixels; ++i) gate[i] = det[i] * det[i];
+    boxFilter(gate, e, 1);  // the local energy, kept for the halo guard
+    floorE = floorOf(e);
+    const float nLo = options_.detailNoiseLo * floorE, nHi = options_.detailNoiseHi * floorE;
+    for (size_t i = 0; i < kImagePixels; ++i) gate[i] = smooth(nLo, nHi, std::sqrt(std::max(e[i], 0.0f)));
+  }
+
+  // The fine layer's gain, under the halo guard: beside a step, the filter leaves a faint rim along
+  // it (a residual of ~2% of the step, up to ~5 pixels out), not texture. Where the nearest big step
+  // (the base's local range) dwarfs the local detail (ratio detailEdgeLo..Hi), the gain fades out:
+  // scale-free, so it holds for a 50-count edge and a 1000-count one alike, while texture, a good
+  // fraction of its own local range, keeps its gain.
+  if (fine) {
+    localRange(base, range_.data(), options_.detailEdgeRadius, gfScratch_);
+    const float g = options_.detailGain;
+    if (options_.detailSmooth > 0.0f) {
+      // The added contrast, smoothed: texture (a few pixels across) keeps its gain, while
+      // pixel-scale structure (noise, the stair-steps of a slanted edge) passes through at gain 1.
+      float* extra = range_.data();  // (range_ is spent once each pixel's ratio is read)
+      for (size_t i = 0; i < kImagePixels; ++i) {
+        const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
+        extra[i] = (g - 1.0f) * gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio)) * det[i];
+      }
+      gaussianBlur(extra, e, options_.detailSmooth, gfScratch_);  // e: the local energy is spent too
+      for (size_t i = 0; i < kImagePixels; ++i) det[i] = std::clamp(det[i] + e[i], -lim, lim);
+    } else {
+      for (size_t i = 0; i < kImagePixels; ++i) {
+        const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
+        const float boost = gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio));
+        det[i] = std::clamp((1.0f + (g - 1.0f) * boost) * det[i], -lim, lim);
+      }
     }
   }
-  if (options_.detailMidGain > 1.0f) {
-    // Experimental: a mid-scale layer (the base's own residual against a wider self-guided filter)
-    // gets extra gain too, with the same scale-free halo guard over the wider filter's reach.
+
+  // The mid-scale layer: the base against a wider self-guided filter (surfaces and shapes a few to
+  // ~16 pixels across), with its own noise gate and the same halo guard over the wider filter's
+  // reach (its local range at half resolution: 4x cheaper, a pixel more conservative).
+  if (mid) {
     midBase_.resize(kImagePixels);
     mid_.resize(kImagePixels);
-    guidedFilterSelf(base, midBase_.data(), options_.detailMidRadius, options_.detailMidEps, gfScratch_);
-    for (size_t i = 0; i < kImagePixels; ++i) mid_[i] = base[i] - midBase_[i];
-    for (size_t i = 0; i < kImagePixels; ++i) e[i] = mid_[i] * mid_[i];
-    boxFilter(e, gate, options_.detailMidRadius / 2);  // gate_ is free until the unsharp pass
-    // Its own noise gate, like the fine layer's: against the mid layer's floor.
-    int m = 0;
-    for (size_t i = 5; i < kImagePixels && m < kFrameWidth; i += 191) sample[m++] = gate[i];
-    std::nth_element(sample, sample + m / 10, sample + m);
-    const float midFloor = std::sqrt(std::max(sample[m / 10], 1e-6f));
+    float* mb = midBase_.data();
+    guidedFilterSelf(base, mb, options_.detailMidRadius, options_.detailMidEps, gfScratch_);
+    for (size_t i = 0; i < kImagePixels; ++i) mid_[i] = base[i] - mb[i];
+    localRangeHalf(mb, range_.data(), 2 * options_.detailMidRadius, gfScratch_);
+    for (size_t i = 0; i < kImagePixels; ++i) mb[i] = mid_[i] * mid_[i];  // (the mid base is spent)
+    boxFilter(mb, e, options_.detailMidRadius / 2);
+    const float midFloor = floorOf(e);
     const float mLo = options_.detailNoiseLo * midFloor, mHi = options_.detailNoiseHi * midFloor;
-    localRange(midBase_.data(), range_.data(), 2 * options_.detailMidRadius, gfScratch_);
     const float gm = options_.detailMidGain - 1.0f;
     for (size_t i = 0; i < kImagePixels; ++i) {
-      const float rms = std::sqrt(std::max(gate[i], 0.0f));
+      const float rms = std::sqrt(std::max(e[i], 0.0f));
       const float ratio = range_[i] / std::max(rms, 1e-3f);
       const float open = options_.detailMidGate ? smooth(mLo, mHi, rms) : 1.0f;
       const float extra = gm * open * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio)) * mid_[i];
       det[i] = std::clamp(det[i] + extra, -2.0f * lim, 2.0f * lim);
     }
-    // The unsharp pass's gate below needs the fine layer's noise gate again.
-    for (size_t i = 0; i < kImagePixels; ++i) {
-      const float d = sig[i] - base[i];
-      e[i] = d * d;
-    }
-    boxFilter(e, gate, 1);
-    for (size_t i = 0; i < kImagePixels; ++i) gate[i] = smooth(nLo, nHi, std::sqrt(std::max(gate[i], 0.0f)));
   }
   tone_.map(base, display, exclude, 0.04f, det);
 
   // Unsharp on the display where there is texture (the gate) or an edge (the base's 3x3 range well
   // above the noise floor), clamped to each pixel's 3x3 min/max: sharper edges and texture with no
   // overshoot, and flat areas' noise left alone.
-  if (options_.unsharpAmount > 0.0f) {
+  if (sharpen) {
     localRange(base, e, 1, gfScratch_);
     const float eLo = options_.unsharpEdgeLo * floorE, eHi = options_.unsharpEdgeHi * floorE;
     for (size_t i = 0; i < kImagePixels; ++i) gate[i] = std::max(gate[i], smooth(eLo, eHi, e[i]));

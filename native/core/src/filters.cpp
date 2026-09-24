@@ -159,6 +159,64 @@ void localRange(const float* src, float* dst, int r, std::vector<float>& scratch
   }
 }
 
+void localRangeHalf(const float* src, float* dst, int r, std::vector<float>& scratch) {
+  constexpr int w = W / 2, h = H / 2;
+  constexpr size_t n = size_t(w) * h;
+  const int rr = std::clamp((r + 1) / 2, 0, h / 2 - 1);
+  scratch.resize(6 * n);
+  float* mx = scratch.data();  // pooled
+  float* mn = mx + n;
+  float* ax = mn + n;  // along rows
+  float* an = ax + n;
+  float* bx = an + n;  // then columns
+  float* bn = bx + n;
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      const float* p = src + size_t(2 * y) * W + size_t(2 * x);
+      const float a = p[0], b = p[1], c = p[W], d = p[W + 1];
+      mx[size_t(y) * w + x] = std::max(std::max(a, b), std::max(c, d));
+      mn[size_t(y) * w + x] = std::min(std::min(a, b), std::min(c, d));
+    }
+  for (int y = 0; y < h; ++y) {
+    const float* ix = mx + size_t(y) * w;
+    const float* in = mn + size_t(y) * w;
+    float* ox = ax + size_t(y) * w;
+    float* on = an + size_t(y) * w;
+    std::copy(ix, ix + w, ox);
+    std::copy(in, in + w, on);
+    for (int k = 1; k <= rr; ++k) {
+      for (int x = 0; x < w - k; ++x) {
+        ox[x] = std::max(ox[x], ix[x + k]);
+        on[x] = std::min(on[x], in[x + k]);
+      }
+      for (int x = k; x < w; ++x) {
+        ox[x] = std::max(ox[x], ix[x - k]);
+        on[x] = std::min(on[x], in[x - k]);
+      }
+    }
+  }
+  for (int y = 0; y < h; ++y) {
+    float* ox = bx + size_t(y) * w;
+    float* on = bn + size_t(y) * w;
+    std::copy(ax + size_t(y) * w, ax + size_t(y + 1) * w, ox);
+    std::copy(an + size_t(y) * w, an + size_t(y + 1) * w, on);
+    for (int k = std::max(0, y - rr); k <= std::min(h - 1, y + rr); ++k) {
+      const float* px = ax + size_t(k) * w;
+      const float* pn = an + size_t(k) * w;
+      for (int x = 0; x < w; ++x) {
+        ox[x] = std::max(ox[x], px[x]);
+        on[x] = std::min(on[x], pn[x]);
+      }
+    }
+  }
+  for (int y = 0; y < H; ++y) {
+    const float* ox = bx + size_t(y / 2) * w;
+    const float* on = bn + size_t(y / 2) * w;
+    float* out = dst + size_t(y) * W;
+    for (int x = 0; x < W; ++x) out[x] = ox[x / 2] - on[x / 2];
+  }
+}
+
 void gaussianBlur(const float* src, float* dst, float sigma, std::vector<float>& scratch) {
   const int r = std::clamp(int(std::ceil(3.0f * sigma)), 1, 7);  // 15 taps at most
   float k[15];
