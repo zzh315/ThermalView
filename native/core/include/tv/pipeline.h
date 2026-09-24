@@ -55,9 +55,9 @@ struct PipelineOptions {
   float denoiseKMin = 0.25f;
   float denoiseMotionLo = 2.0f, denoiseMotionHi = 4.0f;  // in sigmas of the pooled difference
 
-  // Stage 5: automatic tone mapping (tone.h) in place of the baseline's per-frame min/max stretch.
-  // Pixels at the camera's clip stay out of its statistics.
-  bool tone = false;
+  // Stage 5 (approved 2026-09-25, gain cap 2.0): automatic tone mapping (tone.h) in place of the
+  // baseline's per-frame min/max stretch. Pixels at the camera's clip stay out of its statistics.
+  bool tone = true;
   ToneOptions toneOptions;
 };
 

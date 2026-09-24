@@ -37,6 +37,7 @@ TEST_CASE("stage 3 removes a pattern that grew by rate x drift, and does nothing
   o.driftScale = 1.0f;
   o.destripe = false;  // this test is about 3a alone
   o.denoise = false;
+  o.tone = false;
   tv::Pipeline on(o);
   on.setDriftMap(map);
   std::vector<float> disp(tv::kImagePixels), sig(tv::kImagePixels);
@@ -48,6 +49,7 @@ TEST_CASE("stage 3 removes a pattern that grew by rate x drift, and does nothing
   none.drift = false;
   none.destripe = false;
   none.denoise = false;
+  none.tone = false;
   tv::Pipeline off(none);
   off.setDriftMap(map);
   off.process(img.data(), disp.data(), sig.data(), {31.40, 26.00});
@@ -60,6 +62,7 @@ TEST_CASE("stage 3b removes a column offset but only up to its clamp, and starts
   o.destripeClamp = 2.0f;
   o.drift = false;
   o.denoise = false;
+  o.tone = false;
   tv::Pipeline p(o);
   std::vector<float> disp(tv::kImagePixels), sig(tv::kImagePixels);
   auto frame = [](uint32_t seed, float stripe) {
@@ -95,6 +98,7 @@ TEST_CASE("stage 3b gives the same result whether or not the caller asks for the
   tv::PipelineOptions o;
   o.drift = false;
   o.denoise = false;
+  o.tone = false;
   tv::Pipeline a(o), b(o);
   std::vector<float> da(tv::kImagePixels), db(tv::kImagePixels), sig(tv::kImagePixels);
   std::vector<uint16_t> img(tv::kImagePixels);

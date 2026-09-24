@@ -31,11 +31,17 @@ std::pair<float, float> spread(const std::vector<float>& out) {
 }  // namespace
 
 TEST_CASE("a flat scene stays a calm, narrow band instead of stretched noise (the gain cap)") {
-  tv::ToneMapper t;
+  tv::ToneOptions o;
+  o.maxGain = 1.0f;
+  tv::ToneMapper t(o);
   std::vector<float> out(tv::kImagePixels);
   for (uint32_t k = 0; k < 50; ++k) t.map(scene(5000, 1.2f, k).data(), out.data());
   const auto [lo, hi] = spread(out);
   CHECK(hi - lo < 0.1f);  // ~7 counts of noise at <= 1 level per count
+  tv::ToneMapper t2;       // the default cap, 2 levels per count: still a band
+  for (uint32_t k = 0; k < 50; ++k) t2.map(scene(5000, 1.2f, k).data(), out.data());
+  const auto [lo2, hi2] = spread(out);
+  CHECK(hi2 - lo2 < 0.2f);
   CHECK(std::abs(0.5f * (lo + hi) - 0.5f) < 0.05f);  // centred
 }
 

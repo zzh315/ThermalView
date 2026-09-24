@@ -23,6 +23,7 @@ tv::PipelineOptions allOff() {
   o.drift = false;
   o.destripe = false;
   o.denoise = false;
+  o.tone = false;
   return o;
 }
 
@@ -78,6 +79,7 @@ TEST_CASE("the defaults are the approved stages") {
   CHECK(o.drift);
   CHECK(o.destripe);
   CHECK(o.denoise);
+  CHECK(o.tone);
 }
 
 TEST_CASE("stage 1 off: repeated frames pass straight through") {
@@ -123,7 +125,7 @@ TEST_CASE("stage settings as text") {
   tv::PipelineOptions o;
   CHECK(tv::parseStages("default", &o));
   CHECK(o.shutterHold);
-  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0,denoise=0", &o));
+  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0,denoise=0,tone=0", &o));
   CHECK_FALSE(o.shutterHold);
   CHECK(tv::describeStages(o) == "none");
   CHECK(tv::parseStages("shutter,shutterBlend=12", &o));

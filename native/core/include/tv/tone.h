@@ -15,7 +15,7 @@ namespace tv {
 
 struct ToneOptions {
   float lowPct = 0.3f, highPct = 99.7f;  // robust range (PLAN; 99.9 let a small hot spot jitter the range)
-  float maxGain = 1.0f;          // display levels (of 255) per count at most: the gain cap
+  float maxGain = 2.0f;          // display levels (of 255) per count at most: the gain cap (owner: 2.0)
   float linearShare = 0.2f;      // the curve's linear part; the rest is plateau equalization
   float plateauDown = 0.25f;     // occupied bins count at least this x the mean occupied bin...
   // ...and at most the mean of the histogram's local maxima (the upper plateau).
