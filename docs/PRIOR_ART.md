@@ -375,6 +375,13 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
   - **Top pick:** a prefiltered cardinal cubic B-spline (a ~0.1 ms prefilter in `native/core`, 4 `textureGather`s in highp) with the 2×2 min/max clamp.
   - **Alternatives:** A/B it against separable Lanczos-3/4 with anti-ringing. Use an edge-gated 2× pre-scaler (FSR EASU, MIT, or SGSR, BSD-3) only at high zoom.
   - **No CNN in v1:** there's no ML runtime, and on the thermal SR benchmark (PBVS 2020 real data) learned SR scored about the same as bicubic.
+- **Outcome (M4 stage 6 and M5 prep, 2026-09-25; PIPELINE_LOG):**
+  - **The DDE as built:** adopted, with two changes the real frames needed:
+    - a scale-free halo guard, because the filter's ~2% residual beside every step drew a rim once boosted (5.8% halo on `keyboard` before the guard, 2.7% after);
+    - a smoothed gain and unsharp 1.0, because at 1.5 slanted edges turned into stair-steps.
+  - **Mid-scale layer:** an Hti-like one, with the same guard, is kept as an experiment for the owner's review.
+  - **Fast local Laplacian:** not tried yet.
+  - **Upscaler:** the prefiltered cardinal B-spline with the 2×2 clamp is implemented as the CPU reference and in the app's shader (16 `texelFetch` taps: R32F isn't filterable, so no `textureGather` trick). It makes non-integer presets as clean as integer ones (`bench/results/b848b57+detail/m5_preview/integer_scale.png`). Lanczos-3 and Catmull-Rom with the clamp are in the harness for the A/B.
 - **For the owner** (they change the plan):
   - **Stage 6:** split base and detail in raw counts, before the tone curve. PLAN says after it, on the tone-mapped signal.
   - **Stage 5:** build its histogram from stage 6's base.
