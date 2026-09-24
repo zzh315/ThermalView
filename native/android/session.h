@@ -167,6 +167,7 @@ class Session {
   // Range switching (processing thread, except the atomic request).
   std::atomic<int> requestedRange_{-1};  // -1 none, 0 normal, 1 high
   int autoRangeRequest_ = -1;
+  bool rangeFallback_ = false;  // the high range misbehaved: return to the normal range
   int clipStreak_ = 0, coolStreak_ = 0;
   int64_t nextRangeAttemptNs_ = 0;
   int holdNoFreezeMs_ = 1000;

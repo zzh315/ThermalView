@@ -504,7 +504,7 @@ void Session::tickCapture(int64_t now) {
   }
   const char* leg = !capturePair_ ? "Capture" : range_ == TempRange::High ? "Range test 2/2 (high)"
                                                                           : "Range test 1/2 (normal)";
-  if (state != State::Running && state != State::ShutterHold) {
+  if (state != State::Running && state != State::ShutterHold && state != State::RangeSwitch) {
     FLOG("capture: aborted (%s)", stateName(state));
     capturePhase_ = CapturePhase::None;
     setBanner("");
@@ -691,6 +691,11 @@ void Session::tick(int64_t now) {
       }
       if (const int r = requestedRange_.exchange(-1); r >= 0) {
         switchRange(r ? TempRange::High : TempRange::Normal, now, "manual");
+        break;
+      }
+      if (rangeFallback_) {
+        rangeFallback_ = false;
+        switchRange(TempRange::Normal, now, "high range unstable: frames fail the checks");
         break;
       }
       if (autoRangeRequest_ >= 0) {
@@ -911,8 +916,15 @@ void Session::handleFrame(const RawFrame& frame) {
         ++rejectedChecks_;
         if (rejectedChecks_ <= 10 || rejectedChecks_ % 100 == 0)
           FLOG("frame failed checks: %s", describeSanity(flags).c_str());
-        if (++sanityStreak_ >= kFailStreak && state == State::Running)
+        ++sanityStreak_;
+        if (range_ == TempRange::High && sanityStreak_ >= 10 && state == State::Running) {
+          // M2: the high range's output can slide to the floor after a switch; fall back.
+          FLOG("high range: frames fail the checks (%s); back to the normal range", describeSanity(flags).c_str());
+          sanityStreak_ = 0;
+          rangeFallback_ = true;
+        } else if (sanityStreak_ >= kFailStreak && state == State::Running) {
           fail("Frames keep failing the sanity checks (" + describeSanity(flags) + ")");
+        }
         break;
       }
       sanityStreak_ = 0;
@@ -928,7 +940,8 @@ void Session::handleFrame(const RawFrame& frame) {
     shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, Region{}, kNormalClipRaw, dt);
 
     // Camera-hot banner (PLAN M2): the module is rated to ~60 °C ambient and runs ~11-13 °C above it.
-    const double fpa = view.fpaC();
+    // The FPA word means something else in the high range (M2: it decodes to ~70 °C there).
+    const double fpa = range_ == TempRange::Normal ? view.fpaC() : 0.0;
     if (cameraHotText_.empty() && fpa > 55.0 && bannerIs("")) {
       cameraHotText_ = format("Camera is hot (%.0f °C): readings may drift; let it cool", fpa);
       setBanner(cameraHotText_);
