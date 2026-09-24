@@ -74,10 +74,11 @@ struct PipelineOptions {
   float detailGain = 2.5f;
   float detailLimit = 7.0f;
   float detailNoiseLo = 2.0f, detailNoiseHi = 4.0f;  // the noise gate's ramp, in x the detail noise floor
+  float detailSmooth = 1.0f;  // > 0: the added contrast is blurred with this sigma (px) first
   int detailEdgeRadius = 6;                          // the halo guard looks this far for a step...
   float detailEdgeLo = 12.0f, detailEdgeHi = 25.0f;  // ...and fades the gain out where the step is
                                                      // this many times the local detail (RMS)
-  float unsharpAmount = 1.5f;
+  float unsharpAmount = 1.0f;
   float unsharpSigma = 0.7f;
   float unsharpEdgeLo = 3.0f, unsharpEdgeHi = 6.0f;  // its edge gate: the base's 3x3 range, x the floor
 };
@@ -98,7 +99,7 @@ struct FrameMeta {
 // "toneGain=X" (max gain), "toneLinear=X", "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
 // "toneContract=X" and "toneCurve=X" (time constants) tune it; "detail" / "detail=0" switches stage
 // 6, "detailRadius=N", "detailEps=X", "detailGain=X", "detailLimit=X", "detailNoiseLo=X",
-// "detailNoiseHi=X", "detailEdgeRadius=N", "detailEdgeLo=X", "detailEdgeHi=X", "unsharp=X" (amount),
+// "detailNoiseHi=X", "detailSmooth=X", "detailEdgeRadius=N", "detailEdgeLo=X", "detailEdgeHi=X", "unsharp=X" (amount),
 // "unsharpSigma=X", "unsharpEdgeLo=X" and "unsharpEdgeHi=X" tune it. False on an unknown item.
 bool parseStages(const std::string& text, PipelineOptions* options);
 std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"

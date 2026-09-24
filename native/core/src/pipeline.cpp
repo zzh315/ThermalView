@@ -81,6 +81,8 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->detailNoiseLo = float(std::atof(value.c_str()));
     } else if (key == "detailNoiseHi" && !value.empty()) {
       o->detailNoiseHi = float(std::atof(value.c_str()));
+    } else if (key == "detailSmooth" && !value.empty()) {
+      o->detailSmooth = float(std::atof(value.c_str()));
     } else if (key == "detailEdgeRadius" && !value.empty()) {
       o->detailEdgeRadius = std::max(1, std::atoi(value.c_str()));
     } else if (key == "detailEdgeLo" && !value.empty()) {
@@ -334,10 +336,22 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
   range_.resize(kImagePixels);
   localRange(base, range_.data(), options_.detailEdgeRadius, gfScratch_);
   const float g = options_.detailGain, lim = options_.detailLimit;
-  for (size_t i = 0; i < kImagePixels; ++i) {
-    const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
-    const float boost = gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio));
-    det[i] = std::clamp((1.0f + (g - 1.0f) * boost) * det[i], -lim, lim);
+  if (options_.detailSmooth > 0.0f) {
+    // The added contrast, smoothed: texture (a few pixels across) keeps its gain, while pixel-scale
+    // structure (noise, the stair-steps of a slanted edge) passes through at gain 1.
+    float* extra = range_.data();  // (range_ is spent once each pixel's ratio is read)
+    for (size_t i = 0; i < kImagePixels; ++i) {
+      const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
+      extra[i] = (g - 1.0f) * gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio)) * det[i];
+    }
+    gaussianBlur(extra, e, options_.detailSmooth, gfScratch_);  // e: the local energy is spent too
+    for (size_t i = 0; i < kImagePixels; ++i) det[i] = std::clamp(det[i] + e[i], -lim, lim);
+  } else {
+    for (size_t i = 0; i < kImagePixels; ++i) {
+      const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
+      const float boost = gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio));
+      det[i] = std::clamp((1.0f + (g - 1.0f) * boost) * det[i], -lim, lim);
+    }
   }
   tone_.map(base, display, exclude, 0.04f, det);
 
