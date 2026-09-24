@@ -100,6 +100,24 @@ Camera cold (unplugged for hours), room ~25 °C, aimed at a plain wall 50 cm awa
 
 Commands: stats CSV pulled with `adb pull`, dumps through `tools/py/flat_noise.py`, and the oracle (`CameraEmulator`) with each frame's FPA, shutter and core fields.
 
+### Absolute check, normal range (M2, 2026-09-24 20:13)
+
+Three water containers in one frame, about 50 cm away at a slight angle. The owner measured each with a probe thermometer before and after an on-tablet capture: recalibration, 3 s settle, 200 frames. Readings come from the oracle's math with each frame's metadata and the camera's own settings (emissivity 0.980, reflected 25 °C, distance 0). Region: a 12-pixel-radius disc at each surface's center. FPA 36.4 °C.
+
+| Water | Probe, before → after | Camera | Error |
+|---|---|---|---|
+| Cold | 10 → 10 °C | 10.55 °C | +0.6 °C |
+| Mixed | 49 → 48 °C | 47.51 °C | −1.0 °C |
+| Hot | 90 → 87 °C | 80.74 °C | −7.8 °C |
+
+- Within ±1 °C at 10 and 48 °C.
+- The hot error is attributed to the water, not proven. The camera sees the surface skin, which evaporation cools more steeply as the water gets hotter. Steam in the path absorbs, and water's emissivity at this angle is ~0.95 against the camera's 0.98 (worth ~1 °C at 90 °C).
+- The signs fit a surface-skin effect: the cold water reads warm and the hot waters read cool.
+- Reviewed with the owner, who accepted it without a metal-and-tape follow-up.
+- The high range gets a cross-range consistency check with the soldering iron instead (PLAN M2).
+
+Commands: dump `dump_20260924_201315` pulled with `adb pull`, and the oracle (`CameraEmulator`) per frame.
+
 Long run: `tools/py/shutter_stats.py` on the run's CSV. Tablet temperatures, every minute: `dumpsys battery`, `dumpsys thermalservice`, and `/sys/class/thermal/thermal_zone*/{type,temp}` (quiet_therm, conn_therm, cpu-1-0-usr, gpuss-0-usr; readable without root).
 
 Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.
