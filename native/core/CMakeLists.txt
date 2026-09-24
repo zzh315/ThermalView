@@ -17,6 +17,7 @@ add_library(thermalcore STATIC
   src/palette.cpp
   src/pipeline.cpp
   src/readouts.cpp
+  src/recalibration.cpp
   src/stats.cpp
   src/temperature.cpp
   src/tone.cpp
@@ -41,6 +42,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_pipeline.cpp
     tests/test_queues.cpp
     tests/test_readouts.cpp
+    tests/test_recalibration.cpp
     tests/test_stats.cpp
     tests/test_temperature.cpp
     tests/test_tone.cpp
