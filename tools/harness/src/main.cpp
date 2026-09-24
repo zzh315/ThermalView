@@ -6,13 +6,15 @@
 // per-frame table), the camera's own Block A extremes through the same table, and the mean °C
 // over each --disc (camera pixels within R of X,Y). DUMP is the dump path without .raw.
 //
-//   harness bench [--bench DIR] [--out DIR] [SCENE ...]
+//   harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]
 //
 // Renders every benchmark scene (DIR/<scene>/thermalview.raw; default: the repo's bench/) through
 // the display path and writes OUT/<scene>/ (default DIR/out): baseline.f32, the display output
 // (frames × 192 × 256 float32 in [0, 1]); baseline_c.f32, the signal the display path started
 // from in °C, through the table of the dump's middle frame (NaN where it's undefined); and
 // info.json, with that frame's environment inputs (the camera's user area, used as-is) and FPA.
+// --pipeline also runs native/core's Pipeline with those stages on (comma-separated: shutter,
+// shutterBlend=N) and writes pipeline.f32 and pipeline_c.f32 the same way.
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
 #include <algorithm>
 #include <cmath>
@@ -25,6 +27,7 @@
 
 #include "tv/display.h"
 #include "tv/dump.h"
+#include "tv/pipeline.h"
 #include "tv/readouts.h"
 #include "tv/temperature.h"
 
@@ -37,7 +40,7 @@ struct Disc {
 int usage() {
   std::fprintf(stderr,
                "usage: harness temps DUMP [--range normal|high] [--math ht301|infi] [--disc X,Y,R ...]\n"
-               "       harness bench [--bench DIR] [--out DIR] [SCENE ...]\n");
+               "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]\n");
   return 2;
 }
 
@@ -121,7 +124,29 @@ bool writeFloats(const std::filesystem::path& path, const std::vector<float>& da
   return bool(out);
 }
 
-bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::path& outDir) {
+// "shutter,shutterBlend=8" -> options; false on an unknown stage.
+bool parseStages(const std::string& text, tv::PipelineOptions* o) {
+  size_t start = 0;
+  while (start <= text.size()) {
+    const size_t end = std::min(text.find(',', start), text.size());
+    const std::string item = text.substr(start, end - start);
+    const size_t eq = item.find('=');
+    const std::string key = item.substr(0, eq);
+    const std::string value = eq == std::string::npos ? "" : item.substr(eq + 1);
+    if (key == "shutter") {
+      o->shutterHold = true;
+    } else if (key == "shutterBlend" && !value.empty()) {
+      o->shutterBlendFrames = std::atoi(value.c_str());
+    } else if (!key.empty()) {
+      return false;
+    }
+    start = end + 1;
+  }
+  return true;
+}
+
+bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::path& outDir,
+                const tv::PipelineOptions* pipelineOptions, const std::string& stages) {
   tv::LoadedDump dump;
   std::string error;
   if (!tv::loadDump((sceneDir / "thermalview").string(), &dump, &error) || dump.frameCount == 0) {
@@ -134,12 +159,30 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   tv::TemperatureLut lut;
   lut.build(in, tv::TempRange::Normal);
 
+  auto toCelsius = [&](float raw) {
+    // Linear interpolation into the table, for the pipeline's fractional counts.
+    const float r = std::clamp(raw, 0.0f, float(tv::TemperatureLut::kSize - 2));
+    const size_t i = size_t(r);
+    if (!lut.valid(uint16_t(i)) || !lut.valid(uint16_t(i + 1))) return float(NAN);
+    return float(lut[uint16_t(i)] + (r - float(i)) * (lut[uint16_t(i + 1)] - lut[uint16_t(i)]));
+  };
   std::vector<float> display(dump.frameCount * tv::kImagePixels), celsius(display.size());
+  std::vector<float> pipeDisplay, pipeCelsius, signal(tv::kImagePixels);
+  if (pipelineOptions) {
+    pipeDisplay.resize(display.size());
+    pipeCelsius.resize(display.size());
+  }
+  tv::Pipeline pipeline(pipelineOptions ? *pipelineOptions : tv::PipelineOptions{});
   for (size_t f = 0; f < dump.frameCount; ++f) {
     const uint16_t* image = tv::FrameView(&dump.frames[f * tv::kFramePixels]).image();
     tv::renderBaseline(image, &display[f * tv::kImagePixels]);
     float* c = &celsius[f * tv::kImagePixels];
     for (size_t i = 0; i < tv::kImagePixels; ++i) c[i] = lut.valid(image[i]) ? float(lut[image[i]]) : NAN;
+    if (pipelineOptions) {
+      pipeline.process(image, &pipeDisplay[f * tv::kImagePixels], signal.data());
+      float* pc = &pipeCelsius[f * tv::kImagePixels];
+      for (size_t i = 0; i < tv::kImagePixels; ++i) pc[i] = toCelsius(signal[i]);
+    }
   }
 
   std::filesystem::create_directories(outDir);
@@ -151,7 +194,9 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
                 "  \"environment\": {\"emissivity\": %.3f, \"reflected_c\": %.2f, \"air_c\": %.2f, "
                 "\"humidity\": %.3f, \"distance\": %u, \"fpa_c\": %.2f},\n",
                 in.emissivity, in.reflectedC, in.airC, in.humidity, unsigned(in.distance), in.fpaC);
-  info += "  \"stages\": [\"baseline\"],\n  \"lut_frame\": " + std::to_string(lutFrame) + ",\n";
+  info += pipelineOptions ? "  \"stages\": [\"baseline\", \"pipeline\"],\n  \"pipeline\": \"" + tv::jsonEscape(stages) + "\",\n"
+                         : "  \"stages\": [\"baseline\"],\n";
+  info += "  \"lut_frame\": " + std::to_string(lutFrame) + ",\n";
   info += env;
   info += "  \"t_ms\": [";
   for (size_t f = 0; f < dump.frameCount; ++f) {
@@ -164,7 +209,9 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   }
   info += "]\n}\n";
   std::ofstream(outDir / "info.json", std::ios::trunc) << info;
-  if (!writeFloats(outDir / "baseline.f32", display) || !writeFloats(outDir / "baseline_c.f32", celsius)) {
+  if (!writeFloats(outDir / "baseline.f32", display) || !writeFloats(outDir / "baseline_c.f32", celsius) ||
+      (pipelineOptions && (!writeFloats(outDir / "pipeline.f32", pipeDisplay) ||
+                           !writeFloats(outDir / "pipeline_c.f32", pipeCelsius)))) {
     std::fprintf(stderr, "harness: cannot write %s\n", outDir.c_str());
     return false;
   }
@@ -175,12 +222,22 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
 int bench(int argc, char** argv) {
   std::filesystem::path benchDir = TV_REPO_DIR "/bench", outDir;
   std::vector<std::string> scenes;
+  std::string stages;
+  tv::PipelineOptions pipelineOptions;
+  bool withPipeline = false;
   for (int i = 2; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--bench" && i + 1 < argc) {
       benchDir = argv[++i];
     } else if (a == "--out" && i + 1 < argc) {
       outDir = argv[++i];
+    } else if (a == "--pipeline" && i + 1 < argc) {
+      stages = argv[++i];
+      if (!parseStages(stages, &pipelineOptions)) {
+        std::fprintf(stderr, "harness: unknown stage in \"%s\"\n", stages.c_str());
+        return 2;
+      }
+      withPipeline = true;
     } else if (a.starts_with("--")) {
       return usage();
     } else {
@@ -195,7 +252,8 @@ int bench(int argc, char** argv) {
     std::sort(scenes.begin(), scenes.end());
   }
   bool ok = !scenes.empty();
-  for (const std::string& scene : scenes) ok = benchScene(benchDir / scene, outDir / scene) && ok;
+  for (const std::string& scene : scenes)
+    ok = benchScene(benchDir / scene, outDir / scene, withPipeline ? &pipelineOptions : nullptr, stages) && ok;
   return ok ? 0 : 1;
 }
 

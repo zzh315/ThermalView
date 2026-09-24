@@ -24,7 +24,15 @@ Metrics, all on the display path's output unless marked °C:
 - detail (roi.json "detail"): RMS of the time-averaged frame minus its Gaussian blur (sigma 2 px)
   inside the ROI; levels and mK. Fine structure a stage must keep (key gaps on `keyboard`).
 
-    tools/py/.venv/bin/python tools/py/bench.py [--no-clips] [--rois] [--upscale bicubic|nearest] [SCENE ...]
+- shutter (`shutter`): the biggest frame-to-frame display change in the second after the freeze,
+  and the total change the NUC brings.
+
+With --pipeline STAGES the harness also runs native/core's Pipeline with those stages, results go
+to bench/results/<commit>+<stages>.json with metrics per output ("baseline", "pipeline"), and the
+sheets and clips show both.
+
+    tools/py/.venv/bin/python tools/py/bench.py [--pipeline STAGES] [--no-clips] [--rois]
+                                                [--upscale bicubic|nearest] [SCENE ...]
 """
 
 import argparse
@@ -49,11 +57,12 @@ ESF_HALF, PLATEAU, BIN = 9.0, 6.0, 0.25  # edge window, plateau start, bin width
 
 # ---- harness -------------------------------------------------------------------------------------
 
-def run_harness(scenes):
+def run_harness(scenes, pipeline=""):
     if not (HARNESS_BUILD / "CMakeCache.txt").exists():
         subprocess.run(["cmake", "-S", ROOT / "tools/harness", "-B", HARNESS_BUILD], check=True)
     subprocess.run(["cmake", "--build", HARNESS_BUILD], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run([HARNESS_BUILD / "harness", "bench", *scenes], check=True)
+    extra = ["--pipeline", pipeline] if pipeline else []
+    subprocess.run([HARNESS_BUILD / "harness", "bench", *extra, *scenes], check=True)
 
 
 def load(scene, stage="baseline"):
@@ -230,6 +239,35 @@ def scene_metrics(scene, disp, temp):
     return m
 
 
+def freeze_span(disp):
+    """The first run of >= 10 identical display frames (a shutter cycle shown as-is): (index of the
+    held frame, index of the first fresh one), or None."""
+    same = np.all(disp[1:] == disp[:-1], axis=(1, 2))
+    i = 0
+    while i < len(same):
+        if same[i]:
+            j = i
+            while j < len(same) and same[j]:
+                j += 1
+            if j - i >= 10:
+                return i, j + 1
+            i = j
+        i += 1
+    return None
+
+
+def shutter_metrics(disp, span):
+    """Stage 1 on `shutter`: the biggest frame-to-frame change of the display in the second after the
+    freeze (a jump shows as one big step, a blend as several small ones) and the total change the
+    NUC brings (the same for any blend)."""
+    a, b = span
+    after = disp[b - 1:b + 25].astype(np.float64)
+    steps = np.abs(np.diff(after, axis=0)).mean(axis=(1, 2)) * 255
+    total = np.abs(disp[min(b + 25, len(disp) - 1)].astype(np.float64) - disp[a]).mean() * 255
+    return {"freeze_frames": int(b - a), "max_step_levels": round(float(steps.max()), 2),
+            "total_change_levels": round(float(total), 2)}
+
+
 # ---- contact sheets and clips --------------------------------------------------------------------
 
 def font(size):
@@ -265,27 +303,34 @@ def refs(scene):
     return json.loads(f.read_text()) if f.exists() else {}
 
 
-def contact_sheet(scene, disp, stage_name, results_dir, upscale):
-    frame = disp[disp.shape[0] // 2]
+OWN_SIZE = (1024, 768)  # for scenes without reference captures
+
+
+def contact_sheet(scene, outputs, results_dir, upscale):
+    """One row per reference app: each of our outputs at that app's on-screen size, then the app.
+    Scenes without references get one row of ours at OWN_SIZE."""
+    frames = {st: d[d.shape[0] // 2] for st, d in outputs.items()}
     rows = []
-    for app, info in refs(scene).items():
+    for app in refs(scene):
         crop = BENCH / scene / f"{app}_crop.png"
         if not crop.exists():
             continue
         theirs = Image.open(crop).convert("RGB")
-        rows.append((tag(ours_at(frame, theirs.size, upscale), f"ThermalView {stage_name} ({upscale})", 40),
-                     tag(theirs, APPS.get(app, app), 40)))
+        rows.append([tag(ours_at(f, theirs.size, upscale), f"ThermalView {st} ({upscale})", 40)
+                     for st, f in frames.items()] + [tag(theirs, APPS.get(app, app), 40)])
     if not rows:
-        return None
+        rows.append([tag(ours_at(f, OWN_SIZE, upscale), f"ThermalView {st} ({upscale})", 32) for st, f in frames.items()])
     gap = 16
-    width = max(a.width + gap + b.width for a, b in rows)
-    height = sum(a.height for a, _ in rows) + gap * (len(rows) - 1)
+    width = max(sum(p.width for p in r) + gap * (len(r) - 1) for r in rows)
+    height = sum(r[0].height for r in rows) + gap * (len(rows) - 1)
     sheet = Image.new("RGB", (width, height), (40, 40, 40))
     y = 0
-    for a, b in rows:
-        sheet.paste(a, (0, y))
-        sheet.paste(b, (a.width + gap, y))
-        y += a.height + gap
+    for r in rows:
+        x = 0
+        for panel in r:
+            sheet.paste(panel, (x, y))
+            x += panel.width + gap
+        y += r[0].height + gap
     (OUT / "sheets").mkdir(parents=True, exist_ok=True)
     full = OUT / "sheets" / f"{scene}.png"
     sheet.save(full)
@@ -298,32 +343,48 @@ def even(v):
     return int(v) // 2 * 2
 
 
-def clip(scene, disp, stage_name, upscale):
-    """Rows of [ours | app] at half the app's on-screen size; ours is the dump (8 s at 25 fps), the
-    app's is seconds 1-9 of its recording. The two weren't recorded at the same moment."""
-    rows = [(app, r) for app, r in refs(scene).items() if (BENCH / scene / f"{app}.mp4").exists()]
-    if not rows:
-        return None
+def clip(scene, outputs, upscale):
+    """Rows of [each of our outputs | the app] at half the app's on-screen size (OWN_SIZE when the
+    scene has no references). Ours is the whole dump at 25 fps; the app's is the same length from
+    second 1 of its recording, which wasn't recorded at the same moment."""
+    stages = list(outputs)
+    rows = [(app, r) for app, r in refs(scene).items() if (BENCH / scene / f"{app}.mp4").exists()] or [(None, None)]
     (OUT / "clips").mkdir(parents=True, exist_ok=True)
-    raw = OUT / "clips" / f"{scene}_ours.gray16"
-    np.round(np.clip(disp, 0, 1) * 65535).astype("<u2").tofile(raw)
-    seconds = disp.shape[0] / 25
-    inputs = ["-f", "rawvideo", "-pix_fmt", "gray16le", "-s", f"{W}x{H}", "-r", "25", "-i", str(raw)]
-    graph = [f"[0:v]split={len(rows)}" + "".join(f"[o{i}]" for i in range(len(rows)))]
-    sizes = []
+    seconds = min(d.shape[0] for d in outputs.values()) / 25
+    flags = "bicubic:param0=0:param1=0.5" if upscale == "bicubic" else "neighbor"  # B=0, C=0.5: Catmull-Rom
+    inputs, graph, raws = [], [], []
+    for k, st in enumerate(stages):
+        raw = OUT / "clips" / f"{scene}_{st}.gray16"
+        np.round(np.clip(outputs[st], 0, 1) * 65535).astype("<u2").tofile(raw)
+        raws.append(raw)
+        inputs += ["-f", "rawvideo", "-pix_fmt", "gray16le", "-s", f"{W}x{H}", "-r", "25", "-i", str(raw)]
+        graph.append(f"[{k}:v]split={len(rows)}" + "".join(f"[s{k}r{i}]" for i in range(len(rows))))
+    n_in, sizes = len(stages), []
     for i, (app, r) in enumerate(rows):
-        w, h = (r["h"], r["w"]) if r["rotation"] else (r["w"], r["h"])
-        w2, h2 = even(w / 2), even(h / 2)
+        if app:
+            w, h = (r["h"], r["w"]) if r["rotation"] else (r["w"], r["h"])
+            w2, h2 = even(w / 2), even(h / 2)
+        else:
+            w2, h2 = OWN_SIZE
         sizes.append((w2, h2))
-        inputs += ["-ss", "1", "-t", f"{seconds:.2f}", "-i", str(BENCH / scene / f"{app}.mp4")]
-        turn = {90: ",transpose=2", -90: ",transpose=1"}.get(r["rotation"], "")
-        flags = "bicubic:param0=0:param1=0.5" if upscale == "bicubic" else "neighbor"  # B=0, C=0.5: Catmull-Rom
-        graph.append(f"[o{i}]scale={w2}:{h2}:flags={flags},format=yuv420p[a{i}]")
-        graph.append(f"[{i + 1}:v]crop={r['w']}:{r['h']}:{r['x']}:{r['y']}{turn},fps=25,"
-                     f"scale={w2}:{h2}:flags=area,format=yuv420p[b{i}]")
-    width = max(2 * w + 8 for w, _ in sizes)
+        panels = ""
+        for k in range(len(stages)):
+            graph.append(f"[s{k}r{i}]scale={w2}:{h2}:flags={flags},format=yuv420p[p{k}r{i}]")
+            panels += f"[p{k}r{i}]"
+        count = len(stages)
+        if app:
+            inputs += ["-ss", "1", "-t", f"{seconds:.2f}", "-i", str(BENCH / scene / f"{app}.mp4")]
+            turn = {90: ",transpose=2", -90: ",transpose=1"}.get(r["rotation"], "")
+            graph.append(f"[{n_in}:v]crop={r['w']}:{r['h']}:{r['x']}:{r['y']}{turn},fps=25,"
+                         f"scale={w2}:{h2}:flags=area,format=yuv420p[q{i}]")
+            n_in += 1
+            panels += f"[q{i}]"
+            count += 1
+        graph.append(f"{panels}hstack=inputs={count}[h{i}]" if count > 1 else f"{panels}null[h{i}]")
+    widths = [w * (len(stages) + (1 if app else 0)) for (app, _), (w, _) in zip(rows, sizes)]
+    width = max(widths)
     for i, (w, h) in enumerate(sizes):
-        graph.append(f"[a{i}][b{i}]hstack,pad={width}:{h + (8 if i < len(rows) - 1 else 0)}:0:0:color=0x282828[r{i}]")
+        graph.append(f"[h{i}]pad={width}:{h + (8 if i < len(rows) - 1 else 0)}:0:0:color=0x282828[r{i}]")
     graph.append("".join(f"[r{i}]" for i in range(len(rows))) + f"vstack={len(rows)}[stack]"
                  if len(rows) > 1 else "[r0]null[stack]")
     # Labels: a transparent overlay drawn with Pillow (ffmpeg's drawtext needs freetype).
@@ -332,20 +393,22 @@ def clip(scene, disp, stage_name, upscale):
     d, f = ImageDraw.Draw(labels), font(24)
     y = 0
     for (app, _), (w, h) in zip(rows, sizes):
-        for x, text in ((0, f"ThermalView {stage_name} ({upscale})"), (w + 8, APPS.get(app, app))):
+        texts = [f"ThermalView {st} ({upscale})" for st in stages] + ([APPS.get(app, app)] if app else [])
+        for k, text in enumerate(texts):
             box = d.textbbox((0, 0), text, font=f)
-            d.rectangle((x, y, x + box[2] + 16, y + box[3] + 16), fill=(0, 0, 0, 255))
-            d.text((x + 8, y + 8), text, fill=(255, 255, 0, 255), font=f)
+            d.rectangle((k * w, y, k * w + box[2] + 16, y + box[3] + 16), fill=(0, 0, 0, 255))
+            d.text((k * w + 8, y + 8), text, fill=(255, 255, 0, 255), font=f)
         y += h + 8
     label_png = OUT / "clips" / f"{scene}_labels.png"
     labels.save(label_png)
     inputs += ["-i", str(label_png)]
-    graph.append(f"[stack][{len(rows) + 1}:v]overlay=0:0,format=yuv420p[v]")
+    graph.append(f"[stack][{n_in}:v]overlay=0:0,format=yuv420p[v]")
     out = OUT / "clips" / f"{scene}.mp4"
     subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(graph), "-map", "[v]",
                     "-t", f"{seconds:.2f}", "-r", "25", "-c:v", "libx264", "-crf", "18", "-preset", "medium",
                     str(out)], check=True)
-    raw.unlink()
+    for raw in raws:
+        raw.unlink()
     return out
 
 
@@ -368,16 +431,21 @@ def draw_rois(scene, disp):
 
 
 def review_page(name, scenes, results):
-    """bench/out/review.html: per scene, the clip, then the full-size sheet (click to open it)."""
+    """bench/out/review.html: per scene, the metrics, the clip, then the full-size sheet (click it)."""
     import html
+    stages = results.get("stages", ["baseline"])
     parts = [f"<!doctype html><meta charset=utf-8><title>Bench {html.escape(name)}</title>",
              "<style>body{background:#1e1e1e;color:#ddd;font:15px -apple-system,sans-serif;margin:16px}"
              "video,img{width:100%;height:auto;display:block;margin:8px 0 24px}"
              "code{color:#fc6}h2{margin-top:40px}</style>",
-             f"<h1>Benchmark {html.escape(name)}</h1><p>Each row: ThermalView at that app's on-screen size, then the app "
-             "(Hti Image, Xtherm, InfiCamPlus). The clips weren't recorded at the same moment as ours.</p>"]
+             f"<h1>Benchmark {html.escape(name)}</h1><p>Each row: ThermalView ({', '.join(stages)}) at that app's "
+             "on-screen size, then the app (Hti Image, Xtherm, InfiCamPlus). The apps weren't recorded at the same "
+             "moment as ours.</p>"]
     for scene in scenes:
-        parts.append(f"<h2>{html.escape(scene)}</h2><p><code>{html.escape(json.dumps(results['scenes'].get(scene, {})))}</code></p>")
+        res = results["scenes"].get(scene, {})
+        parts.append(f"<h2>{html.escape(scene)}</h2>")
+        for st in stages:
+            parts.append(f"<p>{html.escape(st)}: <code>{html.escape(json.dumps(res.get(st, {})))}</code></p>")
         if (OUT / "clips" / f"{scene}.mp4").exists():
             parts.append(f'<video src="clips/{scene}.mp4" controls loop muted playsinline></video>')
         if (OUT / "sheets" / f"{scene}.png").exists():
@@ -388,6 +456,8 @@ def review_page(name, scenes, results):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("scenes", nargs="*")
+    ap.add_argument("--pipeline", default="",
+                    help="stages for a pipeline column next to the baseline (harness bench --pipeline), e.g. shutter")
     ap.add_argument("--no-clips", action="store_true", help="skip the side-by-side clips")
     ap.add_argument("--rois", action="store_true", help="also draw each scene's ROIs")
     ap.add_argument("--upscale", choices=("bicubic", "nearest"), default="bicubic",
@@ -395,26 +465,37 @@ def main():
                          "the blocks) or nearest (what the M1 renderer shows)")
     args = ap.parse_args()
     scenes = args.scenes or sorted(p.name for p in BENCH.iterdir() if (p / "thermalview.raw").exists())
-    run_harness(scenes)
-    commit, dirty, name = label()
+    run_harness(scenes, args.pipeline)
+    commit, dirty, base = label()
+    name = base + ("+" + args.pipeline.replace(",", "_").replace("=", "-") if args.pipeline else "")
+    stages = ["baseline"] + (["pipeline"] if args.pipeline else [])
     results_dir = BENCH / "results" / name
     results_file = BENCH / "results" / f"{name}.json"
     # A run over some scenes updates just those in this label's results.
     results = json.loads(results_file.read_text()) if results_file.exists() else {"scenes": {}}
     results.update({"label": name, "commit": commit, "dirty": dirty,
                     "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "stages": ["baseline"], "upscale": args.upscale})
+                    "stages": stages, "pipeline": args.pipeline, "upscale": args.upscale})
     for scene in scenes:
-        info, disp, temp = load(scene)
+        info = json.loads((OUT / scene / "info.json").read_text())
+        outputs, temps = {}, {}
+        for st in stages:
+            _, outputs[st], temps[st] = load(scene, st)
         # The environment the mK figures were computed with (the camera's user area, as-is).
-        results["scenes"][scene] = {"environment": info["environment"]} | scene_metrics(scene, disp, temp)
+        res = {"environment": info["environment"]}
+        span = freeze_span(outputs["baseline"]) if scene == "shutter" else None
+        for st in stages:
+            res[st] = scene_metrics(scene, outputs[st], temps[st])
+            if span:
+                res[st]["shutter"] = shutter_metrics(outputs[st], span)
+        results["scenes"][scene] = res
         if args.rois:
-            draw_rois(scene, disp)
-        contact_sheet(scene, disp, "baseline", results_dir, args.upscale)
+            draw_rois(scene, outputs["baseline"])
+        contact_sheet(scene, outputs, results_dir, args.upscale)
         if not args.no_clips:
-            clip(scene, disp, "baseline", args.upscale)
-        print(scene, json.dumps(results["scenes"][scene]))
-    results = {k: results[k] for k in ("label", "commit", "dirty", "date", "stages", "upscale")} | {
+            clip(scene, outputs, args.upscale)
+        print(scene, json.dumps({st: res[st] for st in stages}))
+    results = {k: results.get(k) for k in ("label", "commit", "dirty", "date", "stages", "pipeline", "upscale")} | {
         "scenes": dict(sorted(results["scenes"].items()))}
     results_file.parent.mkdir(parents=True, exist_ok=True)
     results_file.write_text(json.dumps(results, indent=2) + "\n")
