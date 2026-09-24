@@ -45,7 +45,7 @@ TEST_CASE("the fast blur, local range and 3x3 bounds match brute force") {
       CHECK(b[size_t(p[1]) * W + p[0]] == doctest::Approx(sum / total).epsilon(1e-4));
     }
   }
-  for (int r : {1, 3, 6}) {
+  for (int r : {1, 3, 6, 16}) {
     tv::localRange(a.data(), b.data(), r, scratch);
     for (const auto& p : probes) {
       float hi = -1e9f, lo = 1e9f;
