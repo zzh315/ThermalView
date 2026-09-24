@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 
+#include "perf_hint.h"
 #include "renderer.h"
 #include "tv/recalibration.h"
 #include "tv/pipeline.h"
@@ -49,6 +50,7 @@ struct Options {
   int rangeSettleMs = 500;          // debug: wait between a range command and its 0x8000 (M2 settling)
   bool bigCores = true;             // keep the processing thread on the big cores (the little ones run
                                     // the pipeline ~8x slower: M4 stage 6, 28 vs 3.4 ms a frame)
+  bool perfHint = true;             // ADPF: ask for the clock the frame budget needs (perf_hint.h)
 };
 
 class Session {
@@ -237,6 +239,9 @@ class Session {
   int lastCpu_ = -1;
   uint64_t cpuFrames_ = 0, cpuFramesBig_ = 0;
   void applyAffinity(bool big);
+  PerfHint perfHint_;  // processing thread only
+  bool perfHintSet_ = false, perfHintOn_ = false;
+  std::string perfHintText_;
   RollingWindow rangeWindow_{125};
   uint64_t rejectedSize_ = 0, rejectedChecks_ = 0, startupDiscarded_ = 0, restarts_ = 0;
   uint64_t frozenFrames_ = 0, shutterCommanded_ = 0, shutterDetected_ = 0, shutterUncommanded_ = 0;

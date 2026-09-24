@@ -159,6 +159,7 @@ struct Session::Snapshot {
   std::string startOrderNote;
   double fps = 0, jitterMs = 0, maxIntervalMs = 0, procP95Ms = 0;
   int cpu = -1;          // the processing thread's core for the last frame
+  std::string perfHint;  // "ADPF 8 ms" or "no ADPF"
   double bigShare = 0;   // share of processed frames that ran on a big core
   uint64_t frames = 0, seqGaps = 0, arrivalGaps = 0, rejectedSize = 0, rejectedChecks = 0;
   uint64_t startupDiscarded = 0, overruns = 0, restarts = 0, frozen = 0;
@@ -440,6 +441,22 @@ void Session::processLoop() {
       big = options_.bigCores;
     }
     if (!affinitySet_ || big != affinityBig_) applyAffinity(big);
+    bool hint;
+    {
+      std::lock_guard o(optionsMutex_);
+      hint = options_.perfHint;
+    }
+    if (!perfHintSet_ || hint != perfHintOn_) {
+      if (hint) {
+        perfHintText_ = perfHint_.start(8 * 1000000LL);  // 8 ms: stages 1-6 take ~6 ms at full clock
+      } else {
+        perfHint_.stop();
+        perfHintText_ = "ADPF: off";
+      }
+      FLOG("%s", perfHintText_.c_str());
+      perfHintSet_ = true;
+      perfHintOn_ = hint;
+    }
     if (ring_->waitReadable(std::chrono::milliseconds(50))) {
       while (RawFrame* frame = ring_->beginRead()) {
         handleFrame(*frame);
@@ -1066,7 +1083,9 @@ void Session::handleFrame(const RawFrame& frame) {
     pipelineFed_ = true;
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
-    procMs_.push(double(nowNs() - t0) / 1e6);
+    const int64_t workNs = nowNs() - t0;
+    procMs_.push(double(workNs) / 1e6);
+    perfHint_.report(workNs);
     lastCpu_ = sched_getcpu();
     ++cpuFrames_;
     if (lastCpu_ >= 0 && CPU_ISSET(lastCpu_, &bigCpus_)) ++cpuFramesBig_;
@@ -1120,6 +1139,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.recalReason = recalReason_;
   s.procP95Ms = procMs_.percentile(95);
   s.cpu = lastCpu_;
+  s.perfHint = perfHint_.active() ? "ADPF " + std::to_string(perfHint_.targetNs() / 1000000) + " ms" : "no ADPF";
   s.bigShare = cpuFrames_ ? double(cpuFramesBig_) / double(cpuFrames_) : 0.0;
   s.bytes = frame.bytes;
   s.flags = flags;
@@ -1466,8 +1486,9 @@ std::string Session::overlayText() {
   o += format("ThermalView %s  %s  %s order%s%s\n", appVersion_.c_str(), stateName(state),
               s.fallbackOrder ? "fallback" : "stream-first", note.c_str(), start);
   o += format("fps %.2f  jitter %.2f ms  max %.1f ms  latency p50 %.1f / p95 %.1f ms  proc p95 %.2f ms  "
-              "cpu %d (big %.0f%%)\n",
-              s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms, s.cpu, 100.0 * s.bigShare);
+              "cpu %d (big %.0f%%)  %s\n",
+              s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms, s.cpu, 100.0 * s.bigShare,
+              s.perfHint.c_str());
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
               " (size %" PRIu64 ")  overrun %" PRIu64 "  start-up %" PRIu64 "  restarts %" PRIu64 "\n",
               s.frames, s.seqGaps, s.arrivalGaps, s.rejectedSize + s.rejectedChecks, s.rejectedSize,

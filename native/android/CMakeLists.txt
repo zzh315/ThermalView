@@ -58,6 +58,7 @@ add_library(thermalview SHARED
   command_sender.cpp
   field_log.cpp
   jni_bridge.cpp
+  perf_hint.cpp
   renderer.cpp
   session.cpp
 )

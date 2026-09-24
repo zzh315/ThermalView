@@ -69,7 +69,10 @@ fun AppScreen(message: String, dumpsDir: String, options: DebugOptions, onOption
             factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(SurfaceCallbacks) } },
             modifier = Modifier.fillMaxSize(),
         )
-        ReadoutOverlay(active = status.streaming || status.replay.isNotEmpty())
+        ReadoutOverlay(
+            active = status.streaming || status.replay.isNotEmpty(),
+            viewWidthPx = MainActivity.VIEW_WIDTHS.getOrElse(options.viewSize) { 0 },
+        )
         // A replay runs without the camera, so the "plug in" prompt doesn't apply then.
         val banner = status.banner.ifEmpty { if (status.replay.isNotEmpty()) "" else message }
         if (banner.isNotEmpty()) {
@@ -152,6 +155,7 @@ private fun DebugPanel(
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
                     Toggle("Stage 6: detail + sharpening", options.detail) { onOptions(options.copy(detail = it)) }
                     Toggle("Processing on big cores", options.bigCores) { onOptions(options.copy(bigCores = it)) }
+                    Toggle("Performance hint (ADPF)", options.perfHint) { onOptions(options.copy(perfHint = it)) }
                     Toggle("Upscaler: B-spline (off: nearest)", options.upscaler == 1) {
                         onOptions(options.copy(upscaler = if (it) 1 else 0))
                     }

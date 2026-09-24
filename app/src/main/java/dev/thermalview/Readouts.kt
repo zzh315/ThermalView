@@ -47,10 +47,11 @@ private fun parse(a: FloatArray): List<Spot>? =
 
 /**
  * Low / high / center readouts over the image (M2; M6 refines the UI). Marker positions follow
- * the renderer's 4:3 letterbox (renderer.cpp draw()): image row 0 at the top, no mirroring.
+ * the renderer's 4:3 view (renderer.cpp draw()): centered, viewWidthPx wide when that's smaller than
+ * the largest fit (the view-size presets), image row 0 at the top, no mirroring.
  */
 @Composable
-fun ReadoutOverlay(active: Boolean) {
+fun ReadoutOverlay(active: Boolean, viewWidthPx: Int = 0) {
     var spots by remember { mutableStateOf<List<Spot>?>(null) }
     LaunchedEffect(active) {
         while (active) {
@@ -68,6 +69,10 @@ fun ReadoutOverlay(active: Boolean) {
             var vw = w
             var vh = h
             if (w.toLong() * 3 > h.toLong() * 4) vw = h * 4 / 3 else vh = w * 3 / 4
+            if (viewWidthPx in 1 until vw) {
+                vw = viewWidthPx
+                vh = viewWidthPx * 3 / 4
+            }
             val ox = (w - vw) / 2f
             val oy = (h - vh) / 2f
             fun map(x: Float, y: Float) = Offset(ox + (x + 0.5f) * vw / 256f, oy + (y + 0.5f) * vh / 192f)
