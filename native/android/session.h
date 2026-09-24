@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "renderer.h"
+#include "tv/recalibration.h"
 #include "tv/pipeline.h"
 #include "tv/command_gate.h"
 #include "tv/dump.h"
@@ -244,6 +245,16 @@ class Session {
   int64_t lastFreshNs_ = 0;  // arrival of the last fresh frame that passed the checks
   int freezeRepeats_ = 0;
   double lastCycleMs_ = 0;
+  // The recalibration policy (PLAN M4 stage 1) as a DRY RUN: it only logs and shows when it would ask
+  // for a 0x8000; nothing is sent until the owner approves its numbers (CLAUDE.md rule 1).
+  RecalibrationPolicy recal_{[] {
+    RecalibrationSettings s;
+    s.enabled = true;
+    return s;
+  }()};
+  uint64_t recalDue_ = 0;
+  int64_t recalDueNs_ = 0;
+  std::string recalReason_;
   std::unique_ptr<Snapshot> snapshot_;
   std::mutex snapshotMutex_;
   std::string banner_;

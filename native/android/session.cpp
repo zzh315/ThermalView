@@ -174,6 +174,9 @@ struct Session::Snapshot {
   double driftC = 0;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
+  uint64_t recalDue = 0;   // the recalibration policy's dry run: how often it would have asked
+  double recalAgoS = -1;   // and how long ago it last would have
+  std::string recalReason;
   uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
   // Metadata of the latest frame.
   uint16_t fpaAvg = 0, fpaRaw = 0, maxRaw = 0, minRaw = 0, avgRaw = 0, centerRaw = 0, cal00 = 0;
@@ -484,6 +487,7 @@ void Session::beginLockout(int64_t now, int hotPixels, uint16_t maxRaw, bool man
 
 void Session::endLockout(int64_t now) {
   FLOG("lockout ended after %.1f s", double(now - lockoutSinceNs_) / 1e9);
+  recal_.onLockoutEnded(double(now) / 1e9);
   enter(State::Running, now);
   setBanner("");
 }
@@ -534,6 +538,10 @@ void Session::enter(State state, int64_t now) {
     overrunBase_ = ring_->overruns();
     procMs_.clear();
     cpuFrames_ = cpuFramesBig_ = 0;
+    recal_.reset();
+    recalDue_ = 0;
+    recalDueNs_ = 0;
+    recalReason_.clear();
     setBanner("");
   }
 }
@@ -840,6 +848,7 @@ void Session::trackFreezes(const RawFrame& frame, const FrameView& view, uint32_
       lastCycleMs_ = double(frame.arrivalNs - freezeStartNs_) / 1e6;
       FLOG("frozen frames end: %d repeats, one image for %.0f ms; FPA %.2f C, shutter %.2f C",
            freezeRepeats_, lastCycleMs_, view.fpaC(), view.shutterC());
+      if (range_ == TempRange::Normal) recal_.onCalibration(double(frame.arrivalNs) / 1e9, view.fpaC());
     }
     lastFreshNs_ = frame.arrivalNs;
   }
@@ -1039,6 +1048,17 @@ void Session::handleFrame(const RawFrame& frame) {
       cameraHotText_.clear();
     }
 
+    // The recalibration policy, dry run: when it would ask, log it and count it as if the
+    // calibration had happened, so the overlay shows the cadence it would keep. Nothing is sent.
+    const bool recalBlocked = state != State::Running || range_ != TempRange::Normal || inFreeze_;
+    if (recal_.due(double(frame.arrivalNs) / 1e9, view.fpaC(), recalBlocked)) {
+      ++recalDue_;
+      recalDueNs_ = frame.arrivalNs;
+      recalReason_ = recal_.reason();
+      FLOG("recalibration policy (dry run, nothing sent): would ask now: %s", recalReason_.c_str());
+      recal_.onCalibration(double(frame.arrivalNs) / 1e9, view.fpaC());
+    }
+
     DisplayFrame& out = renderer_.frameSlot();
     pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()});
     for (size_t i = 0; i < kImagePixels; ++i) out.clipped[i] = view.image()[i] >= clipRaw_ ? 255 : 0;
@@ -1094,6 +1114,9 @@ void Session::handleFrame(const RawFrame& frame) {
   s.camMinC = lut_.valid(view.minRaw()) ? lut_[view.minRaw()] : NAN;
   s.camCenterC = lut_.valid(view.centerRaw()) ? lut_[view.centerRaw()] : NAN;
   s.lastCycleMs = lastCycleMs_;
+  s.recalDue = recalDue_;
+  s.recalAgoS = recalDueNs_ ? double(frame.arrivalNs - recalDueNs_) / 1e9 : -1.0;
+  s.recalReason = recalReason_;
   s.procP95Ms = procMs_.percentile(95);
   s.cpu = lastCpu_;
   s.bigShare = cpuFrames_ ? double(cpuFramesBig_) / double(cpuFrames_) : 0.0;
@@ -1450,6 +1473,10 @@ std::string Session::overlayText() {
               s.overruns, s.startupDiscarded, s.restarts);
   o += format("frame 256x196 (%u B)  checks: %s  last failure: %s\n", s.bytes,
               describeSanity(s.flags).c_str(), describeSanity(s.lastBadFlags).c_str());
+  o += s.recalDue ? format("recalibration policy (dry run, nothing sent): would have asked %" PRIu64
+                            " times, last %.0f s ago (%s)\n",
+                            s.recalDue, s.recalAgoS, s.recalReason.c_str())
+                  : std::string("recalibration policy (dry run, nothing sent): not due yet\n");
   o += format("FPA raw %u (%.2f C)  avg %u   shutter %.2f C   core %.2f C   cal_00 %u\n", s.fpaRaw,
               s.fpaC, s.fpaAvg, s.shutterC, s.coreC, s.cal00);
   o += format("cal_01..05  %.6g  %.6g  %.6g  %.6g  %.6g\n", s.cal[0], s.cal[1], s.cal[2], s.cal[3],
