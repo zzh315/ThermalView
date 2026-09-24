@@ -74,8 +74,14 @@ JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_sendShutter(JNIEnv* 
 
 JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setOptions(JNIEnv*, jobject, jboolean skipStartupShutter,
                                                                     jboolean statsCsv, jboolean fallbackOrder,
-                                                                    jboolean dumpOnLockout) {
-  session().setOptions({bool(skipStartupShutter), bool(statsCsv), bool(fallbackOrder), bool(dumpOnLockout)});
+                                                                    jboolean dumpOnLockout, jboolean autoRange,
+                                                                    jboolean highMathInfiCam) {
+  session().setOptions({bool(skipStartupShutter), bool(statsCsv), bool(fallbackOrder), bool(dumpOnLockout),
+                        bool(autoRange), bool(highMathInfiCam)});
+}
+
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setRange(JNIEnv* env, jobject, jboolean high) {
+  return toJava(env, session().requestRange(bool(high)));
 }
 
 JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_mark(JNIEnv* env, jobject, jstring label) {
@@ -84,11 +90,12 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_mark(JNIEnv* env, jobje
   env->ReleaseStringUTFChars(label, s);
 }
 
-JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_readyCapture(JNIEnv* env, jobject, jstring label) {
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_readyCapture(JNIEnv* env, jobject, jstring label,
+                                                                        jboolean rangePair) {
   const char* s = env->GetStringUTFChars(label, nullptr);
   const std::string text = s;
   env->ReleaseStringUTFChars(label, s);
-  return toJava(env, session().requestCapture(text));
+  return toJava(env, session().requestCapture(text, bool(rangePair)));
 }
 
 JNIEXPORT jfloatArray JNICALL Java_dev_thermalview_NativeBridge_readouts(JNIEnv* env, jobject) {

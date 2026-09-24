@@ -42,10 +42,20 @@ constexpr int kLockoutClearFrames = 3;   // fresh frames with no hot pixels end 
 constexpr int kLockoutPeekMaxMs = 4000;  // resume anyway if no fresh frame arrives after a hold
 constexpr int kLockoutDumpFrames = 25;   // debug: frames saved when a lockout triggers
 
+// Range switching (owner decision, 2026-09-24; CLAUDE.md rule 1; PLAN M2). What the camera does on
+// a switch, and the high range's clip, are unverified: automatic switching stays behind a debug
+// option until the iron session confirms them.
+constexpr int kRangeUpFrames = 50;     // 2 s of clipping in the normal range
+constexpr int kRangeDownFrames = 125;  // 5 s with nothing above kRangeDownC in the high range
+constexpr double kRangeDownC = 110.0;
+constexpr int kRangeHoldNoFreezeMs = 3000;  // a switch holds the display up to 3 s for a cycle
+constexpr int kLockoutFramesHigh = 2;       // in the high range the lockout acts at once
+
 // Debug capture on the owner's Ready tap: recalibrate, settle, record. Runs on the tablet, so a
 // dropped adb link can't lose it. Recalibrations stay >= 60 s apart: the shutter warms with use
 // and back-to-back cycles read low (docs/DEVICE.md).
 constexpr int kCaptureGapMs = 60000;
+constexpr int kPairHighGapMs = 10000;  // the high leg of a range test only waits out the gate's limit
 constexpr int kCaptureSettleMs = 3000;
 constexpr int kCaptureFrames = 200;
 
@@ -89,6 +99,13 @@ uvc_stream_ctrl_t* asCtrl(const std::unique_ptr<unsigned char[]>& p) {
   return reinterpret_cast<uvc_stream_ctrl_t*>(p.get());
 }
 
+std::string constantsText(const FrameView& v) {
+  std::string o = format("shutter %.2f C, cal00 %u, cal01..05 %.6g %.6g %.6g %.6g %.6g, Q13..23",
+                         v.shutterC(), v.cal00(), v.cal(1), v.cal(2), v.cal(3), v.cal(4), v.cal(5));
+  for (int i = 13; i < 24; ++i) o += format(" %u", v.at(kOffsetQ + i));
+  return o;
+}
+
 }  // namespace
 
 const char* stateName(State state) {
@@ -120,7 +137,7 @@ struct Session::Snapshot {
   uint16_t lastHotMax = 0;
   Readouts raw, shown;  // this frame's readouts, unsmoothed and as displayed
   uint16_t vertex = 0;
-  bool rangeHigh = false;
+  bool rangeHigh = false, autoRange = false, highMathInfiCam = false;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
   uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
@@ -275,6 +292,9 @@ bool Session::startStreaming() {
   readoutFilter_.reset();
   rawReadouts_ = shownReadouts_ = Readouts{};
   lastReadoutNs_ = 0;
+  range_ = TempRange::Normal;  // the start sequence always selects the normal range
+  clipStreak_ = coolStreak_ = 0;
+  autoRangeRequest_ = -1;
   hotStreak_ = 0;
   lockoutHoldStartNs_ = 0;
   lockoutPeekHot_ = false;
@@ -404,10 +424,29 @@ void Session::endLockout(int64_t now) {
   setBanner("");
 }
 
-void Session::beginHold(int64_t now) {
+void Session::beginHold(int64_t now, int noFreezeMs) {
   holdSawFreeze_ = false;
   liveStreak_ = 0;
+  holdNoFreezeMs_ = noFreezeMs;
   enter(State::ShutterHold, now);
+}
+
+void Session::switchRange(TempRange target, int64_t now, const char* why) {
+  if (target == range_ || now < nextRangeAttemptNs_) return;
+  const bool high = target == TempRange::High;
+  const CommandResult r = command(high ? kCmdRangeHigh : kCmdRangeNormal);
+  if (r != CommandResult::Sent) {
+    nextRangeAttemptNs_ = now + 1000 * kMs;
+    FLOG("range switch to %s refused: %s", high ? "high" : "normal", commandResultText(r));
+    return;
+  }
+  FLOG("range -> %s (%s); constants before: %s", high ? "high" : "normal", why,
+       lastMeta_.empty() ? "?" : constantsText(FrameView(lastMeta_.data())).c_str());
+  range_ = target;
+  hotStreak_ = clipStreak_ = coolStreak_ = 0;
+  rangeLogPending_ = true;
+  readoutFilter_.reset();
+  beginHold(now, kRangeHoldNoFreezeMs);  // hold the display through whatever the camera does
 }
 
 void Session::enter(State state, int64_t now) {
@@ -443,8 +482,12 @@ void Session::tickCapture(int64_t now) {
       return;
     }
     capturePhase_ = CapturePhase::WaitGap;
-    FLOG("capture: requested");
+    capturePair_ = capturePairRequested_.load();
+    captureGapMs_ = kCaptureGapMs;
+    FLOG("capture: requested%s", capturePair_ ? " (range test: normal, then high)" : "");
   }
+  const char* leg = !capturePair_ ? "Capture" : range_ == TempRange::High ? "Range test 2/2 (high)"
+                                                                          : "Range test 1/2 (normal)";
   if (state != State::Running && state != State::ShutterHold) {
     FLOG("capture: aborted (%s)", stateName(state));
     capturePhase_ = CapturePhase::None;
@@ -455,14 +498,14 @@ void Session::tickCapture(int64_t now) {
     case CapturePhase::WaitGap: {
       if (state != State::Running) break;
       const int64_t gap = since(std::max(lastShutterNs_, lastFreezeEndNs_));
-      if (gap < kCaptureGapMs) {
-        setBanner(format("Capture: waiting %" PRId64 " s for the shutter to cool…",
-                         (kCaptureGapMs - gap) / 1000 + 1));
+      if (gap < captureGapMs_) {
+        setBanner(format("%s: waiting %" PRId64 " s for the shutter to cool…", leg,
+                         (captureGapMs_ - gap) / 1000 + 1));
         break;
       }
       if (command(kCmdShutter) != CommandResult::Sent) break;  // retried on the next tick
       FLOG("capture: recalibrating");
-      setBanner("Capture: recalibrating…");
+      setBanner(format("%s: recalibrating…", leg));
       capturePhase_ = CapturePhase::Recalibrating;
       beginHold(now);
       break;
@@ -471,7 +514,7 @@ void Session::tickCapture(int64_t now) {
       if (state == State::Running) {
         capturePhase_ = CapturePhase::Settle;
         capturePhaseNs_ = now;
-        setBanner("Capture: recording, keep still…");
+        setBanner(format("%s: recording, keep still…", leg));
       }
       break;
     case CapturePhase::Settle:
@@ -481,12 +524,43 @@ void Session::tickCapture(int64_t now) {
       }
       break;
     case CapturePhase::Recording:
-      if (dumpWanted_.load() == 0) {
-        FLOG("capture: done");
-        setBanner("Capture done: measure again now");
-        capturePhase_ = CapturePhase::Done;
-        capturePhaseNs_ = now;
+      if (dumpWanted_.load() != 0) break;
+      if (capturePair_ && range_ == TempRange::Normal) {
+        FLOG("capture: normal leg done, switching to the high range");
+        setBanner("Range test: switching to the high range…");
+        capturePhase_ = CapturePhase::SwitchHigh;
+        break;
       }
+      if (capturePair_) {
+        FLOG("capture: high leg done, switching back");
+        setBanner("Range test: switching back…");
+        capturePhase_ = CapturePhase::SwitchBack;
+        break;
+      }
+      FLOG("capture: done");
+      setBanner("Capture done: measure again now");
+      capturePhase_ = CapturePhase::Done;
+      capturePhaseNs_ = now;
+      break;
+    case CapturePhase::SwitchHigh:
+      // The gate may refuse 0x8021 for up to 10 s; switchRange retries once a second.
+      if (range_ != TempRange::High) {
+        if (state == State::Running) switchRange(TempRange::High, now, "range test");
+        break;
+      }
+      captureGapMs_ = kPairHighGapMs;
+      capturePhase_ = CapturePhase::WaitGap;
+      break;
+    case CapturePhase::SwitchBack:
+      if (range_ != TempRange::Normal) {
+        if (state == State::Running) switchRange(TempRange::Normal, now, "range test done");
+        break;
+      }
+      if (state != State::Running) break;
+      FLOG("capture: range test done");
+      setBanner("Range test done");
+      capturePhase_ = CapturePhase::Done;
+      capturePhaseNs_ = now;
       break;
     case CapturePhase::Done:
       if (since(capturePhaseNs_) >= 5000) {
@@ -557,7 +631,7 @@ void Session::tick(int64_t now) {
       // (docs/DEVICE.md). So the hold ends with a run of fresh frames after a freeze.
       if (stalled()) break;
       const int64_t held = since(stateSinceNs_);
-      if (holdSawFreeze_ ? liveStreak_ >= kLiveStreak : held >= kNoFreezeMs) {
+      if (holdSawFreeze_ ? liveStreak_ >= kLiveStreak : held >= holdNoFreezeMs_) {
         enter(State::Running, now);
       } else if (held >= kHoldMaxMs) {
         FLOG("shutter hold ends after %d ms without a run of fresh frames", kHoldMaxMs);
@@ -568,6 +642,17 @@ void Session::tick(int64_t now) {
     case State::Running: {
       if (manualLockout_.exchange(false)) {
         beginLockout(now, 0, 0, true);
+        break;
+      }
+      if (const int r = requestedRange_.exchange(-1); r >= 0) {
+        switchRange(r ? TempRange::High : TempRange::Normal, now, "manual");
+        break;
+      }
+      if (autoRangeRequest_ >= 0) {
+        const int r = autoRangeRequest_;
+        autoRangeRequest_ = -1;
+        switchRange(r ? TempRange::High : TempRange::Normal, now,
+                    r ? "auto: clipping for 2 s" : "auto: nothing above 110 C for 5 s");
         break;
       }
       if (const int64_t sent = manualShutterNs_.exchange(0)) {
@@ -694,7 +779,13 @@ void Session::handleFrame(const RawFrame& frame) {
 
   // Temperatures: a fresh table from this frame's own metadata (PROTOCOL.md "Temperature math"),
   // readouts from raw values (CLAUDE.md rule 2).
+  {
+    std::lock_guard o(optionsMutex_);
+    autoRange_ = options_.autoRange;
+    highMath_ = options_.highMathInfiCam ? HighRangeMath::InfiCam : HighRangeMath::Ht301;
+  }
   if (usable) {
+    lastMeta_.assign(frame.data.begin(), frame.data.end());
     lut_.build(temperatureInputs(view), range_, highMath_);
     rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, kNormalClipRaw);
   }
@@ -712,7 +803,23 @@ void Session::handleFrame(const RawFrame& frame) {
 
   if (state == State::Running) {
     hotStreak_ = hotPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
-    if (hotStreak_ >= kLockoutFrames) beginLockout(frame.arrivalNs, hotPixels, stats.max, false);
+    const int lockoutFrames = range_ == TempRange::High ? kLockoutFramesHigh : kLockoutFrames;
+    if (hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, hotPixels, stats.max, false);
+    if (autoRange_ && usable && state_.load() == State::Running) {
+      if (range_ == TempRange::Normal) {
+        clipStreak_ = hotPixels >= kLockoutPixels ? clipStreak_ + 1 : 0;
+        if (clipStreak_ >= kRangeUpFrames) autoRangeRequest_ = 1;
+      } else {
+        const bool cool = std::isfinite(rawReadouts_.high.tempC) && !rawReadouts_.high.overRange &&
+                          rawReadouts_.high.tempC < kRangeDownC;
+        coolStreak_ = cool ? coolStreak_ + 1 : 0;
+        if (coolStreak_ >= kRangeDownFrames) autoRangeRequest_ = 0;
+      }
+    }
+    if (rangeLogPending_ && usable && !frozen) {
+      rangeLogPending_ = false;
+      FLOG("range %s in effect: %s", range_ == TempRange::High ? "high" : "normal", constantsText(view).c_str());
+    }
   } else if (state == State::Lockout && !lockoutHoldStartNs_ && usable && !frozen) {
     // Peeking: judge fresh frames only (repeated ones still show the scene before the shutter).
     if (hotPixels >= kLockoutPixels)
@@ -819,6 +926,8 @@ void Session::handleFrame(const RawFrame& frame) {
   s.shown = shownReadouts_;
   s.vertex = lut_.vertex();
   s.rangeHigh = range_ == TempRange::High;
+  s.autoRange = autoRange_;
+  s.highMathInfiCam = highMath_ == HighRangeMath::InfiCam;
   s.camMaxC = lut_.valid(view.maxRaw()) ? lut_[view.maxRaw()] : NAN;
   s.camMinC = lut_.valid(view.minRaw()) ? lut_[view.minRaw()] : NAN;
   s.camCenterC = lut_.valid(view.centerRaw()) ? lut_[view.centerRaw()] : NAN;
@@ -894,6 +1003,7 @@ void Session::finishDump() {
   dumpInfo_.appVersion = appVersion_;
   dumpInfo_.source = state_.load() == State::Replay ? "replay" : "camera";
   dumpInfo_.startOrder = fallbackOrder_ ? "fallback" : "stream-first";
+  dumpInfo_.range = range_ == TempRange::High ? "high" : "normal";
   {
     std::lock_guard lock(snapshotMutex_);
     dumpInfo_.firmware = snapshot_->firmware;
@@ -1043,11 +1153,18 @@ std::string Session::sendShutter() {
   return commandResultText(result);
 }
 
-std::string Session::requestCapture(const std::string& label) {
+std::string Session::requestRange(bool high) {
+  if (state_.load() != State::Running) return "not running";
+  requestedRange_ = high ? 1 : 0;
+  return high ? "high range requested" : "normal range requested";
+}
+
+std::string Session::requestCapture(const std::string& label, bool rangePair) {
   FLOG("owner mark: %s", label.c_str());
   if (state_.load() != State::Running) return "not running";
+  capturePairRequested_ = rangePair;
   captureRequested_ = true;
-  return "capture started";
+  return rangePair ? "range test started" : "capture started";
 }
 
 std::string Session::triggerLockout() {
@@ -1144,6 +1261,8 @@ std::string Session::overlayText() {
     return std::isfinite(sp.tempC) ? format("%.2f", sp.tempC) : std::string("--");
   };
   auto c = [](double v) { return std::isfinite(v) ? format("%.2f", v) : std::string("--"); };
+  o += format("range: %s, auto %s, high-range math %s\n", s.rangeHigh ? "HIGH" : "normal",
+              s.autoRange ? "on" : "off", s.highMathInfiCam ? "InfiCam" : "ht301");
   o += format("temps (%s range, per-frame table, vertex raw %u): high %s @(%.0f,%.0f)  low %s @(%.0f,%.0f)  "
               "center %s   camera's own: max %s min %s center %s\n",
               s.rangeHigh ? "high" : "normal", s.vertex, t(s.raw.high).c_str(), s.raw.high.x, s.raw.high.y,

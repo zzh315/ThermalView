@@ -55,6 +55,7 @@ bool writeDump(const std::string& base, const std::vector<uint16_t>& frames, con
   j << "  \"wall_clock_start\": " << str(info.wallClockStart) << ",\n";
   j << "  \"source\": " << str(info.source) << ",\n";
   j << "  \"start_order\": " << str(info.startOrder) << ",\n";
+  j << "  \"range\": " << str(info.range.empty() ? "normal" : info.range) << ",\n";
   j << "  \"app_version\": " << str(info.appVersion) << ",\n";
   j << "  \"device\": {\"manufacturer\": " << str(info.manufacturer)
     << ", \"product\": " << str(info.product) << ", \"serial\": " << str(info.serial)

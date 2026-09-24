@@ -19,6 +19,9 @@ data class DebugOptions(
     val fallbackOrder: Boolean = false,
     val dumpOnLockout: Boolean = false,
     val captureOnReady: Boolean = true,  // the Ready button records a capture on the tablet itself
+    val autoRange: Boolean = false,      // automatic range switching (off until the M2 iron session)
+    val highMathInfiCam: Boolean = false,
+    val rangePairOnReady: Boolean = false,  // Ready captures the scene in both ranges (M2 iron session)
 )
 
 class MainActivity : ComponentActivity() {
@@ -75,15 +78,18 @@ class MainActivity : ComponentActivity() {
 
     private fun setOptions(value: DebugOptions) {
         options.value = value
-        NativeBridge.setOptions(value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout)
+        NativeBridge.setOptions(
+            value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout,
+            value.autoRange, value.highMathInfiCam,
+        )
     }
 
     /**
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
-     * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump (booleans, applied first);
-     * reconnect, shutter, lockout, stopReplay (booleans); dump (frames); replay (dump path
-     * without extension).
+     * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi
+     * (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans); dump (frames);
+     * replay (dump path without extension); range ("high" or "normal").
      */
     private fun applyDebugExtras(intent: Intent?) {
         val extras = intent?.extras ?: return
@@ -93,6 +99,9 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("skipStartupShutter")) o = o.copy(skipStartupShutter = extras.getBoolean("skipStartupShutter"))
         if (extras.containsKey("fallbackOrder")) o = o.copy(fallbackOrder = extras.getBoolean("fallbackOrder"))
         if (extras.containsKey("lockoutDump")) o = o.copy(dumpOnLockout = extras.getBoolean("lockoutDump"))
+        if (extras.containsKey("autoRange")) o = o.copy(autoRange = extras.getBoolean("autoRange"))
+        if (extras.containsKey("highMathInfi")) o = o.copy(highMathInfiCam = extras.getBoolean("highMathInfi"))
+        if (extras.containsKey("rangePair")) o = o.copy(rangePairOnReady = extras.getBoolean("rangePair"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -102,6 +111,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("dump")) Log.i(TAG, "adb: dump " + NativeBridge.startDump(extras.getInt("dump")))
         if (extras.getBoolean("shutter")) Log.i(TAG, "adb: 0x8000 " + NativeBridge.sendShutter())
         if (extras.getBoolean("lockout")) Log.i(TAG, "adb: " + NativeBridge.triggerLockout())
+        extras.getString("range")?.let { Log.i(TAG, "adb: " + NativeBridge.setRange(it == "high")) }
         if (extras.getBoolean("stopReplay")) NativeBridge.stopReplay()
         extras.getString("replay")?.let { Log.i(TAG, "adb: replay " + NativeBridge.startReplay(it).ifEmpty { "started" }) }
         intent.replaceExtras(Bundle())  // don't re-apply on configuration changes

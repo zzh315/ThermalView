@@ -138,6 +138,17 @@ private fun DebugPanel(
                     Toggle("Ready records a capture", options.captureOnReady) {
                         onOptions(options.copy(captureOnReady = it))
                     }
+                    Toggle("Ready: range test (normal + high)", options.rangePairOnReady) {
+                        onOptions(options.copy(rangePairOnReady = it))
+                    }
+                    Toggle("Auto range switching", options.autoRange) { onOptions(options.copy(autoRange = it)) }
+                    Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
+                        onOptions(options.copy(highMathInfiCam = it))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { toast(NativeBridge.setRange(false)) }) { Text("Normal range") }
+                        Button(onClick = { toast(NativeBridge.setRange(true)) }) { Text("High range") }
+                    }
                     Toggle("Fallback start order (next start)", options.fallbackOrder) {
                         onOptions(options.copy(fallbackOrder = it))
                     }
@@ -158,7 +169,7 @@ private fun DebugPanel(
             Button(onClick = {
                 marks += 1
                 if (options.captureOnReady) {
-                    toast("Ready #$marks: " + NativeBridge.readyCapture("ready #$marks"))
+                    toast("Ready #$marks: " + NativeBridge.readyCapture("ready #$marks", options.rangePairOnReady))
                 } else {
                     NativeBridge.mark("ready #$marks")
                     toast("Ready #$marks sent")

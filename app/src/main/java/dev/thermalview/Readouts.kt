@@ -30,18 +30,20 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 /** One readout as the native side reports it (camera pixels). */
-private data class Spot(val tempC: Float, val x: Float, val y: Float, val flags: Int) {
+private data class Spot(val tempC: Float, val x: Float, val y: Float, val flags: Int, val high: Boolean) {
     val valid get() = flags and 1 != 0
     val overRange get() = flags and 2 != 0
     fun label(): String = when {
-        overRange -> "> 120 °C"
+        overRange -> if (high) "> max" else "> 120 °C"  // the high range's ceiling is measured in M2
         valid && !tempC.isNaN() -> "%.1f °C".format(tempC)
         else -> "--"
     }
 }
 
 private fun parse(a: FloatArray): List<Spot>? =
-    if (a.size < 12) null else (0 until 3).map { i -> Spot(a[4 * i], a[4 * i + 1], a[4 * i + 2], a[4 * i + 3].toInt()) }
+    if (a.size < 13) null else (0 until 3).map { i ->
+        Spot(a[4 * i], a[4 * i + 1], a[4 * i + 2], a[4 * i + 3].toInt(), high = a[12] > 0.5f)
+    }
 
 /**
  * Low / high / center readouts over the image (M2; M6 refines the UI). Marker positions follow
@@ -77,7 +79,8 @@ fun ReadoutOverlay(active: Boolean) {
         Row(
             Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 6.dp),
         ) {
-            Text("▲ ${high.label()}   ▼ ${low.label()}   ✛ ${center.label()}", color = Color.White,
+            val badge = if (high.high) "HIGH RANGE   " else ""
+            Text("$badge▲ ${high.label()}   ▼ ${low.label()}   ✛ ${center.label()}", color = Color.White,
                 fontFamily = FontFamily.Monospace, fontSize = 16.sp)
         }
     }

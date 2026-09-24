@@ -27,10 +27,15 @@ object NativeBridge {
     external fun stopReplay()
 
     external fun sendShutter(): String
-    external fun setOptions(skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean, dumpOnLockout: Boolean)
+    external fun setOptions(
+        skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean, dumpOnLockout: Boolean,
+        autoRange: Boolean, highMathInfiCam: Boolean,
+    )
+    external fun setRange(high: Boolean): String  // debug: manual range switch
     external fun triggerLockout(): String
     external fun mark(label: String)  // debug: "owner mark: <label>" in the field log
-    external fun readyCapture(label: String): String  // debug: mark, recalibrate, dump 200 frames
+    /** Debug: mark, recalibrate, dump 200 frames; with [rangePair], again in the high range, then back. */
+    external fun readyCapture(label: String, rangePair: Boolean): String
 
     /**
      * Shown readouts: {temp °C, x, y, flags} for high, low and center (camera pixels), then 1 if

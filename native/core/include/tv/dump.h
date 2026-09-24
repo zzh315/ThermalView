@@ -18,6 +18,7 @@ struct DumpInfo {
   std::string appVersion;
   std::string source;      // "camera" or "replay"
   std::string startOrder;  // "stream-first" or "fallback"
+  std::string range;       // "normal" or "high" (the range the frames were captured in)
   std::vector<std::string> commandLog;
 };
 

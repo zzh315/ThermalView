@@ -36,6 +36,8 @@ struct Options {
   bool statsCsv = false;            // debug: per-frame metadata and statistics to CSV
   bool fallbackOrder = false;       // debug: InfiCam's order (0x8004, 0x8020 before streaming)
   bool dumpOnLockout = false;       // debug: save the frames that trigger an over-range lockout
+  bool autoRange = false;           // automatic range switching (off until the M2 iron session)
+  bool highMathInfiCam = false;     // debug: InfiCam's high-range math instead of ht301_hacklib's
 };
 
 class Session {
@@ -59,10 +61,12 @@ class Session {
   void stopReplay();
   std::string sendShutter();  // debug / Recalibrate
   std::string triggerLockout();  // debug: run one over-range lockout without a hot scene
-  std::string requestCapture(const std::string& label);  // debug: recalibrate, then dump 200 frames
+  // debug: recalibrate, then dump 200 frames; with rangePair, again in the high range, then back.
+  std::string requestCapture(const std::string& label, bool rangePair = false);
   // Shown readouts for the UI: {temp, x, y, flags} for high, low and center, then 1 if the high
   // range is active. flags: 1 = a valid temperature, 2 = over range. temp is NaN when invalid.
   std::vector<float> readouts();
+  std::string requestRange(bool high);  // manual range switch (debug)
   void setOptions(const Options& options);
 
  private:
@@ -80,7 +84,8 @@ class Session {
   void tick(int64_t now);
   void tickCapture(int64_t now);
   void enter(State state, int64_t now);
-  void beginHold(int64_t now);  // withhold frames through a shutter cycle
+  void beginHold(int64_t now, int noFreezeMs = 1000);  // withhold frames through a shutter cycle
+  void switchRange(TempRange target, int64_t now, const char* why);
   void trackFreezes(const RawFrame& frame, const FrameView& view, uint32_t flags, bool frozen,
                     State state);
   void fail(const std::string& reason);
@@ -139,7 +144,10 @@ class Session {
   std::atomic<int64_t> manualShutterNs_{0};
   std::atomic<bool> manualLockout_{false};
   std::atomic<bool> captureRequested_{false};
-  enum class CapturePhase { None, WaitGap, Recalibrating, Settle, Recording, Done };
+  enum class CapturePhase { None, WaitGap, Recalibrating, Settle, Recording, Done, SwitchHigh, SwitchBack };
+  std::atomic<bool> capturePairRequested_{false};
+  bool capturePair_ = false;
+  int captureGapMs_ = 60000;
   CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
   int64_t capturePhaseNs_ = 0;
   int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's
@@ -152,6 +160,16 @@ class Session {
   TempRange range_ = TempRange::Normal;
   HighRangeMath highMath_ = HighRangeMath::Ht301;
   std::string cameraHotText_;  // the camera-hot banner while it shows
+
+  // Range switching (processing thread, except the atomic request).
+  std::atomic<int> requestedRange_{-1};  // -1 none, 0 normal, 1 high
+  int autoRangeRequest_ = -1;
+  int clipStreak_ = 0, coolStreak_ = 0;
+  int64_t nextRangeAttemptNs_ = 0;
+  int holdNoFreezeMs_ = 1000;
+  bool rangeLogPending_ = false;
+  bool autoRange_ = false;
+  std::vector<uint16_t> lastMeta_;  // the latest usable frame, for logging constants at a switch
 
   // Over-range lockout (processing thread).
   int hotStreak_ = 0;
