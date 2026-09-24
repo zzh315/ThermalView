@@ -42,6 +42,13 @@ constexpr int kLockoutClearFrames = 3;   // fresh frames with no hot pixels end 
 constexpr int kLockoutPeekMaxMs = 4000;  // resume anyway if no fresh frame arrives after a hold
 constexpr int kLockoutDumpFrames = 25;   // debug: frames saved when a lockout triggers
 
+// Debug capture on the owner's Ready tap: recalibrate, settle, record. Runs on the tablet, so a
+// dropped adb link can't lose it. Recalibrations stay >= 60 s apart: the shutter warms with use
+// and back-to-back cycles read low (docs/DEVICE.md).
+constexpr int kCaptureGapMs = 60000;
+constexpr int kCaptureSettleMs = 3000;
+constexpr int kCaptureFrames = 200;
+
 int64_t nowNs() {
   timespec t{};
   clock_gettime(CLOCK_MONOTONIC, &t);
@@ -264,6 +271,8 @@ bool Session::startStreaming() {
   hotStreak_ = 0;
   lockoutHoldStartNs_ = 0;
   lockoutPeekHot_ = false;
+  lastFreezeEndNs_ = 0;
+  capturePhase_ = CapturePhase::None;
   lastShutterNs_ = 0;
   rangeWindow_.clear();
   arrivals_.reset();
@@ -417,7 +426,74 @@ void Session::fail(const std::string& reason) {
   stopStreaming();
 }
 
+void Session::tickCapture(int64_t now) {
+  const auto since = [now](int64_t t) { return (now - t) / kMs; };
+  const State state = state_.load();
+  if (capturePhase_ == CapturePhase::None) {
+    if (!captureRequested_.exchange(false)) return;
+    if (state != State::Running) {
+      FLOG("capture: not running, ignored");
+      return;
+    }
+    capturePhase_ = CapturePhase::WaitGap;
+    FLOG("capture: requested");
+  }
+  if (state != State::Running && state != State::ShutterHold) {
+    FLOG("capture: aborted (%s)", stateName(state));
+    capturePhase_ = CapturePhase::None;
+    setBanner("");
+    return;
+  }
+  switch (capturePhase_) {
+    case CapturePhase::WaitGap: {
+      if (state != State::Running) break;
+      const int64_t gap = since(std::max(lastShutterNs_, lastFreezeEndNs_));
+      if (gap < kCaptureGapMs) {
+        setBanner(format("Capture: waiting %" PRId64 " s for the shutter to cool…",
+                         (kCaptureGapMs - gap) / 1000 + 1));
+        break;
+      }
+      if (command(kCmdShutter) != CommandResult::Sent) break;  // retried on the next tick
+      FLOG("capture: recalibrating");
+      setBanner("Capture: recalibrating…");
+      capturePhase_ = CapturePhase::Recalibrating;
+      beginHold(now);
+      break;
+    }
+    case CapturePhase::Recalibrating:
+      if (state == State::Running) {
+        capturePhase_ = CapturePhase::Settle;
+        capturePhaseNs_ = now;
+        setBanner("Capture: recording, keep still…");
+      }
+      break;
+    case CapturePhase::Settle:
+      if (since(capturePhaseNs_) >= kCaptureSettleMs) {
+        FLOG("capture: recording %s", startDump(kCaptureFrames).c_str());
+        capturePhase_ = CapturePhase::Recording;
+      }
+      break;
+    case CapturePhase::Recording:
+      if (dumpWanted_.load() == 0) {
+        FLOG("capture: done");
+        setBanner("Capture done: measure again now");
+        capturePhase_ = CapturePhase::Done;
+        capturePhaseNs_ = now;
+      }
+      break;
+    case CapturePhase::Done:
+      if (since(capturePhaseNs_) >= 5000) {
+        setBanner("");
+        capturePhase_ = CapturePhase::None;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 void Session::tick(int64_t now) {
+  tickCapture(now);
   const auto since = [now](int64_t t) { return (now - t) / kMs; };
   // Frames keep arriving (repeated) through a shutter cycle, so a silent stream is a stall.
   const auto stalled = [&] {
@@ -556,6 +632,7 @@ void Session::trackFreezes(const RawFrame& frame, const FrameView& view, uint32_
     ++liveStreak_;
     if (inFreeze_) {
       inFreeze_ = false;
+      lastFreezeEndNs_ = frame.arrivalNs;
       // Measured like tools/py/shutter_stats.py: from the repeated frame to the next fresh one.
       lastCycleMs_ = double(frame.arrivalNs - freezeStartNs_) / 1e6;
       FLOG("frozen frames end: %d repeats, one image for %.0f ms; FPA %.2f C, shutter %.2f C",
@@ -919,6 +996,13 @@ std::string Session::sendShutter() {
   const CommandResult result = gate_->send(kCmdShutter);
   if (result == CommandResult::Sent) manualShutterNs_ = nowNs();
   return commandResultText(result);
+}
+
+std::string Session::requestCapture(const std::string& label) {
+  FLOG("owner mark: %s", label.c_str());
+  if (state_.load() != State::Running) return "not running";
+  captureRequested_ = true;
+  return "capture started";
 }
 
 std::string Session::triggerLockout() {

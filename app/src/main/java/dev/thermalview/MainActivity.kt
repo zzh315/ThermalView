@@ -18,6 +18,7 @@ data class DebugOptions(
     val statsCsv: Boolean = false,
     val fallbackOrder: Boolean = false,
     val dumpOnLockout: Boolean = false,
+    val captureOnReady: Boolean = true,  // the Ready button records a capture on the tablet itself
 )
 
 class MainActivity : ComponentActivity() {

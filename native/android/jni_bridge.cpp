@@ -83,6 +83,13 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_mark(JNIEnv* env, jobje
   env->ReleaseStringUTFChars(label, s);
 }
 
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_readyCapture(JNIEnv* env, jobject, jstring label) {
+  const char* s = env->GetStringUTFChars(label, nullptr);
+  const std::string text = s;
+  env->ReleaseStringUTFChars(label, s);
+  return toJava(env, session().requestCapture(text));
+}
+
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {
   return env->NewStringUTF(session().triggerLockout().c_str());
 }

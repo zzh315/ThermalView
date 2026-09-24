@@ -134,6 +134,9 @@ private fun DebugPanel(
                         onOptions(options.copy(skipStartupShutter = it))
                     }
                     Toggle("Stats CSV", options.statsCsv) { onOptions(options.copy(statsCsv = it)) }
+                    Toggle("Ready records a capture", options.captureOnReady) {
+                        onOptions(options.copy(captureOnReady = it))
+                    }
                     Toggle("Fallback start order (next start)", options.fallbackOrder) {
                         onOptions(options.copy(fallbackOrder = it))
                     }
@@ -153,8 +156,12 @@ private fun DebugPanel(
             var marks by rememberSaveable { mutableStateOf(0) }
             Button(onClick = {
                 marks += 1
-                NativeBridge.mark("ready #$marks")
-                toast("Ready #$marks sent")
+                if (options.captureOnReady) {
+                    toast("Ready #$marks: " + NativeBridge.readyCapture("ready #$marks"))
+                } else {
+                    NativeBridge.mark("ready #$marks")
+                    toast("Ready #$marks sent")
+                }
             }) { Text("Ready") }
             TextButton(onClick = { expanded = !expanded }) {
                 Text(if (expanded) "Close debug" else "Debug", color = Color.White)

@@ -57,6 +57,7 @@ class Session {
   void stopReplay();
   std::string sendShutter();  // debug / Recalibrate
   std::string triggerLockout();  // debug: run one over-range lockout without a hot scene
+  std::string requestCapture(const std::string& label);  // debug: recalibrate, then dump 200 frames
   void setOptions(const Options& options);
 
  private:
@@ -72,6 +73,7 @@ class Session {
   void processLoop();
   void handleFrame(const RawFrame& frame);
   void tick(int64_t now);
+  void tickCapture(int64_t now);
   void enter(State state, int64_t now);
   void beginHold(int64_t now);  // withhold frames through a shutter cycle
   void trackFreezes(const RawFrame& frame, const FrameView& view, uint32_t flags, bool frozen,
@@ -130,6 +132,11 @@ class Session {
   bool fallbackTried_ = false;
   std::atomic<int64_t> manualShutterNs_{0};
   std::atomic<bool> manualLockout_{false};
+  std::atomic<bool> captureRequested_{false};
+  enum class CapturePhase { None, WaitGap, Recalibrating, Settle, Recording, Done };
+  CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
+  int64_t capturePhaseNs_ = 0;
+  int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's
 
   // Over-range lockout (processing thread).
   int hotStreak_ = 0;

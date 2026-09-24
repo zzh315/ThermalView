@@ -30,6 +30,7 @@ object NativeBridge {
     external fun setOptions(skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean, dumpOnLockout: Boolean)
     external fun triggerLockout(): String
     external fun mark(label: String)  // debug: "owner mark: <label>" in the field log
+    external fun readyCapture(label: String): String  // debug: mark, recalibrate, dump 200 frames
 }
 
 data class Status(
