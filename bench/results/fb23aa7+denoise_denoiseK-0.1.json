@@ -1,0 +1,130 @@
+{
+  "label": "fb23aa7+denoise_denoiseK-0.1",
+  "commit": "fb23aa7",
+  "dirty": false,
+  "date": "2026-09-25T01:47:13+10:00",
+  "stages": [
+    "baseline",
+    "pipeline"
+  ],
+  "pipeline": "denoise,denoiseK=0.1",
+  "upscale": "bicubic",
+  "scenes": {
+    "flat": {
+      "environment": {
+        "emissivity": 0.98,
+        "reflected_c": 25.0,
+        "air_c": 25.0,
+        "humidity": 0.45,
+        "distance": 0,
+        "fpa_c": 36.37
+      },
+      "baseline": {
+        "temporal_noise": {
+          "display_levels": 6.2002,
+          "mk": 24.67,
+          "common_mk": 11.46,
+          "rho1": 0.724
+        },
+        "stripes": {
+          "col_levels": 2.9986,
+          "row_levels": 2.9248,
+          "col_mk": 11.6,
+          "row_mk": 11.33
+        },
+        "defects": {
+          "max_sigmas": 4.31,
+          "over_6_sigma": 0,
+          "worst_mk": 105.3
+        },
+        "fixed_pattern": {
+          "levels": 12.154,
+          "mk": 47.0
+        },
+        "flicker_levels": 2.417
+      },
+      "pipeline": {
+        "temporal_noise": {
+          "display_levels": 3.5373,
+          "mk": 11.9,
+          "common_mk": 6.23,
+          "rho1": 0.977
+        },
+        "stripes": {
+          "col_levels": 2.3521,
+          "row_levels": 2.4713,
+          "col_mk": 8.87,
+          "row_mk": 9.34
+        },
+        "defects": {
+          "max_sigmas": 4.29,
+          "over_6_sigma": 0,
+          "worst_mk": 99.7
+        },
+        "fixed_pattern": {
+          "levels": 12.203,
+          "mk": 46.0
+        },
+        "flicker_levels": 2.1707
+      }
+    },
+    "motion": {
+      "environment": {
+        "emissivity": 0.95,
+        "reflected_c": 20.0,
+        "air_c": 20.0,
+        "humidity": 0.5,
+        "distance": 1,
+        "fpa_c": 37.04
+      },
+      "baseline": {
+        "step_response": {
+          "pixels": 25497,
+          "done_1": 0.794,
+          "done_2": 0.939,
+          "done_4": 0.977
+        }
+      },
+      "pipeline": {
+        "step_response": {
+          "pixels": 25497,
+          "done_1": 0.805,
+          "done_2": 0.955,
+          "done_4": 0.98
+        }
+      }
+    },
+    "night": {
+      "environment": {
+        "emissivity": 0.95,
+        "reflected_c": 20.0,
+        "air_c": 20.0,
+        "humidity": 0.5,
+        "distance": 1,
+        "fpa_c": 35.42
+      },
+      "baseline": {
+        "flicker_levels": 0.6705
+      },
+      "pipeline": {
+        "flicker_levels": 0.6183
+      }
+    },
+    "room": {
+      "environment": {
+        "emissivity": 0.95,
+        "reflected_c": 20.0,
+        "air_c": 20.0,
+        "humidity": 0.5,
+        "distance": 1,
+        "fpa_c": 36.43
+      },
+      "baseline": {
+        "flicker_levels": 0.9813
+      },
+      "pipeline": {
+        "flicker_levels": 0.6154
+      }
+    }
+  }
+}

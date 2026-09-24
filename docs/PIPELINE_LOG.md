@@ -4,6 +4,33 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 4: motion-adaptive temporal filter (`fb23aa7+denoise`, `fb23aa7+denoise_denoiseK-0.1`)
+
+**What:** PLAN M4 stage 4, as the survey's top pick (PRIOR_ART pass 2 item 8): a per-pixel recursive filter, y += K (x − y).
+- **K** is k_min where nothing moves and 1 where something does.
+- **Motion** is the 3×3 box of (x − y) measured against its own noise level, a robust estimate over the frame smoothed over ~1 s: smoothstep between 2 and 4 σ.
+- **After a calibration** the filter starts over, and stage 1 holds it frozen through the cycle.
+
+The camera already runs its own motion-adaptive filter (DEVICE.md "Onboard filtering"), so this one gains less than it would on white noise.
+
+**Metrics** (stages 1–3 on in all columns):
+
+| Metric | Baseline | k_min 0.25 | k_min 0.10 |
+|---|---|---|---|
+| `flat` temporal noise | 24.7 mK | 17.1 mK (×0.69) | 11.9 mK (×0.48) |
+| `flat` temporal noise, display | 6.2 levels | 4.5 | 3.5 |
+| Lag-1 correlation of the noise | 0.72 | 0.95 | 0.98 |
+| `motion`: step done 1 / 2 / 4 frames later | 0.79 / 0.94 / 0.98 | 0.80 / 0.95 / 0.98 | 0.81 / 0.96 / 0.98 |
+| Flicker, `flat` / `room` / `night` | 2.42 / 0.98 / 0.67 | 2.23 / 0.78 / 0.58 | 2.17 / 0.62 / 0.62 |
+| `keyboard` detail, `hand` and `keyboard` edges | — | unchanged | unchanged |
+
+- **No trails:** the moving hand's edges respond as fast as the camera's own.
+- **The survey's caution** (synthetic, not in our scenes): faint objects moving slowly keep 83–94 % of their contrast at k_min 0.25 and 64–85 % at 0.10.
+
+**Clips:** `bench/out/stage4_{flat,motion,night,room}.mp4` (local), with three panels: baseline, k_min 0.25, k_min 0.10.
+
+**Verdict:** pending the owner.
+
 ## 2026-09-25 — Stage 3: drift compensation and stripe cleanup (`7c8f0ba+drift_destripe`)
 
 **What:** the owner approved this approach in place of PLAN's gated stripe tracker, after this evidence.
