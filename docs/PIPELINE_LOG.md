@@ -4,6 +4,32 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 1: shutter-cycle hold and crossfade (`f3d169c+shutter`)
+
+**What:** PLAN M4 stage 1, as refined in pass 2 (PRIOR_ART item 8). An exact repeat of the image rows means a shutter cycle. The pipeline holds the last output without advancing any stage, and when fresh frames return it crossfades from the held output over 8 frames (0.3 s).
+- **Freeze:** the same as FLIR's cameras, which freeze video during flat-field correction (Lepton, Boson).
+- **Blend back:** no source describes one.
+- **Left out:** the survey's motion-gated blend. After 6 minutes of drift, the NUC's own correction is a coherent row structure of ~25 counts, which a motion gate would take for motion.
+
+**Scene:** `shutter`, a 250-frame dump through one `0x8000` (2026-09-25).
+- Frames 60–89 repeat frame 59.
+- The first fresh frame reads 38 counts lower and differs from the held one by a spatial std of ~29 counts: the aged pattern (9.7 counts, mostly rows) goes, leaving 2.2.
+- That first fresh frame also carries strong column streaks that the following frames don't. The crossfade dilutes it to 1/9.
+
+**Metrics** (`bench/results/f3d169c+shutter.json`):
+
+| `shutter` | Baseline | Stage 1 |
+|---|---|---|
+| Freeze | 31 frames | 31 frames |
+| Biggest frame-to-frame change of the display in the second after the freeze | 43.7 levels | 11.0 levels |
+| Total change the NUC brings | 49.1 levels | 49.1 levels |
+
+The other seven scenes are identical to the baseline, since none of them contains a cycle.
+
+**Clip:** `bench/out/clips/shutter.mp4` (local): baseline left, stage 1 right; the switch comes at ~3.6 s.
+
+**Verdict:** pending the owner.
+
 ## 2026-09-24 — M1 baseline (`31051f5`)
 
 **What:** the M1 display path, unchanged. Each frame's raw min…max is stretched linearly to grey and drawn nearest-neighbour (`renderer.cpp`); `native/core`'s `renderBaseline` is its CPU reference.
