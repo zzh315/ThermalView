@@ -118,6 +118,35 @@ Three water containers in one frame, about 50 cm away at a slight angle. The own
 
 Commands: dump `dump_20260924_201315` pulled with `adb pull`, and the oracle (`CameraEmulator`) per frame.
 
+### High range (M2, 2026-09-24): parked
+
+Manual switches on the tablet with the stats CSV on (PROTOCOL.md "Ranges"):
+
+- **Range commands trigger no cycle of their own.** Our fix sends `0x8000` after every switch, as InfiRay's demo does.
+  - Leaving the high range without one gives all-zero frames: seen for 23 s, 584 identical frames, then "blockA zero".
+  - That made the session fail twice, and the next start deadlocked until the start-up recovery `0x8000` was added.
+- **Constants in the high range:** `cal00` 2000; `cal01..05` 0.0338, 1.6084, −0.0002, 0.0299, 1.388; P+1 ≈ 6650–6790, decoding to ~70 °C. The shutter temperature Q+1 keeps its last value.
+- **Settling after `0x8021`, desk scene, a 60 s wait before the switch's `0x8000`:**
+
+| Time after `0x8021` | Mean raw | Min raw |
+|---|---|---|
+| 0.5 s | 6699 | 3773 |
+| 5 s | 3944 | 994 |
+| 10 s | 2625 | 0 |
+| 30 s | 1363 | 0 |
+| 60 s (0x8000) | 1044 | 0 |
+| 62 s | 1910 | 1902 |
+| 80 s | 1436 | 1345 |
+| 100–124 s | 1391–1394 | ~1290 |
+
+  After settling, the desk spans raw ~1290–1492 in the high range, against 5161–5217 in the normal range.
+- **Iron at 300 °C, hand-held, a range test at 5–6 s settling.**
+  - Normal range: the hottest pixels bunch at raw 13841–13893 (clipped; 131 °C through our table at FPA ~37 °C).
+  - High range: peak raw 2605. ht301 scaling gives 204–220 °C, while the room reads below the table's fold.
+  - The data can't tell which is right.
+
+Commands: the debug range buttons / adb `--es range`, `--ei rangeSettleMs 60000`, the stats CSV, and `tools/harness temps --range high --math ht301|infi`.
+
 Long run: `tools/py/shutter_stats.py` on the run's CSV. Tablet temperatures, every minute: `dumpsys battery`, `dumpsys thermalservice`, and `/sys/class/thermal/thermal_zone*/{type,temp}` (quiet_therm, conn_therm, cpu-1-0-usr, gpuss-0-usr; readable without root).
 
 Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.

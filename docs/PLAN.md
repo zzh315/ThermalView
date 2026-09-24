@@ -46,23 +46,12 @@ Work through the milestones in order. Each one ends with evidence shown to the o
 - Hot-object test, with the owner's temperature-controlled soldering station (TC22 with a C245 cartridge), after M1's lockout test:
   - Setpoints 150, 200 and 300 °C; no higher, to spare the tip (owner, 2026-09-24). The tip is shiny tinned metal with low emissivity, so it reads far below its setpoint; aim at the dull shaft just behind it, which reads truer.
   - Take a full-frame dump with the iron in view: is the normal range's clip (raw 14192, M1) one global level or per pixel? Clipped frames already pass the sanity checks (M1).
-  - With the high range: the switch up and back down, the high range's readings at each setpoint, and its clip level.
-  - Check the lockout: the interim trigger (clip held 10 s) now; later, the lockout at the high range's ceiling. It must release within ~3 frames once the iron leaves the view.
+  - Check the lockout, triggered by the clip held for 10 s. It must release within ~3 frames once the iron leaves the view.
   - Record the results in DEVICE.md.
-- High range (owner decision, 2026-09-24; CLAUDE.md rule 1; PROTOCOL.md "Ranges"):
-  - Answer PROTOCOL.md's VERIFY list on the device first: a shutter cycle after the switch, the frame's constants, the clip, the low end, and noise.
-  - Implement both candidate maths: ht301_hacklib's `1.17 × T − 40.9` table scaling, and InfiCam's (no `cal_00` correction).
-  - Golden-test them against the oracle's high-range mode.
-  - Keep whichever matches, and stop and discuss with the owner if neither does. The check needs no external reference: capture the iron in its stand in both ranges, one right after the other. The shaft cools steadily from the tip, so every pixel that reads below ~115 °C in the verified normal range must read the same in the high range. Also watch the iron at its setpoints for behaviour.
-  - Automatic switching:
-    - Up to the high range when ≥ 4 pixels clip in the normal range for 2 s (owner, 2026-09-24), so brief glimpses don't cost a switch's freeze.
-    - Back down when the region's hottest pixel stays below ~110 °C for 5 s (owner, 2026-09-24).
-    - At most one `0x8021` per 10 s (the gate enforces it).
-    - Hold the display through the switch's frozen frames.
-    - The M6 UI shows which range is active.
+- High range: **parked** (owner decision, 2026-09-24). See "Parked: high range" at the end.
 - Camera-hot banner: if the FPA temperature passes 55 °C, show "Camera is hot (xx °C): readings may drift; let it cool". At the M1 long run's ~11 °C self-heating, that means an ambient of about 44 °C, still inside the module's rated range (PROTOCOL.md "Heat, hot scenes and the sun").
 
-**Acceptance:** golden tests pass under CTest on the Mac for both ranges, the replayed dump matches on the device, the cross-check is within tolerance, the absolute-check errors (and the high range's reference errors) are recorded and reviewed with the owner, automatic range switching works on the iron test, and the hot-object test is recorded.
+**Acceptance:** golden tests pass under CTest on the Mac, the replayed dump matches on the device, the cross-check is within tolerance, the absolute-check errors are recorded and reviewed with the owner, and the hot-object test is recorded. The high range is parked, with its findings recorded.
 
 ## M3 — Benchmark set + harness metrics
 
@@ -144,7 +133,7 @@ Tuning rule: add one stage at a time, run `tools/harness bench`, log the numbers
 Landscape-first, full-screen, minimal chrome; controls auto-hide (tap the image to show them).
 
 - **Controls:** palette toggle; Auto / Manual range (Manual = "lock current range" plus a range slider in °C); view size; Box on/off; Recalibrate (sends `0x8000` through the gate and stays disabled for 10 s).
-- **Temperature range:** automatic (M2), with no control. A small badge shows when the high range is active (e.g. "120 °C+"). A brief "Switching range…" note covers the switch's frozen frames. The manual-range slider spans the active range. The over-range lockout's banner explains the freeze ("Too hot to measure: shutter closed to protect the sensor").
+- **Temperature range:** the normal range only; the high range is parked. Clipped pixels read "> 120 °C". The over-range lockout's banner explains the freeze ("Too hot to measure: shutter closed to protect the sensor").
 - **View size:** the image always keeps its native 4:3 shape — no crop, no stretch. One button cycles Phone → Small tablet → Full, each defined as the image's physical diagonal using the panel density verified in M0. Starting values: Phone ≈ 4.5" (what a ~6.5" phone shows held sideways), Small tablet ≈ 7.5", Full = the largest 4:3 fit (2133×1600 px, 10.9" at the verified 244.5 dpi). At that density, Phone is about 880×660 px. The owner tunes them by eye. A smaller view adds no detail; it looks sharper because each camera pixel appears smaller, like viewing from farther away.
 - **Zoom:** pinch on the image zooms 1×–8× (tunable), keeping the point under the fingers fixed; re-baseline when a finger is added or lifted. Two fingers pan while pinching; when zoomed, a one-finger drag pans too, unless it starts on the box. Pan is clamped so the image always fills the view. Double-tap returns to 1×. Zoom is display-only: the pipeline always processes the full frame. Zooming adds no detail — it enlarges camera pixels — but the measurement region shrinks with the view, which focuses the colors and readouts.
 - **Box:** the Box button shows or hides a rectangle for measuring one area. It appears where it was last (initially centered, half the view's width and height). Drag handles on its edges and corners resize it; dragging inside it moves it. Touch targets stay large even when the box is small (hit-testing and minimum-size handling as in the Android croppers listed in PRIOR_ART.md). It snaps to whole camera pixels, is at least 4×4 of them, and is stored in camera coordinates, so view size and zoom don't disturb it. Outside the box, the image is dimmed (start at 50% brightness; tunable), keeping the box's color mapping — those pixels often clip at the palette ends.
@@ -163,3 +152,16 @@ A final tuning pass on all benchmark scenes, at every view-size preset, then own
 - **Scene presets:** PCB / underfloor heating / outdoor night, each mapped to tuned pipeline parameters.
 - **Neural super-resolution** (display-only experiment): must never feed readouts, and must pass a halo and hallucination review.
 - Snapshots and video (currently out of scope).
+
+## Parked: high range (M2, 2026-09-24)
+
+The owner parked the camera's high range (`0x8021`) after M2's tests (DEVICE.md "High range"; PROTOCOL.md "Ranges"). Debug builds keep manual switching for investigation: the debug panel's range buttons, or adb `--es range high|normal`, with `--ei rangeSettleMs N`.
+
+To bring it back, all of these must work:
+1. **A switching procedure that gives a stable image quickly.** Today the output settles for 1.5–2 minutes after `0x8021`, and each recalibration restarts about 30 s of settling. Try waiting until P+1 stops moving, then recalibrate; also try repeated recalibrations. The normal range's reference behaviour is a stable image right after its recalibration.
+2. **The maths.**
+   - Neither ht301_hacklib's scaling nor InfiCam's variant fits: a room-temperature scene reads below the table's fold.
+   - The high range has its own constants (`cal00` 2000, `cal01..05` differ) and its own meaning for the FPA word, which decodes to ~70 °C.
+   - Reference: Xtherm's high-temperature mode, which runs InfiRay's library, observed on the same scene. Check it with the iron against the normal range wherever both are unclipped.
+3. **A UI that fits a slow switch:** probably a manual "hot mode" that says it's settling, not automatic switching.
+4. **The lockout's trigger** moves to the high range's ceiling once readings there are trustworthy.

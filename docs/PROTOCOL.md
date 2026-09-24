@@ -191,7 +191,7 @@ Researched 2026-09-24. Quotes are from the manufacturers' own documents unless m
 
 ## Ranges
 
-The normal range (`0x8020`) clips at ~120–123 °C, so the app switches to the high range (`0x8021`) when pixels clip, and back again (owner decision, 2026-09-24; CLAUDE.md rule 1).
+The normal range (`0x8020`) clips at ~120–123 °C. The owner first chose automatic switching to the high range (`0x8021`), then parked it after M2's findings below (2026-09-24; CLAUDE.md rule 1; PLAN "Parked: high range").
 
 What the sources say:
 
@@ -200,13 +200,18 @@ What the sources say:
   - Its note: "Decompiled libthermometry.so … handles 400C range for 640px wide cameras differently, having different offsets for calibration values in that mode. I couldn't wrap my head around how that worked so it's not implemented here."
 - **ht301_hacklib** (`temperature_range_high`) sends `0x8021` and scales its whole temperature table: `1.17 × T − 40.9` (normal range: `1 × T + 0`). It describes the high range as "-20°C to 450°C".
 
-The two disagree, so M2 settles the high range's math by measurement. **VERIFY (M2):**
+- **InfiRay's SDK demo** (read for facts, InfiCam `7028129`) switches range in this order: `setTempRange()` to its native library, the range command at +100 ms, `0x8000` at +600 ms, then a table refresh at +1500 ms. The math itself is in InfiRay's closed `libthermometry`.
 
-- whether the camera runs a shutter cycle by itself after `0x8021` (and after `0x8020` when leaving the high range);
-- the frame's calibration constants in the high range (do they change?);
-- the high range's clip level and its low end;
-- which math matches known hot references;
-- noise at ordinary temperatures, compared with the normal range.
+Verified in M2 on our camera (DEVICE.md "High range"):
+
+- **No cycle of its own on range commands.** After `0x8021` the frames stay usable. After `0x8020` (leaving the high range) the image and Block A are **all zero** until a `0x8000`, so every range command must be followed by one, as in the demo.
+- **Its own constants.** In the high range, `cal00` = 2000 (normal 6000) and `cal01..05` = 0.0338, 1.6084, −0.0002, 0.0299, 1.388 (normal 0.2333, 27.867, 4e-05, 0.0053, 0.5351). The FPA word P+1 also changes meaning: it decodes to ~70 °C with the width-256 constants.
+- **Slow settling.**
+  - After `0x8021` the output keeps falling for well over a minute: mean raw 6699 at 0.5 s, 3944 at 5 s, 1932 at 15 s, 1056 at 60 s.
+  - A `0x8000` then starts another ~30 s transient (1910 → 1391) before the image holds steady.
+  - Recalibrating early leaves the image sliding until pixels floor at 0 and Block A reads zero.
+- **Neither candidate math fits.** With the high-range constants, a room-temperature scene reads below the ht301 formula's fold, so it can't be converted at all. On the 300 °C iron, ht301's scaling gives ~204–220 °C, which is unverifiable.
+- **Still open:** the high range's clip level, its low end, the correct math, and its noise.
 
 ## Android USB notes
 
