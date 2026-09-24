@@ -375,6 +375,17 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
   }
 }
 
+void Pipeline::setRegion(const Region& region) {
+  Region r = region;
+  r.x0 = std::clamp(r.x0, 0, kFrameWidth);
+  r.x1 = std::clamp(r.x1, r.x0, kFrameWidth);
+  r.y0 = std::clamp(r.y0, 0, kImageRows);
+  r.y1 = std::clamp(r.y1, r.y0, kImageRows);
+  if (r.x0 == region_.x0 && r.x1 == region_.x1 && r.y0 == region_.y0 && r.y1 == region_.y1) return;
+  region_ = r;
+  tone_.retarget();
+}
+
 void Pipeline::hold() {
   if (options_.shutterHold && havePrevious_) frozen_ = true;
 }
@@ -418,10 +429,16 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   if (options_.denoise) denoise(sig);                         // stage 4
   if (options_.tone) {
     // Stage 5. Pixels at the camera's clip (too hot to measure) stay out of the statistics.
+    // So do pixels outside the measurement region.
     const uint8_t* exclude = nullptr;
-    if (*std::max_element(image, image + kImagePixels) >= kClipFloorRaw) {
+    const bool whole = region_.x0 <= 0 && region_.y0 <= 0 && region_.x1 >= kFrameWidth && region_.y1 >= kImageRows;
+    if (!whole || *std::max_element(image, image + kImagePixels) >= kClipFloorRaw) {
       clipped_.resize(kImagePixels);
-      for (size_t i = 0; i < kImagePixels; ++i) clipped_[i] = image[i] >= kClipFloorRaw;
+      for (int y = 0; y < kImageRows; ++y)
+        for (int x = 0; x < kFrameWidth; ++x) {
+          const size_t i = size_t(y) * kFrameWidth + size_t(x);
+          clipped_[i] = image[i] >= kClipFloorRaw || !region_.contains(x, y);
+        }
       exclude = clipped_.data();
     }
     if (options_.detail) enhance(sig, display, exclude);  // stage 6, with stage 5 on its base

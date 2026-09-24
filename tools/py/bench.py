@@ -34,6 +34,9 @@ Metrics, all on the display path's output unless marked °C:
   in each output's °C signal; trails from temporal filtering show as lower numbers (stage 4).
 - shutter (`shutter`): the biggest frame-to-frame display change in the second after the freeze,
   and the total change the NUC brings.
+- box cases (bench/<scene>/box.json, with --pipeline): the scene again with the box as the
+  pipeline's measurement region, reported as <scene>_box: inside the box, the display levels it
+  uses, its detail and its flicker, next to the same figures from the whole-frame run.
 
 With --pipeline STAGES the harness also runs native/core's Pipeline with those stages, results go
 to bench/results/<commit>+<stages>.json with metrics per output ("baseline", "pipeline"), and the
@@ -65,16 +68,38 @@ ESF_HALF, PLATEAU, BIN = 9.0, 6.0, 0.25  # edge window, plateau start, bin width
 
 # ---- harness -------------------------------------------------------------------------------------
 
+def box_of(scene):
+    """The scene's box case (bench/<scene>/box.json), or None."""
+    f = BENCH / scene / "box.json"
+    return {k: int(v) for k, v in json.loads(f.read_text()).items() if k in ("x", "y", "w", "h")} if f.exists() else None
+
+
 def run_harness(scenes, pipeline=""):
     if not (HARNESS_BUILD / "CMakeCache.txt").exists():
         subprocess.run(["cmake", "-S", ROOT / "tools/harness", "-B", HARNESS_BUILD], check=True)
     subprocess.run(["cmake", "--build", HARNESS_BUILD], check=True, stdout=subprocess.DEVNULL)
     extra = ["--pipeline", pipeline] if pipeline else []
     subprocess.run([HARNESS_BUILD / "harness", "bench", *extra, *scenes], check=True)
+    for scene in scenes:  # the box cases: the pipeline again, measuring the box only
+        box = box_of(scene)
+        if box and pipeline:
+            subprocess.run([HARNESS_BUILD / "harness", "bench", "--out", OUT / "box", *extra, "--box",
+                            f"{box['x']},{box['y']},{box['w']},{box['h']}", scene], check=True)
 
 
-def load(scene, stage="baseline"):
-    d = OUT / scene
+def box_metrics(disp, box):
+    """Inside the box: the display levels it uses (1st-99th percentile of the middle frame), its
+    detail (as `detail`, over the box) and the flicker of its mean."""
+    s = (slice(box["y"], box["y"] + box["h"]), slice(box["x"], box["x"] + box["w"]))
+    inside = disp[:, s[0], s[1]]
+    lo, hi = np.percentile(inside[len(inside) // 2] * 255, [1, 99])
+    return {"levels_p1_p99": [round(float(lo), 1), round(float(hi), 1)],
+            "detail_levels": round(detail(disp.mean(axis=0) * 255, box), 4),
+            "flicker_levels": round(flicker(inside), 4)}
+
+
+def load(scene, stage="baseline", out=None):
+    d = (out or OUT) / scene
     info = json.loads((d / "info.json").read_text())
     n = info["frames"]
     disp = np.fromfile(d / f"{stage}.f32", dtype="<f4").reshape(n, H, W)
@@ -565,6 +590,12 @@ def main():
             if picks is not None:
                 res[st]["step_response"] = step_response(temps[st], picks)
         results["scenes"][scene] = res
+        box = box_of(scene) if args.pipeline else None
+        if box:  # the same scene measured over its box, next to the whole-frame run inside that box
+            _, box_disp, _ = load(scene, "pipeline", OUT / "box")
+            results["scenes"][scene + "_box"] = {"box": box, "pipeline": box_metrics(box_disp, box),
+                                                 "pipeline_whole_frame": box_metrics(outputs["pipeline"], box)}
+            print(scene + "_box", json.dumps(results["scenes"][scene + "_box"]))
         if args.rois:
             draw_rois(scene, outputs["baseline"])
         contact_sheet(scene, outputs, results_dir, args.upscale)

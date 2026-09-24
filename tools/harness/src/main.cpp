@@ -6,7 +6,7 @@
 // per-frame table), the camera's own Block A extremes through the same table, and the mean °C
 // over each --disc (camera pixels within R of X,Y). DUMP is the dump path without .raw.
 //
-//   harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]
+//   harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [--box X,Y,W,H] [SCENE ...]
 //
 // Renders every benchmark scene (DIR/<scene>/thermalview.raw; default: the repo's bench/) through
 // the display path and writes OUT/<scene>/ (default DIR/out): baseline.f32, the display output
@@ -15,11 +15,12 @@
 // info.json, with that frame's environment inputs (the camera's user area, used as-is) and FPA.
 // --pipeline also runs native/core's Pipeline, starting from its defaults (the approved stages) and
 // changed by a comma-separated list ("default", "shutter=0", "shutterBlend=N", ...), and writes
-// pipeline.f32 and pipeline_c.f32 the same way.
+// pipeline.f32 and pipeline_c.f32 the same way. --box sets the pipeline's measurement region
+// (camera pixels): stage 5's statistics come from it alone (docs/PLAN.md M4 stage 5).
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
 //
 //   harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H] [--kernel K]
-//                  [--clamp] [--palette FILE.json] --out FILE.ppm
+//                  [--clamp] [--palette FILE.json] [--box X,Y,W,H] --out FILE.ppm
 //
 // The display path at on-screen size (docs/PLAN.md M5's CPU reference): the pipeline runs over
 // frames 0..N (its filters need the history), then frame N's intensity is upscaled with kernel K
@@ -67,9 +68,9 @@ struct Disc {
 int usage() {
   std::fprintf(stderr,
                "usage: harness temps DUMP [--range normal|high] [--math ht301|infi] [--disc X,Y,R ...]\n"
-               "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]\n"
+               "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [--box X,Y,W,H] [SCENE ...]\n"
                "       harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H]\n"
-               "                      [--kernel K] [--clamp] [--palette FILE.json] --out FILE.ppm\n"
+               "                      [--kernel K] [--clamp] [--palette FILE.json] [--box X,Y,W,H] --out FILE.ppm\n"
                "       harness palette FILE.json --out FILE.ppm\n"
                "       harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]\n");
   return 2;
@@ -156,7 +157,7 @@ bool writeFloats(const std::filesystem::path& path, const std::vector<float>& da
 }
 
 bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::path& outDir,
-                const tv::PipelineOptions* pipelineOptions, const std::string& stages) {
+                const tv::PipelineOptions* pipelineOptions, const std::string& stages, const tv::Region& box) {
   tv::LoadedDump dump;
   std::string error;
   if (!tv::loadDump((sceneDir / "thermalview").string(), &dump, &error) || dump.frameCount == 0) {
@@ -186,6 +187,7 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   // Stage 2's map is the dump's camera's (its sidecar's serial).
   pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
   pipeline.setDriftMap(tv::loadDriftMap(TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32"));
+  pipeline.setRegion(box);
   for (size_t f = 0; f < dump.frameCount; ++f) {
     const tv::FrameView frame(&dump.frames[f * tv::kFramePixels]);
     const uint16_t* image = frame.image();
@@ -239,9 +241,14 @@ int bench(int argc, char** argv) {
   std::string stages;
   tv::PipelineOptions pipelineOptions;
   bool withPipeline = false;
+  tv::Region box;
   for (int i = 2; i < argc; ++i) {
     const std::string a = argv[i];
-    if (a == "--bench" && i + 1 < argc) {
+    if (a == "--box" && i + 1 < argc) {
+      int x, y, w, h;
+      if (std::sscanf(argv[++i], "%d,%d,%d,%d", &x, &y, &w, &h) != 4 || w <= 0 || h <= 0) return usage();
+      box = {x, y, x + w, y + h};
+    } else if (a == "--bench" && i + 1 < argc) {
       benchDir = argv[++i];
     } else if (a == "--out" && i + 1 < argc) {
       outDir = argv[++i];
@@ -267,7 +274,7 @@ int bench(int argc, char** argv) {
   }
   bool ok = !scenes.empty();
   for (const std::string& scene : scenes)
-    ok = benchScene(benchDir / scene, outDir / scene, withPipeline ? &pipelineOptions : nullptr, stages) && ok;
+    ok = benchScene(benchDir / scene, outDir / scene, withPipeline ? &pipelineOptions : nullptr, stages, box) && ok;
   return ok ? 0 : 1;
 }
 
@@ -296,6 +303,7 @@ int render(int argc, char** argv) {
   int frameIndex = 0, w = 0, h = 0;
   bool clamp = false;
   tv::ViewRect rect;
+  tv::Region box;
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -306,6 +314,11 @@ int render(int argc, char** argv) {
     else if (a == "--kernel") kernelText = next();
     else if (a == "--clamp") clamp = true;
     else if (a == "--palette") palettePath = next();
+    else if (a == "--box") {
+      int x, y, bw, bh;
+      if (std::sscanf(next().c_str(), "%d,%d,%d,%d", &x, &y, &bw, &bh) != 4 || bw <= 0 || bh <= 0) return usage();
+      box = {x, y, x + bw, y + bh};
+    }
     else if (a == "--out") out = next();
     else return usage();
   }
@@ -325,6 +338,7 @@ int render(int argc, char** argv) {
   tv::Pipeline pipeline(options);
   pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
   pipeline.setDriftMap(tv::loadDriftMap(TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32"));
+  pipeline.setRegion(box);
   std::vector<float> display(tv::kImagePixels);
   const size_t last = std::min(size_t(std::max(frameIndex, 0)), dump.frameCount - 1);
   for (size_t f = 0; f <= last; ++f) {

@@ -138,3 +138,49 @@ TEST_CASE("stage settings as text") {
   CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,denoise(k0.25)");
   CHECK_FALSE(tv::parseStages("bogus", &o));
 }
+
+TEST_CASE("stage 5 measures only the region, and a new region takes over within ~0.3 s") {
+  constexpr int W = tv::kFrameWidth, H = tv::kImageRows;
+  std::vector<uint16_t> img(tv::kImagePixels);
+  uint32_t seed = 9;
+  bool hot = false;  // a clipped patch in the top-left corner
+  auto frame = [&]() {  // two ramps, 0-200 counts each (the left cool, the right warm), a count of noise
+    for (int y = 0; y < H; ++y)
+      for (int x = 0; x < W; ++x) {
+        seed = seed * 1664525u + 1013904223u;
+        const int noise = int(seed >> 30);  // 0..3: frames never repeat, so stage 1 never holds
+        img[size_t(y) * W + x] = hot && x < 20 && y < 20 ? uint16_t(14000)
+                                                         : uint16_t((x < 128 ? 5000 : 5400) + (x % 128) * 200 / 127 + noise);
+      }
+    return img.data();
+  };
+  tv::PipelineOptions o;
+  o.denoise = false;
+  tv::Pipeline p(o);
+  std::vector<float> d(tv::kImagePixels);
+  auto spread = [&](int x0, int x1) {  // the display range a band of columns uses (row 96)
+    float lo = 1, hi = 0;
+    for (int x = x0; x < x1; ++x) {
+      lo = std::min(lo, d[size_t(96) * W + x]);
+      hi = std::max(hi, d[size_t(96) * W + x]);
+    }
+    return hi - lo;
+  };
+  for (int k = 0; k < 50; ++k) p.process(frame(), d.data());
+  const float whole = spread(0, 128);
+  p.setRegion({0, 0, 128, H});  // the cool half only
+  for (int k = 0; k < 8; ++k) p.process(frame(), d.data());  // 0.32 s
+  const float soon = spread(0, 128);
+  for (int k = 0; k < 100; ++k) p.process(frame(), d.data());
+  const float settled = spread(0, 128);
+  CHECK(settled > 1.5f * whole);  // the region's range now fills the output
+  CHECK(soon > 0.9f * settled);   // and it got there within ~0.3 s
+  CHECK(d[size_t(96) * W + 200] >= 0.96f);  // outside, the warmer half clips to the top
+  // A region with nothing measurable (all at the camera's clip) keeps the mapping it had.
+  hot = true;
+  p.process(frame(), d.data());
+  const float before = d[size_t(96) * W + 60];
+  p.setRegion({0, 0, 20, 20});
+  for (int k = 0; k < 10; ++k) p.process(frame(), d.data());
+  CHECK(d[size_t(96) * W + 60] == doctest::Approx(before).epsilon(0.03));
+}

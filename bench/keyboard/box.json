@@ -1,0 +1,7 @@
+{
+  "x": 80,
+  "y": 104,
+  "w": 64,
+  "h": 48,
+  "note": "The keyboard scene's box case (docs/PLAN.md M4 stage 5): a few keys in the middle, camera pixels. tools/py/bench.py runs the scene a second time with this box as the measurement region and reports it as keyboard_box."
+}

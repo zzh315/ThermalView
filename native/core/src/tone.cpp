@@ -61,7 +61,11 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
   for (size_t i = 0; i < kImagePixels; i += 2)
     if (!(exclude && exclude[i])) v[n++] = signal[i] - offset_;
   if (n < 16) {
-    for (size_t i = 0; i < kImagePixels; ++i) out[i] = 0.5f;
+    if (!haveRange_) {
+      for (size_t i = 0; i < kImagePixels; ++i) out[i] = 0.5f;
+      return;
+    }
+    apply(signal, out, detail);  // nothing to measure: keep the current mapping
     return;
   }
   auto pct = [&](float p) {
@@ -69,6 +73,9 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
     std::nth_element(v, v + k, v + n);
     return v[k];
   };
+  const bool retargeting = retargetLeftS_ > 0.0f;
+  const float fastTau = retargetS_ / 3.0f;
+  if (retargeting) retargetLeftS_ -= dtS;
   float lo = pct(options_.lowPct), hi = pct(options_.highPct);
   if (hi - lo < 1.0f) {
     const float c = 0.5f * (lo + hi);
@@ -82,11 +89,13 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
     hi_ = hi;
     haveRange_ = true;
   } else {
-    const float db = std::max(options_.deadbandCounts, options_.deadbandPct / 100.0f * (hi_ - lo_));
-    if (lo < lo_ - db) lo_ = follow(lo_, lo, options_.expandTauS, dtS);
-    else if (lo > lo_ + db) lo_ = follow(lo_, lo, options_.contractTauS, dtS);
-    if (hi > hi_ + db) hi_ = follow(hi_, hi, options_.expandTauS, dtS);
-    else if (hi < hi_ - db) hi_ = follow(hi_, hi, options_.contractTauS, dtS);
+    const float db = retargeting ? 0.0f : std::max(options_.deadbandCounts, options_.deadbandPct / 100.0f * (hi_ - lo_));
+    const float expand = retargeting ? fastTau : options_.expandTauS;
+    const float contract = retargeting ? fastTau : options_.contractTauS;
+    if (lo < lo_ - db) lo_ = follow(lo_, lo, expand, dtS);
+    else if (lo > lo_ + db) lo_ = follow(lo_, lo, contract, dtS);
+    if (hi > hi_ + db) hi_ = follow(hi_, hi, expand, dtS);
+    else if (hi < hi_ - db) hi_ = follow(hi_, hi, contract, dtS);
   }
   const float span = std::max(hi_ - lo_, 1.0f);
   const float binWidth = span / float(kCurve);
@@ -149,13 +158,20 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
   for (int b = 0; b < kCurve; ++b) target_[size_t(b + 1)] = target_[size_t(b)] + inc[size_t(b)];
   // The first frame takes its curve as it is: easing in from a neutral one would show a second or two
   // of harsh contrast at every start.
-  const float a = haveCurve_ ? 1.0f - std::exp(-dtS / std::max(options_.curveTauS, 1e-3f)) : 1.0f;
+  const float curveTau = retargeting ? fastTau : options_.curveTauS;
+  const float a = haveCurve_ ? 1.0f - std::exp(-dtS / std::max(curveTau, 1e-3f)) : 1.0f;
   haveCurve_ = true;
   for (int e = 0; e <= kCurve; ++e) curve_[size_t(e)] += a * (target_[size_t(e)] - curve_[size_t(e)]);
 
+  apply(signal, out, detail);
+}
+
+void ToneMapper::apply(const float* signal, float* out, const float* detail) const {
   // 5. Apply: interpolate between edges (clamped outside the range), squeeze into outLo..outHi. With a
   //    detail layer, add it at the curve's local slope (per count), so it keeps its size relative to
   //    the base's contrast there.
+  const float span = std::max(hi_ - lo_, 1.0f);
+  const float binWidth = span / float(kCurve);
   const float scale = options_.outHi - options_.outLo;
   for (size_t i = 0; i < kImagePixels; ++i) {
     const float t = std::clamp((signal[i] - offset_ - lo_) / binWidth, 0.0f, float(kCurve));

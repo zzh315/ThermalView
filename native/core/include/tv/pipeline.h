@@ -11,6 +11,7 @@
 #include "tv/bad_pixels.h"
 #include "tv/drift.h"
 #include "tv/frame.h"
+#include "tv/readouts.h"
 #include "tv/tone.h"
 
 namespace tv {
@@ -123,6 +124,12 @@ class Pipeline {
   // A new stream, replay start or range switch: forget every frame seen so far.
   void reset();
 
+  // The measurement region (M6: the visible area, intersected with the box): stage 5's statistics
+  // come from it alone, and pixels outside still map through the same curve, so they clip to the
+  // palette ends. A change retargets the mapping at once, easing over ~0.3 s (PLAN M4 stage 5).
+  void setRegion(const Region& region);
+  const Region& region() const { return region_; }
+
   // One 256x192 camera image in; display intensity in [0, 1] out (kImagePixels floats). signal, if
   // given, receives the value tone mapping started from, in raw counts (for the harness's °C metrics).
   void process(const uint16_t* image, float* display, float* signal = nullptr, FrameMeta meta = {});
@@ -146,6 +153,7 @@ class Pipeline {
   std::vector<float> filtered_, diff_, pooled_;    // stage 4's state and scratch
   ToneMapper tone_;                                // stage 5
   std::vector<uint8_t> clipped_;                   // stage 5's exclusion mask
+  Region region_;                                  // stage 5's measurement region
   std::vector<float> base_, detailLayer_, energy_, gate_, range_, gfScratch_, detailScratch_;  // stage 6
   void enhance(const float* sig, float* display, const uint8_t* exclude);
   bool haveFiltered_ = false;

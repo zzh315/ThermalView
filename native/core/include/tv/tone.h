@@ -37,7 +37,8 @@ class ToneMapper {
   void reset();
 
   // signal: kImagePixels counts (stages 1-4 done); exclude: optional mask, nonzero = leave out of the
-  // statistics (clipped pixels, outside the measurement region); out: intensity in [0, 1].
+  // statistics (clipped pixels, outside the measurement region); out: intensity in [0, 1]. With
+  // too few pixels left to measure (a region that is all clipped), the current mapping holds.
   // With detail (stage 6), the curve comes from signal (the base layer) and each pixel gets its
   // detail back scaled by the curve's slope there: out = T(base) + T'(base) x detail.
   void map(const float* signal, float* out, const uint8_t* exclude = nullptr, float dtS = 0.04f,
@@ -46,6 +47,11 @@ class ToneMapper {
   // A calibration or another step change of the whole frame just happened: the next frame re-reads
   // the global offset from itself instead of from the frame before (the caller skipped frames).
   void resync() { havePrevious_ = false; }
+
+  // The statistics' region changed (the box moved or resized, zoom, pan): for the next seconds the
+  // range and the curve follow the new statistics at once, with no deadband, converging within
+  // about that time (time constants of a third of it), then the usual damping resumes.
+  void retarget(float seconds = 0.3f) { retargetLeftS_ = retargetS_ = seconds; }
 
   // The current mapping, for the scale bar (M5): the smoothed range in counts and the curve at its
   // kCurve + 1 bin edges (values in [0, 1] before the outLo..outHi squeeze).
@@ -61,6 +67,8 @@ class ToneMapper {
   bool havePrevious_ = false, haveRange_ = false, haveCurve_ = false;
   float offset_ = 0.0f;  // tracked global offset, counts
   float lo_ = 0.0f, hi_ = 0.0f;  // smoothed range of (signal - offset), counts
+  float retargetS_ = 0.0f, retargetLeftS_ = 0.0f;  // retarget(): its length and what's left of it
+  void apply(const float* signal, float* out, const float* detail) const;  // step 5, the current mapping
 };
 
 }  // namespace tv
