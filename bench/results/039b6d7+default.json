@@ -1,0 +1,80 @@
+{
+  "label": "039b6d7+default",
+  "commit": "039b6d7",
+  "dirty": false,
+  "date": "2026-09-25T03:31:16+10:00",
+  "stages": [
+    "baseline",
+    "pipeline"
+  ],
+  "pipeline": "default",
+  "upscale": "bicubic",
+  "scenes": {
+    "keyboard": {
+      "environment": {
+        "emissivity": 0.95,
+        "reflected_c": 20.0,
+        "air_c": 20.0,
+        "humidity": 0.5,
+        "distance": 1,
+        "fpa_c": 37.09
+      },
+      "baseline": {
+        "flicker_levels": 0.5682,
+        "edges": {
+          "screen_right": {
+            "fwhm_px": 1.443,
+            "halo_pct": 2.03,
+            "frames": 200
+          }
+        },
+        "detail": {
+          "keys": {
+            "levels": 4.0894,
+            "mk": 81.71
+          }
+        }
+      },
+      "pipeline": {
+        "flicker_levels": 0.2479,
+        "edges": {
+          "screen_right": {
+            "fwhm_px": 2.1,
+            "halo_pct": 2.66,
+            "frames": 200
+          }
+        },
+        "detail": {
+          "keys": {
+            "levels": 4.6629,
+            "mk": 80.58
+          }
+        }
+      }
+    },
+    "keyboard_box": {
+      "box": {
+        "x": 80,
+        "y": 104,
+        "w": 64,
+        "h": 48
+      },
+      "pipeline": {
+        "levels_p1_p99": [
+          84.5,
+          179.0
+        ],
+        "detail_levels": 7.4279,
+        "flicker_levels": 0.173
+      },
+      "pipeline_whole_frame": {
+        "levels_p1_p99": [
+          206.7,
+          247.3
+        ],
+        "detail_levels": 3.199,
+        "flicker_levels": 0.0856
+      }
+    }
+  }
+}

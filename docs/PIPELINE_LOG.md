@@ -4,6 +4,30 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 5: the measurement region (`039b6d7+default`, `keyboard_box`)
+
+**What:** PLAN M4 stage 5's region, `Pipeline::setRegion` (M6 will pass the visible area, intersected with the box).
+- **Statistics:** the tone mapping's statistics (range, histogram, global offset) come from the region alone. Every pixel still maps through the one curve.
+- **Retarget:** a new region takes over at once, converging within ~0.3 s (time constants of 0.1 s, no deadband), then the usual damping resumes.
+- **Nothing measurable:** a region that's all at the clip keeps the last mapping instead of greying the frame.
+- **Tooling:** `harness bench/render --box`. bench.py runs any scene with a `bench/<scene>/box.json` a second time with that box and reports `<scene>_box`. `keyboard` has one: a few keys in the middle.
+
+**Metrics** (inside the box, stages 1–5):
+
+| | Whole-frame statistics | The box's statistics |
+|---|---|---|
+| Display levels used (1st–99th percentile) | 207–247 | 84–179 |
+| Detail | 3.20 levels | 7.43 |
+| Flicker of the box's mean | 0.09 | 0.17 |
+
+The 2.0 gain cap is why the keys don't fill the whole output: their ~45 counts can use at most ~90 levels.
+
+**Image:** `bench/results/039b6d7+default/keyboard_box.jpg`.
+
+**Note for M6:** because of the gain cap, a region's range maps to a centred band, so pixels outside it sit at the band's ends (dark and light grey), not at the palette's ends as the plan says. Forcing black and white there would jump at the band's edges. Decide with the owner when the box and its dimming land in M6.
+
+**Tests:** statistics from the region only, retarget within 0.3 s, and an all-clipped region holds its mapping.
+
 ## 2026-09-25 — Stage 6: detail enhancement (`b848b57+detail`: stages 1–6; awaiting the owner's verdict)
 
 **What:** PLAN M4 stage 6, as the approved plan change (PRIOR_ART pass 2 item 8): a guided-filter base/detail split before tone mapping (`native/core` `filters.h`, `Pipeline::enhance`).
