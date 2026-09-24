@@ -81,6 +81,14 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->detailNoiseLo = float(std::atof(value.c_str()));
     } else if (key == "detailNoiseHi" && !value.empty()) {
       o->detailNoiseHi = float(std::atof(value.c_str()));
+    } else if (key == "detailMid" && !value.empty()) {
+      o->detailMidGain = float(std::atof(value.c_str()));
+    } else if (key == "detailMidRadius" && !value.empty()) {
+      o->detailMidRadius = std::max(2, std::atoi(value.c_str()));
+    } else if (key == "detailMidGate") {
+      o->detailMidGate = on;
+    } else if (key == "detailMidEps" && !value.empty()) {
+      o->detailMidEps = float(std::atof(value.c_str()));
     } else if (key == "detailSmooth" && !value.empty()) {
       o->detailSmooth = float(std::atof(value.c_str()));
     } else if (key == "detailEdgeRadius" && !value.empty()) {
@@ -352,6 +360,38 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
       const float boost = gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio));
       det[i] = std::clamp((1.0f + (g - 1.0f) * boost) * det[i], -lim, lim);
     }
+  }
+  if (options_.detailMidGain > 1.0f) {
+    // Experimental: a mid-scale layer (the base's own residual against a wider self-guided filter)
+    // gets extra gain too, with the same scale-free halo guard over the wider filter's reach.
+    midBase_.resize(kImagePixels);
+    mid_.resize(kImagePixels);
+    guidedFilterSelf(base, midBase_.data(), options_.detailMidRadius, options_.detailMidEps, gfScratch_);
+    for (size_t i = 0; i < kImagePixels; ++i) mid_[i] = base[i] - midBase_[i];
+    for (size_t i = 0; i < kImagePixels; ++i) e[i] = mid_[i] * mid_[i];
+    boxFilter(e, gate, options_.detailMidRadius / 2);  // gate_ is free until the unsharp pass
+    // Its own noise gate, like the fine layer's: against the mid layer's floor.
+    int m = 0;
+    for (size_t i = 5; i < kImagePixels && m < kFrameWidth; i += 191) sample[m++] = gate[i];
+    std::nth_element(sample, sample + m / 10, sample + m);
+    const float midFloor = std::sqrt(std::max(sample[m / 10], 1e-6f));
+    const float mLo = options_.detailNoiseLo * midFloor, mHi = options_.detailNoiseHi * midFloor;
+    localRange(midBase_.data(), range_.data(), 2 * options_.detailMidRadius, gfScratch_);
+    const float gm = options_.detailMidGain - 1.0f;
+    for (size_t i = 0; i < kImagePixels; ++i) {
+      const float rms = std::sqrt(std::max(gate[i], 0.0f));
+      const float ratio = range_[i] / std::max(rms, 1e-3f);
+      const float open = options_.detailMidGate ? smooth(mLo, mHi, rms) : 1.0f;
+      const float extra = gm * open * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio)) * mid_[i];
+      det[i] = std::clamp(det[i] + extra, -2.0f * lim, 2.0f * lim);
+    }
+    // The unsharp pass's gate below needs the fine layer's noise gate again.
+    for (size_t i = 0; i < kImagePixels; ++i) {
+      const float d = sig[i] - base[i];
+      e[i] = d * d;
+    }
+    boxFilter(e, gate, 1);
+    for (size_t i = 0; i < kImagePixels; ++i) gate[i] = smooth(nLo, nHi, std::sqrt(std::max(gate[i], 0.0f)));
   }
   tone_.map(base, display, exclude, 0.04f, det);
 

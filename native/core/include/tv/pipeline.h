@@ -76,6 +76,11 @@ struct PipelineOptions {
   float detailLimit = 7.0f;
   float detailNoiseLo = 2.0f, detailNoiseHi = 4.0f;  // the noise gate's ramp, in x the detail noise floor
   float detailSmooth = 1.0f;  // > 0: the added contrast is blurred with this sigma (px) first
+  // Experimental (off at 1): gain on a mid-scale layer, the base against a wider self-guided filter.
+  float detailMidGain = 1.0f;
+  int detailMidRadius = 8;
+  float detailMidEps = 100.0f;
+  bool detailMidGate = true;  // the mid layer's own noise gate
   int detailEdgeRadius = 6;                          // the halo guard looks this far for a step...
   float detailEdgeLo = 12.0f, detailEdgeHi = 25.0f;  // ...and fades the gain out where the step is
                                                      // this many times the local detail (RMS)
@@ -100,7 +105,8 @@ struct FrameMeta {
 // "toneGain=X" (max gain), "toneLinear=X", "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
 // "toneContract=X" and "toneCurve=X" (time constants) tune it; "detail" / "detail=0" switches stage
 // 6, "detailRadius=N", "detailEps=X", "detailGain=X", "detailLimit=X", "detailNoiseLo=X",
-// "detailNoiseHi=X", "detailSmooth=X", "detailEdgeRadius=N", "detailEdgeLo=X", "detailEdgeHi=X", "unsharp=X" (amount),
+// "detailNoiseHi=X", "detailSmooth=X", "detailMid=X" (experimental gain), "detailMidRadius=N",
+// "detailMidEps=X", "detailMidGate" / "detailMidGate=0", "detailEdgeRadius=N", "detailEdgeLo=X", "detailEdgeHi=X", "unsharp=X" (amount),
 // "unsharpSigma=X", "unsharpEdgeLo=X" and "unsharpEdgeHi=X" tune it. False on an unknown item.
 bool parseStages(const std::string& text, PipelineOptions* options);
 std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"
@@ -154,7 +160,7 @@ class Pipeline {
   ToneMapper tone_;                                // stage 5
   std::vector<uint8_t> clipped_;                   // stage 5's exclusion mask
   Region region_;                                  // stage 5's measurement region
-  std::vector<float> base_, detailLayer_, energy_, gate_, range_, gfScratch_, detailScratch_;  // stage 6
+  std::vector<float> base_, detailLayer_, energy_, gate_, range_, gfScratch_, detailScratch_, midBase_, mid_;  // stage 6
   void enhance(const float* sig, float* display, const uint8_t* exclude);
   bool haveFiltered_ = false;
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
