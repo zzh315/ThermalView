@@ -5,7 +5,8 @@ Builds and runs `harness bench` (native/core's display path on every bench/<scen
 
 - bench/results/<commit>[-dirty].json: the metrics below. <commit> is the last one that touched
   native/core/, tools/harness/, palettes/ or this file; "-dirty" while they have uncommitted changes.
-- bench/results/<label>/<scene>.jpg: half-size contact sheets (committed).
+- bench/results/<label>/<scene>.jpg: half-size contact sheets (committed), left out for scenes the
+  pipeline leaves identical to the baseline.
 - bench/out/sheets/<scene>.png: full-size contact sheets; bench/out/clips/<scene>.mp4: side-by-side
   clips; bench/out/review.html shows both per scene (all local). Each row puts ours, rendered at
   the size that reference app draws its image on the tablet (nearest neighbour, like the M1
@@ -334,8 +335,10 @@ def contact_sheet(scene, outputs, results_dir, upscale):
     (OUT / "sheets").mkdir(parents=True, exist_ok=True)
     full = OUT / "sheets" / f"{scene}.png"
     sheet.save(full)
-    results_dir.mkdir(parents=True, exist_ok=True)
-    sheet.resize((width // 2, height // 2), Image.LANCZOS).save(results_dir / f"{scene}.jpg", quality=90)
+    # Commit a half-size copy unless the pipeline left this scene exactly as the baseline has it.
+    if not ("pipeline" in outputs and np.array_equal(outputs["pipeline"], outputs["baseline"])):
+        results_dir.mkdir(parents=True, exist_ok=True)
+        sheet.resize((width // 2, height // 2), Image.LANCZOS).save(results_dir / f"{scene}.jpg", quality=90)
     return full
 
 
