@@ -41,7 +41,14 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 **Review:** `bench/results/b848b57+detail/stage6_review/` shows stages 1–5, stage 6 as proposed, and the crisp variant side by side: `keyboard` (with the keys at 8× and the screen edge), `room`, `night` (the car at 8×), `hand`, `flat_aged`. Sheets against the baseline and the apps: `bench/results/b848b57+detail/<scene>.jpg`.
 
-**Verdict:** pending the owner's review (proposed vs crisp vs off). Stage 6 stays off by default until then (debug toggle "Stage 6: detail + sharpening").
+**Experiment, off by default: mid-scale texture** (`detailMid=2`, commit `6974da0`).
+- **Idea:** the owner likes Hti's texture but not its rim, and Hti's 14% halo is the mark of large-scale local contrast. So a second layer, the base against a wider self-guided filter (radius 8, eps 100), gets ×2 under the same halo guard (over 16 px) and its own noise gate.
+- **Results:** key detail 6.43 → 7.20 levels. The screen-edge halo stays 2.74%, and `flat` noise goes 1.41 → 1.46.
+- **Pitfalls:** at eps 400 the layer drew an Hti-like rim (11.5%): the guard can't see a rim that wide. Without its noise gate, `flat` noise rose to 1.62.
+- **Cost:** +3.1 ms a frame on the tablet's big cores (stages 1–6: 7.8 ms), mostly a 33-tap range filter that could be made ~10× cheaper.
+- **Review:** `stage6_review/mid_*.jpg` show stages 1–5, stage 6 as proposed, and with the mid layer.
+
+**Verdict:** pending the owner's review: proposed, crisp, with the mid layer, or off. Stage 6 stays off by default until then (debug toggle "Stage 6: detail + sharpening"; the variants are adb `pipeline` texts).
 
 ## 2026-09-25 — Stage 5: automatic tone mapping (`903d02a+default`: stages 1–5)
 
