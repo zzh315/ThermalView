@@ -279,9 +279,9 @@ void Pipeline::denoise(float* sig) {
   }
   // Noise level of the pooled difference: a robust sigma from a subsample (most pixels don't move),
   // smoothed over ~1 s so one busy frame doesn't swing it.
-  float* sample = colAcc_.data();  // 256 entries is plenty: every 192nd pixel
+  float* sample = colAcc_.data();  // 256 entries is plenty: every 191st pixel, so every column
   int n = 0;
-  for (size_t i = 97; i < kImagePixels && n < kFrameWidth; i += 192) sample[n++] = std::fabs(p[i]);
+  for (size_t i = 97; i < kImagePixels && n < kFrameWidth; i += 191) sample[n++] = std::fabs(p[i]);
   std::nth_element(sample, sample + n / 2, sample + n);
   const float sigma = 1.4826f * sample[n / 2];
   sigmaD_ = sigmaD_ > 0.0f ? sigmaD_ + 0.04f * (sigma - sigmaD_) : sigma;
