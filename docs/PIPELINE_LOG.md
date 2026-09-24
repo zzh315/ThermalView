@@ -173,6 +173,8 @@ The camera already runs its own motion-adaptive filter (DEVICE.md "Onboard filte
 
 **Cost on the tablet:** ~1.3 ms. Processing p95 is 7.0 ms and latency p95 9.7 ms with stages 1–4.
 
+**Removed (owner, 2026-09-25, live with the camera):** moving the camera left after-images, and the stage gave no visible gain ("It does nothing to improve image quality"). The benchmark had only a hand moving in front of a still camera; in a pan, low-contrast structure moves without clearing the motion threshold, so the filter kept blending its old position in. Stage 4 is now off by default and gone from the app's debug panel; the code stays in `native/core`, off. Latency p95 on the tablet with stages 1–3, 5, 6: 16.8 ms (19.9 with stage 4).
+
 ## 2026-09-25 — Stage 3: drift compensation and stripe cleanup (`7c8f0ba+drift_destripe`)
 
 **What:** the owner approved this approach in place of PLAN's gated stripe tracker, after this evidence.
