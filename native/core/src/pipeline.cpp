@@ -196,8 +196,25 @@ void Pipeline::updateNoiseSigma(const uint16_t* image) {
 
 void Pipeline::reduceNoise(float* sig) {
   const float sigma = options_.nrSigma > 0.0f ? options_.nrSigma : noiseSigma();
-  nlmPad(sig, options_.nrSearch, options_.nrPatch, &nrPadded_);
-  nlmBand(nrPadded_, sig, 0, kImageRows, options_.nrSearch, options_.nrPatch, options_.nrStrength * sigma, nrScratch_);
+  const float h = options_.nrStrength * sigma;
+  if (reducer_) {
+    nrOut_.resize(kImagePixels);
+    nrAccelerated_ = reducer_(sig, nrOut_.data(), options_.nrSearch, options_.nrPatch, h);
+    if (nrAccelerated_) {
+      std::copy(nrOut_.begin(), nrOut_.end(), sig);
+      return;
+    }
+  }
+  // The CPU: at most nrFallbackSearch when an accelerator failed (the full search would miss the
+  // frame budget), h scaled to keep the noise reduction (nr_study: 5x5 search at 1.27x h ~ 11x11).
+  int search = options_.nrSearch;
+  float hh = h;
+  if (reducer_ && search > options_.nrFallbackSearch) {
+    hh = h * (1.0f + 0.09f * float(search - options_.nrFallbackSearch));
+    search = options_.nrFallbackSearch;
+  }
+  nlmPad(sig, search, options_.nrPatch, &nrPadded_);
+  nlmBand(nrPadded_, sig, 0, kImageRows, search, options_.nrPatch, hh, nrScratch_);
 }
 
 void Pipeline::reset() {

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,6 +72,7 @@ struct PipelineOptions {
   float nrStrength = 1.2f;
   float nrSigma = 0.0f;
   float nrNominalSigma = 1.07f;  // the start value (M4: 1.06-1.10 counts on the still benchmark scenes)
+  int nrFallbackSearch = 2;      // the CPU's search radius when an accelerator is set but fails
 
   // Stage 5 (approved 2026-09-25, gain cap 2.0): automatic tone mapping (tone.h) in place of the
   // baseline's per-frame min/max stretch. Pixels at the camera's clip stay out of its statistics.
@@ -150,6 +152,13 @@ class Pipeline {
   double lastDriftC() const { return lastDriftC_; }  // the drift the last frame was compensated for
   float noiseSigma() const { return nrSigma_ > 0.0f ? nrSigma_ : options_.nrNominalSigma; }  // stage 4b's, counts
 
+  // Stage 4b's accelerator (the app's GPU version): filters src into dst (kImagePixels counts) with
+  // the same non-local means, or returns false, and this CPU version runs instead, at a search
+  // radius of at most nrFallbackSearch (h scaled to keep the strength, as measured).
+  using NoiseReducer = std::function<bool(const float* src, float* dst, int searchRadius, int patchRadius, float h)>;
+  void setNoiseReducer(NoiseReducer reducer) { reducer_ = std::move(reducer); }
+  bool lastNoiseReductionAccelerated() const { return nrAccelerated_; }
+
   // A new stream, replay start or range switch: forget every frame seen so far.
   void reset();
 
@@ -187,8 +196,10 @@ class Pipeline {
   void enhance(const float* sig, float* display, const uint8_t* exclude);
   bool haveFiltered_ = false;
   float nrSigma_ = 0.0f;                     // stage 4b's measured noise sigma (0: none yet)
-  std::vector<float> nrScratch_, nrSample_;
+  std::vector<float> nrScratch_, nrSample_, nrOut_;
   NlmPadded nrPadded_;
+  NoiseReducer reducer_;
+  bool nrAccelerated_ = false;
   void updateNoiseSigma(const uint16_t* image);  // before previous_ is overwritten
   void reduceNoise(float* sig);
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts

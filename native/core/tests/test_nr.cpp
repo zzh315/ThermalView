@@ -113,3 +113,32 @@ TEST_CASE("stage 4b's noise sigma follows the camera's noise and ignores motion"
   for (int k = 0; k < 20; ++k) frame(float(k) * 3.0f);  // a pan: every pixel changes a lot
   CHECK(p.noiseSigma() == doctest::Approx(settled).epsilon(0.05));
 }
+
+TEST_CASE("stage 4b uses the accelerator when it works, and the CPU when it doesn't") {
+  std::mt19937 rng(13);
+  auto o = nrOnly();
+  o.nrSigma = 1.5f;
+  tv::Pipeline p(o);
+  std::vector<float> d(tv::kImagePixels), s(tv::kImagePixels);
+  const auto img = scene(rng, 1.5f);
+  int calls = 0;
+  p.setNoiseReducer([&](const float*, float* dst, int sr, int pr, float h) {
+    ++calls;
+    CHECK(sr == o.nrSearch);
+    CHECK(pr == o.nrPatch);
+    CHECK(h == doctest::Approx(o.nrStrength * 1.5f));
+    std::fill(dst, dst + tv::kImagePixels, 1234.0f);  // recognisable
+    return true;
+  });
+  p.process(img.data(), d.data(), s.data());
+  CHECK(calls == 1);
+  CHECK(p.lastNoiseReductionAccelerated());
+  CHECK(s[1000] == 1234.0f);
+  // A failing accelerator: the CPU filters (the signal is no longer the fake value, and smoother).
+  p.setNoiseReducer([&](const float*, float*, int, int, float) { return false; });
+  p.process(img.data(), d.data(), s.data());
+  CHECK_FALSE(p.lastNoiseReductionAccelerated());
+  const size_t flat = size_t(10) * W + 20;  // in the flat third
+  CHECK(s[flat] != 1234.0f);
+  CHECK(std::fabs(s[flat] - 6000.0f) < 3.0f);
+}
