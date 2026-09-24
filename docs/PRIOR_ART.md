@@ -156,6 +156,132 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 
   M2 decides by measurement (PROTOCOL.md "Ranges").
 
+### Pass 2 (M4, 2026-09-25)
+
+**1. Black-box analysis of the M3 captures.** Numbers from `tools/py/bench_refs.py` (`bench/results/refs.json`), in 8-bit display levels per camera pixel. The owner's picks are in PIPELINE_LOG (M1 baseline).
+- **Auto range:** Hti and Xtherm are very steady. Flicker on static scenes is 0.07–0.22 levels, against our baseline's 0.55–2.3.
+  - Both hold quiet scenes at low contrast. On `flat`, Hti spans levels 108–145 and Xtherm 133–184, so the wall looks calm: display noise 0.6–0.8 levels, against our 6.2.
+  - Xtherm widens its range on structured scenes (`keyboard` 17–204, `night` 23–210), like FLIR's max-gain cap.
+  - Hti stays narrow everywhere (`keyboard` 79–175, `night` 75–177), which is its washed-out look.
+  - InfiCamPlus stretches each frame's min…max like our baseline, with the same noise and flicker. When a car at 38.7 °C crossed the night view, its whole image dimmed by up to 97 levels until the car left (pass 2 item 4's warning).
+- **Sharpness:** `keyboard` is the fair test: the camera and laptop stayed still, and every app lines up with our frame within 0.12 px. All three apps draw the screen edge at 1.26–1.30 px FWHM after averaging back to camera pixels. Ours, drawn bicubic and averaged back the same way, is 1.81 px, and 1.44 px at camera resolution. So they all sharpen.
+- **Halo:** Hti's rim comes from detail enhancement over a heavily compressed base. It shrinks the screen edge's step to 25 levels (ours 73, Xtherm 45), and the halo on it is 14 %. Xtherm's is 1.4 %, InfiCamPlus's 2.2 %, ours 2.5 % (the scene's own dip beside the bezel).
+- **Detail:** key-gap detail on `keyboard` is 10.3 levels for InfiCamPlus, 4.1 for ours, 3.5 for Xtherm and 2.6 for Hti. InfiCamPlus sharpens hard without adding halo, which fits the owner's night pick.
+- **Shutter hiccups:** none of the 10 s recordings caught a cycle, so this needs a longer recording.
+- **Hand edges:** each app's hand sat at a different distance, which changes its edge widths (1.0–1.4 px for the apps, ~1.9 px for ours), so they don't compare cleanly.
+- **Verdict:** the bar is:
+  - Xtherm's auto range: steady, and gain-capped on flat scenes;
+  - at least InfiCamPlus's sharpness and detail, without halos;
+  - none of Hti's base compression.
+
+  That's M4 stage 5 (tone mapping: minimum span, damping) and stage 6 (detail enhancement with halo control). M5's upscaler must not blur.
+
+**2. InfiCam's display path.** Pointers are into inficam @ `531aa81`. A full clone of its history is in the session scratchpad; the shallow clones stop at `baea0c2`.
+- **Colour first, on the CPU.** It applies the palette to float °C, giving 8-bit RGBX at sensor size (`InfiCamJNI.cpp:375-397`, `InfiFrame.cpp:203-207`).
+- **Two GL passes, both on 8-bit colour:**
+  - a sharpen at sensor resolution (`fsharpen.glsl`: `9·px − 2·(N+S+E+W)`, mixed in by the "Sharpening" setting). That's a Laplacian boost with a white-noise gain of 5.4× at InfiCam's default of 0.5 and 2.7× at InfiCamPlus's 0.2;
+  - then the chosen scaling mode (default Linear) to the screen.
+- **No clamps.** Every surface is RGBA8888, so each pass re-quantises to 8 bits, and no shader has an anti-ringing clamp. This sharpen pass is how InfiCamPlus gets its sharp look (item 1).
+- **Scaling shaders:**
+  - "B-spline" (`fcubic.glsl`) is a uniform cubic B-spline from 4 bilinear fetches (GPU Gems 2, ch. 20). Its weights are all positive, so it never rings, but it blurs even at 1:1.
+  - The 5-tap Catmull-Rom (`fcmrom.glsl`) drops the corner taps (Jimenez's trick). It's adapted from a Shadertoy with no stated license, which defaults to CC BY-NC-SA.
+  - The 9-tap Catmull-Rom (`fcmrom2.glsl`, unused) is MJP's gist, MIT, credited in InfiCam's LICENSE.
+  - The adaptive one (`fadaptive.glsl`, after IEEE 924383) warps a Catmull-Rom by Sobel gradients of the palette's luma. It samples 2×2 averages, and its author doubted it works.
+- **Why Catmull-Rom "does not work" in 4 fetches** (`notes.txt:340-341`). Its negative outer weights push the merged fetch offsets outside [0, 1]. The outer texels are then never read, and the result is exactly bilinear: the agent re-ran the maths and got a maximum difference of 1.7e-15. It also divides 0 by 0 at texel centres.
+- **InfiCamPlus** keeps the same shaders and passes. It moved the colouring to Java (still 8-bit, still on °C) and lowered the sharpening default to 0.2.
+- **Verdict:**
+  - Reject colour-first scaling and the 8-bit sharpen pass.
+  - Adopt the 9-tap Catmull-Rom structure (MJP, MIT; credit in THIRD_PARTY.md when adapted) for M5's scalar upscale. Use highp coordinates, with an optional clamp to the nearest 2×2 texels' min/max against ringing.
+  - Keep the 4-fetch B-spline as a cheap smooth option (Sigg & Hadwiger).
+  - Any sharpening goes on the scalar, after denoising, and through the benchmark (stage 6).
+
+**3. Palette on temperatures vs raw.** `notes.txt:166-172`: "400c mode looks a bit quirky before a few calibration cycles, while it doesn't on xtherm / the reason is that xtherm just scales the palette to the raw input data linearly". InfiCam first computes temperatures, and "below a certain point the temperatures can't be calculated at all". Its table refreshes only at stream start and on each calibration (`InfiCam.cpp:18-21, 182-193`). Pixels below the model's floor collapse to one colour (`InfiFrame.cpp:128-129`).
+- **Verdict: confirmed, tone-map raw.** Raw is always defined and doesn't depend on the model. °C is only for the readouts, the scale-bar endpoints, and converting a manual °C range to raw bounds whenever the table updates (PLAN M4 stage 5).
+
+**4. Known issues from InfiCam's notes.**
+- **Auto range:** it's the camera's per-frame min/max, with no smoothing, percentiles or hysteresis (`InfiCamJNI.cpp:376-377`; InfiCamPlus recomputes it the same way).
+- `notes.txt:128`, still open: "fix the flickering that occurs when aimed at say a tree or grass". The M3 night capture showed the same mechanism: a passing car dimmed InfiCamPlus's whole image by up to 97 levels.
+- `notes.txt:124`: "the nearest neighbor interpolation sucks for smaller sizes".
+- **Verdict:** robust percentiles, temporal smoothing and hysteresis for our auto range (stage 5). M5's upscaler replaces nearest; the benchmark sheets already preview bicubic. `night` has a shrub but no trees or grass; add a tree scene when convenient.
+
+**5. Interpolation options (InfiRayProPyCapture @ `a038e88`).**
+- **Plain modes:** each one resizes the palette-mapped 8-bit image with OpenCV. Its cubic is Keys a = −0.75, sharper than Catmull-Rom's −0.5; its Lanczos is 8×8.
+- **"Sharp"** takes these steps:
+  1. ESPCN ×4 on the palette image's luma. The model is `ESPCN_x4.pb` from TF-ESPCN: Apache-2.0 code, trained on DIV2K, whose data is for academic research only.
+  2. An unsharp mask, 1.85·img − 0.85·blur(σ 1).
+  3. A cubic fit to the window.
+- **ESPCN ×4 cost** at 256×192: 24,752 parameters, 1.21 G multiply-adds per frame, ~60 GFLOP/s at 25 fps.
+  - On the CPU it's implausible (~160 ms per frame at OpenCV's efficiency).
+  - On the Adreno 650 it's plausible but unproven: a hand-written GLES network might run in ~4–20 ms.
+- **M5 shortlist:**
+  - 9-tap Catmull-Rom, with and without the 2×2 clamp;
+  - Keys a = −0.75;
+  - Lanczos-3 with the anti-ringing clamp.
+- **Verdict on ESPCN:** only a Mac-harness experiment on our tone-mapped scalar. Keep it only if it beats Catmull-Rom on the benchmark without halos.
+
+**6. Manual-range UX.** Pointers are into each repo at its catalog commit.
+- **InfiCam:**
+  - A lock toggle snapshots the frame's raw min/max (`MainActivity.java:537-538`).
+  - A vertical RangeSlider appears only while locked, in 1 °C steps on a fixed −20…120 °C axis, with no value bubble.
+  - The model can hold min and max separately (a NaN end means auto), but the UI locks both.
+  - The scale bar shows lock icons at locked ends.
+  - Its open questions (`notes.txt:115-118`): "maybe enter as center + span rather than min + max?", "separate locking for min and max of range", "option to just limit the range instead of locking it".
+- **InfiCamPlus** snapshots the visible area instead. It adds a moving barber-pole over pixels above the range, and disables the slider during calibration.
+- **ht301_hacklib:** 'a' toggles auto. The arrow keys move the centre by ±1 °C and the half-span by ±1 °C, and pressing one turns auto off.
+- **p2pro-rs:** each end has a checkbox and a number field (0.5 °C steps); unpinned ends follow a 30-frame average.
+- **thermal-camera-android:** a menu lock, plus an edit dialog.
+- **thermal-cat:** unchecking Auto copies the *displayed* range, and the auto controller keeps running underneath, so Auto resumes already settled.
+- **Pitfalls seen in the code:**
+  - InfiCam decides which thumb moved by comparing values, so the thumbs swap when they meet.
+  - Several projects never guard a zero or inverted span.
+  - Most lock snapshots copy the raw min/max rather than what was shown.
+  - A fixed 140 °C axis gives ~5 dp per °C on this tablet, so a 2 °C span can't be set.
+  - InfiCam calls Material's RangeSlider fragile.
+- **Verdict:**
+  - One Lock toggle sits at the foot of the scale bar, and **the scale bar is the slider.**
+    - In Manual, drag the top end for max, the bottom end for min, or the bar's body to shift both.
+    - Starting an end drag in Auto locks first, so lock-and-adjust is one gesture.
+  - **Locking** copies the displayed range, rounded outward to 0.5 °C (thermal-cat; PLAN M6 "locks whatever range is showing"). Keep the auto controller running underneath.
+  - **Storage:** keep the range in °C and convert it to raw bounds every frame (item 3).
+  - **Drag feel:**
+    - Δ°C = Δy / bar height × the span at touch-down, with the axis frozen during the drag, so precision scales with the span.
+    - Snap to 0.5 °C, and clamp at a minimum span of 1 °C rather than pushing the other end.
+    - 48 dp targets, with a value callout beside the finger.
+    - Disabled during a lockout or shutter cycle.
+  - **Build:** a custom Compose Canvas widget, not Material's RangeSlider.
+  - **InfiCam's questions:** min + max and centre + span both live on one widget. No separate end locks in v1, though the state stays two endpoints so one can come later. Lock, not limit.
+  - **Open for M4 stage 5 and M6:**
+    - Auto's HE blend and Manual's linear mapping differ, so locking changes the look. Fade the blend out over ~0.3 s, or accept it.
+    - Manual's out-of-range marking could be a static hatch (not moving stripes, not grey); that's the owner's call.
+
+**7. Box and zoom UX, code side.** Hti Image's and Xtherm's boxes, observed on the tablet, are still to add.
+- **Compose-Cropper:**
+  - Corner zones only (20 dp in its demo), with priority corners → inside.
+  - It keeps the finger's offset for corners, but moves the inside by per-event deltas.
+  - It overshoots bounds and animates back on release, and dims the outside with a `SrcOut` layer.
+- **Android-Image-Cropper:**
+  - A 24 dp touch radius and a 42 dp minimum.
+  - "corner-handles take precedence, then side-handles, then center" (`CropWindowHandler.kt:193`).
+  - It keeps the finger's offset, clamps live with a 3 dp snap, and maps far-away touches to the nearest handle.
+- **uCrop:** 30 dp corners, no edges, a 100 dp minimum. A move that would cross a bound is dropped, and a pinch that starts on the box does nothing.
+- **Both Compose-Cropper and Android-Image-Cropper trap small boxes:** at their own minimum size, the corner zones cover the whole box, so it can't be moved.
+- **p2pro-rs's pinch:** it keeps the content point under the fingers' centroid fixed, re-baselines whenever a finger is added or lifted, and clamps pan so the image always fills the view. That matches PLAN M6.
+- **Verdict:**
+  - **Storage:** keep the box as a half-open integer rect in camera pixels (at least 4×4), with one `camToScreen`/`screenToCam` pair shared by the renderer, the overlay and the hit-test.
+  - **Hit-test** in screen pixels with r = 24 dp:
+    - On each axis, take the box's screen extent, grown to at least 2r.
+    - The inner band is b = clamp((extent − 2r)/2, 0, r).
+    - The near-low zone is [lo−r, lo+b], the near-high zone is [hi−b, hi+r], and anything between is inside.
+    - Corner beats edge beats inside. The inside zone never vanishes, so a 4×4 box stays movable.
+    - Outside touches never grab a handle; they stay free for pan and pinch.
+  - **Drags:**
+    - Start after touch slop.
+    - Edges = touch-down snapshot + (finger − down) in camera px, which keeps the finger's offset without drift.
+    - Clamp live, sliding moves along the walls; round to whole pixels.
+    - Never overshoot and snap back, because readouts must come from exactly what's drawn.
+  - **Gestures:** one `awaitEachGesture` handler. A second finger at any time restores the box snapshot and becomes a pinch (p2pro-rs's model), and two fingers down to one keeps panning.
+  - **Drawing:** dimming goes in the shader (50 % outside, mirrored in `native/core`). The outline and handles go in a Compose Canvas at fixed dp.
+
 ### Pass 1 (M0, 2026-09-24)
 
 Pointers confirmed in the clones at the commits in the catalog (InfiCam `531aa81`, InfiCamPlus `6fad1f3` and its v1.0.1 tag, libuvc upstream `4e9fc77`).
