@@ -54,6 +54,10 @@ class Renderer {
   // measure (PLAN M4 stage 5; not drawn in gray), from the next frame drawn.
   void setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation);
 
+  // The view's width in panel pixels (4:3; M6's view-size presets, a debug setting until then); 0 or
+  // anything larger than the screen allows: the largest 4:3 fit.
+  void setViewWidth(int px) { viewWidthPx_ = px; }
+
   // Debug (M5's GPU-vs-CPU check): after the next frame drawn, save what the GPU drew in the view
   // (<prefix>.ppm), the intensity and over-range mask it drew from (<prefix>.f32, <prefix>_clip.u8)
   // and how (<prefix>.json: size, upscaler, palette, mirroring).
@@ -93,6 +97,7 @@ class Renderer {
   std::array<float, 3> saturation_{0.5f, 0.5f, 0.5f};
   std::string readbackPrefix_, readbackPalette_;  // under displayMutex_
   int viewX_ = 0, viewY_ = 0, viewW_ = 0, viewH_ = 0;  // the last draw's view rectangle
+  std::atomic<int> viewWidthPx_{0};
   void saveReadback(const DisplayFrame& frame, const std::string& prefix, const std::string& palette, int upscaler);
   std::vector<float> coeffs_;  // the B-spline's coefficients of the frame being drawn
   std::mutex displayMutex_;

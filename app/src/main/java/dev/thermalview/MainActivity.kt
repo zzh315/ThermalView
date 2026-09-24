@@ -33,6 +33,7 @@ data class DebugOptions(
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
     val upscaler: Int = 1,                  // M5 preview: 0 nearest (M1), 1 cardinal B-spline + 2x2 clamp
     val palette: Int = 0,                   // M5 preview: 0 gray (as before), 1 white_hot, 2 rainbow_hc
+    val viewSize: Int = 2,                  // M6 presets, debug until then: 0 Phone, 1 Small tablet, 2 Full
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -107,13 +108,14 @@ class MainActivity : ComponentActivity() {
             runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
         } ?: ""
         NativeBridge.setDisplay(value.upscaler, palette).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
+        NativeBridge.setViewWidth(VIEW_WIDTHS.getOrElse(value.viewSize) { 0 })
     }
 
     /**
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans), upscaler, palette (ints; applied first); reconnect, shutter, lockout, stopReplay, readback (booleans);
+     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans), upscaler, palette, viewSize (ints; applied first); reconnect, shutter, lockout, stopReplay, readback (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -139,6 +141,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("bigCores")) o = o.copy(bigCores = extras.getBoolean("bigCores"))
         if (extras.containsKey("upscaler")) o = o.copy(upscaler = extras.getInt("upscaler"))
         if (extras.containsKey("palette")) o = o.copy(palette = extras.getInt("palette"))
+        if (extras.containsKey("viewSize")) o = o.copy(viewSize = extras.getInt("viewSize"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -176,5 +179,9 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "ThermalView"
         val PALETTES = listOf("white_hot", "rainbow_hc")  // assets from palettes/, DebugOptions.palette 1 and 2
+        // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
+        // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
+        val VIEW_WIDTHS = listOf(880, 1467, 0)
+        val VIEW_NAMES = listOf("Phone 4.5\"", "Small tablet 7.5\"", "Full 10.9\"")
     }
 }

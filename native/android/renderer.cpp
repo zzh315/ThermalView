@@ -401,6 +401,11 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   // Letterbox the 4:3 image into the surface.
   int vw = w, vh = h;
   if (int64_t(w) * 3 > int64_t(h) * 4) vw = h * 4 / 3; else vh = w * 3 / 4;
+  const int want = viewWidthPx_.load();
+  if (want > 0 && want < vw) {  // a smaller preset, centered
+    vw = want;
+    vh = want * 3 / 4;
+  }
   viewX_ = (w - vw) / 2;
   viewY_ = (h - vh) / 2;
   viewW_ = vw;

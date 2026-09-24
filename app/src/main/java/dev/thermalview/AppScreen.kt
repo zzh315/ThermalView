@@ -158,6 +158,9 @@ private fun DebugPanel(
                     Button(onClick = { onOptions(options.copy(palette = (options.palette + 1) % 3)) }) {
                         Text("Palette: " + listOf("gray", "white_hot", "rainbow_hc")[options.palette.coerceIn(0, 2)])
                     }
+                    Button(onClick = { onOptions(options.copy(viewSize = (options.viewSize + 1) % 3)) }) {
+                        Text("View: " + MainActivity.VIEW_NAMES[options.viewSize.coerceIn(0, 2)])
+                    }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }

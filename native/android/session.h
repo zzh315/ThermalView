@@ -75,6 +75,9 @@ class Session {
   // text; empty: gray). Returns an error, or "".
   std::string setDisplay(int upscaler, const std::string& paletteJson);
 
+  // The view's width in panel pixels (M6's view-size presets; 0: the largest 4:3 fit).
+  void setViewWidth(int px) { renderer_.setViewWidth(px); }
+
   // Debug: the renderer saves its next frame for M5's GPU-vs-CPU check (Renderer::requestReadback).
   void requestReadback(const std::string& prefix, const std::string& paletteName) {
     renderer_.requestReadback(prefix, paletteName);
