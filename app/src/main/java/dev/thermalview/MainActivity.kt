@@ -23,6 +23,7 @@ data class DebugOptions(
     val highMathInfiCam: Boolean = false,
     val rangePairOnReady: Boolean = false,  // Ready captures the scene in both ranges (M2 iron session)
     val lockoutEnabled: Boolean = true,     // off only for tests with hot objects within the sensor's rating
+    val rangeSettleMs: Int = 500,           // wait between a range command and its 0x8000 (M2 settling test)
 )
 
 class MainActivity : ComponentActivity() {
@@ -81,7 +82,7 @@ class MainActivity : ComponentActivity() {
         options.value = value
         NativeBridge.setOptions(
             value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout,
-            value.autoRange, value.highMathInfiCam, value.lockoutEnabled,
+            value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs,
         )
     }
 
@@ -104,6 +105,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("highMathInfi")) o = o.copy(highMathInfiCam = extras.getBoolean("highMathInfi"))
         if (extras.containsKey("rangePair")) o = o.copy(rangePairOnReady = extras.getBoolean("rangePair"))
         if (extras.containsKey("lockoutEnabled")) o = o.copy(lockoutEnabled = extras.getBoolean("lockoutEnabled"))
+        if (extras.containsKey("rangeSettleMs")) o = o.copy(rangeSettleMs = extras.getInt("rangeSettleMs"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()

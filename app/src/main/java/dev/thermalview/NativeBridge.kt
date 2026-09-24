@@ -29,7 +29,7 @@ object NativeBridge {
     external fun sendShutter(): String
     external fun setOptions(
         skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean, dumpOnLockout: Boolean,
-        autoRange: Boolean, highMathInfiCam: Boolean, lockoutEnabled: Boolean,
+        autoRange: Boolean, highMathInfiCam: Boolean, lockoutEnabled: Boolean, rangeSettleMs: Int,
     )
     external fun setRange(high: Boolean): String  // debug: manual range switch
     external fun triggerLockout(): String

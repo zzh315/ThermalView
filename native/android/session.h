@@ -41,6 +41,7 @@ struct Options {
   bool autoRange = false;           // automatic range switching (off until the M2 iron session)
   bool highMathInfiCam = false;     // debug: InfiCam's high-range math instead of ht301_hacklib's
   bool lockoutEnabled = true;       // debug: off only for tests with hot objects the sensor is rated for
+  int rangeSettleMs = 500;          // debug: wait between a range command and its 0x8000 (M2 settling)
 };
 
 class Session {
@@ -173,6 +174,7 @@ class Session {
   int holdNoFreezeMs_ = 1000;
   bool rangeLogPending_ = false;
   bool autoRange_ = false;
+  int rangeSettleMs_ = 500;
   int64_t rangeSwitchNs_ = 0;
   bool rangeBanner_ = false;
   bool recoveryNucRequested_ = false, recoveryNucSent_ = false;

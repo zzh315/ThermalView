@@ -659,12 +659,13 @@ void Session::tick(int64_t now) {
       // after the last one), then a hold through the cycle. Without it, Block A reads zero after
       // leaving the high range (M2).
       if (stalled()) break;
-      if ((since(rangeSwitchNs_) >= kRangeToShutterMs && gate_ && gate_->shutterReady()) ||
-          since(rangeSwitchNs_) >= 15000) {
+      if ((since(rangeSwitchNs_) >= std::max(kRangeToShutterMs, rangeSettleMs_) && gate_ &&
+           gate_->shutterReady()) ||
+          since(rangeSwitchNs_) >= std::max(15000, rangeSettleMs_ + 15000)) {
         if (command(kCmdShutter) == CommandResult::Sent) {
           FLOG("range switch: recalibrating");
           beginHold(now);
-        } else if (since(rangeSwitchNs_) >= 15000) {
+        } else if (since(rangeSwitchNs_) >= std::max(15000, rangeSettleMs_ + 15000)) {
           FLOG("range switch: 0x8000 refused; continuing without it");
           beginHold(now);
         }
@@ -832,6 +833,7 @@ void Session::handleFrame(const RawFrame& frame) {
   {
     std::lock_guard o(optionsMutex_);
     autoRange_ = options_.autoRange;
+    rangeSettleMs_ = options_.rangeSettleMs;
     if (lockoutEnabled_ != options_.lockoutEnabled)
       FLOG("over-range lockout %s (debug option)", options_.lockoutEnabled ? "enabled" : "DISABLED");
     lockoutEnabled_ = options_.lockoutEnabled;
