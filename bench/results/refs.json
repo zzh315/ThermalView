@@ -1,0 +1,337 @@
+{
+  "note": "Black-box metrics of the reference apps' captures (bench_refs.py); 8-bit display levels per camera pixel; recordings are H.264, so noise is a lower bound.",
+  "scenes": {
+    "flat": {
+      "thermalview": {
+        "flicker_levels": 2.406,
+        "flicker_steady_levels": 2.297,
+        "largest_jump_levels": 7.99,
+        "range_p1_p99": [
+          27.1,
+          210.0
+        ],
+        "noise_levels": 6.2
+      },
+      "hti": {
+        "flicker_levels": 0.157,
+        "flicker_steady_levels": 0.157,
+        "largest_jump_levels": 0.59,
+        "range_p1_p99": [
+          108.2,
+          144.9
+        ],
+        "frames": 253,
+        "freezes": [],
+        "noise_levels": 0.607
+      },
+      "xtherm": {
+        "flicker_levels": 0.208,
+        "flicker_steady_levels": 0.208,
+        "largest_jump_levels": 0.68,
+        "range_p1_p99": [
+          132.6,
+          184.0
+        ],
+        "frames": 243,
+        "freezes": [],
+        "noise_levels": 0.817
+      },
+      "inficamplus": {
+        "flicker_levels": 2.331,
+        "flicker_steady_levels": 2.331,
+        "largest_jump_levels": 5.18,
+        "range_p1_p99": [
+          29.6,
+          202.8
+        ],
+        "frames": 252,
+        "freezes": [],
+        "noise_levels": 6.181
+      }
+    },
+    "hand": {
+      "thermalview": {
+        "flicker_levels": 0.19,
+        "flicker_steady_levels": 0.19,
+        "largest_jump_levels": 0.63,
+        "range_p1_p99": [
+          3.1,
+          246.5
+        ]
+      },
+      "hti": {
+        "flicker_levels": 0.528,
+        "flicker_steady_levels": 0.528,
+        "largest_jump_levels": 0.76,
+        "range_p1_p99": [
+          27.3,
+          226.3
+        ],
+        "frames": 254,
+        "freezes": [],
+        "hand_edge": {
+          "fwhm_px": 1.417,
+          "halo_pct": 2.78
+        }
+      },
+      "xtherm": {
+        "flicker_levels": 0.091,
+        "flicker_steady_levels": 0.091,
+        "largest_jump_levels": 0.17,
+        "range_p1_p99": [
+          9.4,
+          241.5
+        ],
+        "frames": 241,
+        "freezes": [],
+        "hand_edge": {
+          "fwhm_px": 1.386,
+          "halo_pct": 0.0
+        }
+      },
+      "inficamplus": {
+        "flicker_levels": 0.162,
+        "flicker_steady_levels": 0.162,
+        "largest_jump_levels": 0.42,
+        "range_p1_p99": [
+          10.9,
+          245.1
+        ],
+        "frames": 253,
+        "freezes": [],
+        "hand_edge": {
+          "fwhm_px": 1.02,
+          "halo_pct": 0.0
+        }
+      },
+      "thermalview_at_hti": {
+        "hand_edge": {
+          "fwhm_px": 1.989,
+          "halo_pct": 0.0
+        }
+      },
+      "thermalview_at_xtherm": {
+        "hand_edge": {
+          "fwhm_px": 1.929,
+          "halo_pct": 0.0
+        }
+      },
+      "thermalview_at_inficamplus": {
+        "hand_edge": {
+          "fwhm_px": 1.943,
+          "halo_pct": 0.0
+        }
+      }
+    },
+    "keyboard": {
+      "thermalview": {
+        "flicker_levels": 0.545,
+        "flicker_steady_levels": 0.545,
+        "largest_jump_levels": 1.41,
+        "range_p1_p99": [
+          12.2,
+          238.6
+        ],
+        "keys_detail_levels": 4.089
+      },
+      "hti": {
+        "flicker_levels": 0.071,
+        "flicker_steady_levels": 0.071,
+        "largest_jump_levels": 0.23,
+        "range_p1_p99": [
+          78.9,
+          175.2
+        ],
+        "frames": 253,
+        "freezes": [],
+        "screen_edge": {
+          "fwhm_px": 1.267,
+          "halo_pct": 14.23
+        },
+        "keys_detail_levels": 2.599
+      },
+      "xtherm": {
+        "flicker_levels": 0.127,
+        "flicker_steady_levels": 0.127,
+        "largest_jump_levels": 0.39,
+        "range_p1_p99": [
+          16.8,
+          203.8
+        ],
+        "frames": 242,
+        "freezes": [],
+        "screen_edge": {
+          "fwhm_px": 1.304,
+          "halo_pct": 1.37
+        },
+        "keys_detail_levels": 3.494
+      },
+      "inficamplus": {
+        "flicker_levels": 0.417,
+        "flicker_steady_levels": 0.417,
+        "largest_jump_levels": 0.91,
+        "range_p1_p99": [
+          23.3,
+          244.7
+        ],
+        "frames": 253,
+        "freezes": [],
+        "screen_edge": {
+          "fwhm_px": 1.255,
+          "halo_pct": 2.17
+        },
+        "keys_detail_levels": 10.319
+      },
+      "thermalview_at_hti": {
+        "screen_edge": {
+          "fwhm_px": 1.808,
+          "halo_pct": 2.46
+        }
+      },
+      "thermalview_at_xtherm": {
+        "screen_edge": {
+          "fwhm_px": 1.809,
+          "halo_pct": 2.46
+        }
+      },
+      "thermalview_at_inficamplus": {
+        "screen_edge": {
+          "fwhm_px": 1.832,
+          "halo_pct": 2.47
+        }
+      }
+    },
+    "motion": {
+      "thermalview": {
+        "flicker_levels": 2.027,
+        "flicker_steady_levels": 1.741,
+        "largest_jump_levels": 2.14,
+        "range_p1_p99": [
+          10.3,
+          247.7
+        ]
+      },
+      "hti": {
+        "flicker_levels": 2.298,
+        "flicker_steady_levels": 2.298,
+        "largest_jump_levels": 3.18,
+        "range_p1_p99": [
+          29.4,
+          223.5
+        ],
+        "frames": 255,
+        "freezes": []
+      },
+      "xtherm": {
+        "flicker_levels": 0.844,
+        "flicker_steady_levels": 0.844,
+        "largest_jump_levels": 0.98,
+        "range_p1_p99": [
+          14.8,
+          240.8
+        ],
+        "frames": 245,
+        "freezes": []
+      },
+      "inficamplus": {
+        "flicker_levels": 0.973,
+        "flicker_steady_levels": 0.973,
+        "largest_jump_levels": 0.77,
+        "range_p1_p99": [
+          17.1,
+          239.8
+        ],
+        "frames": 253,
+        "freezes": []
+      }
+    },
+    "night": {
+      "thermalview": {
+        "flicker_levels": 0.666,
+        "flicker_steady_levels": 0.666,
+        "largest_jump_levels": 1.59,
+        "range_p1_p99": [
+          25.8,
+          237.7
+        ]
+      },
+      "hti": {
+        "flicker_levels": 0.068,
+        "flicker_steady_levels": 0.068,
+        "largest_jump_levels": 0.25,
+        "range_p1_p99": [
+          75.1,
+          176.9
+        ],
+        "frames": 253,
+        "freezes": []
+      },
+      "xtherm": {
+        "flicker_levels": 0.109,
+        "flicker_steady_levels": 0.109,
+        "largest_jump_levels": 0.38,
+        "range_p1_p99": [
+          22.8,
+          209.7
+        ],
+        "frames": 249,
+        "freezes": []
+      },
+      "inficamplus": {
+        "flicker_levels": 22.978,
+        "flicker_steady_levels": 0.683,
+        "largest_jump_levels": 39.52,
+        "range_p1_p99": [
+          23.9,
+          245.1
+        ],
+        "frames": 254,
+        "freezes": []
+      }
+    },
+    "room": {
+      "thermalview": {
+        "flicker_levels": 0.978,
+        "flicker_steady_levels": 0.978,
+        "largest_jump_levels": 2.16,
+        "range_p1_p99": [
+          24.6,
+          151.7
+        ]
+      },
+      "hti": {
+        "flicker_levels": 0.092,
+        "flicker_steady_levels": 0.092,
+        "largest_jump_levels": 0.28,
+        "range_p1_p99": [
+          98.8,
+          154.7
+        ],
+        "frames": 253,
+        "freezes": []
+      },
+      "xtherm": {
+        "flicker_levels": 0.222,
+        "flicker_steady_levels": 0.222,
+        "largest_jump_levels": 0.58,
+        "range_p1_p99": [
+          40.9,
+          152.3
+        ],
+        "frames": 248,
+        "freezes": []
+      },
+      "inficamplus": {
+        "flicker_levels": 0.631,
+        "flicker_steady_levels": 0.631,
+        "largest_jump_levels": 2.08,
+        "range_p1_p99": [
+          25.6,
+          244.8
+        ],
+        "frames": 252,
+        "freezes": []
+      }
+    }
+  }
+}
