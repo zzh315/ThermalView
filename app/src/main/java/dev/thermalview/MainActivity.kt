@@ -26,9 +26,14 @@ data class DebugOptions(
     val rangeSettleMs: Int = 500,           // wait between a range command and its 0x8000 (M2 settling test)
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
+    val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
-    fun stages(): String = "shutter=" + (if (shutterHold) "1" else "0") + ",badPixels=" + (if (badPixels) "1" else "0")
+    fun stages(): String = listOf(
+        "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
+    ).joinToString(",")
+
+    private fun bit(on: Boolean) = if (on) "1" else "0"
 }
 
 class MainActivity : ComponentActivity() {
@@ -43,6 +48,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         NativeBridge.init(storageDir(), BuildConfig.VERSION_NAME)
+        registerDriftMaps()
         camera = UsbCamera(
             context = this,
             onNeedCameraPermission = { cameraPermission.launch(Manifest.permission.CAMERA) },
@@ -96,7 +102,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * shutterHold, badPixels, drift (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -115,6 +121,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("rangeSettleMs")) o = o.copy(rangeSettleMs = extras.getInt("rangeSettleMs"))
         if (extras.containsKey("shutterHold")) o = o.copy(shutterHold = extras.getBoolean("shutterHold"))
         if (extras.containsKey("badPixels")) o = o.copy(badPixels = extras.getBoolean("badPixels"))
+        if (extras.containsKey("drift")) o = o.copy(drift = extras.getBoolean("drift"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -133,6 +140,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun storageDir() = (getExternalFilesDir(null) ?: filesDir).absolutePath
+
+    /** Stage 3: every bundled drift map (assets/drift_<serial>.f32, from native/core/data). */
+    private fun registerDriftMaps() {
+        val names = assets.list("")?.filter { it.startsWith("drift_") && it.endsWith(".f32") } ?: return
+        for (name in names) {
+            val serial = name.removePrefix("drift_").removeSuffix(".f32")
+            NativeBridge.registerDriftMap(serial, assets.open(name).use { it.readBytes() })
+        }
+    }
 
     companion object {
         private const val TAG = "ThermalView"

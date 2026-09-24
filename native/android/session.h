@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdio>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -64,6 +65,9 @@ class Session {
   std::string startDump(int frames);
   // Debug: pipeline stages as text (tv::parseStages); "" when accepted, else what's wrong.
   std::string setPipeline(const std::string& stages);
+  // Stage 3's drift maps, bundled with the app (native/core/data), by camera serial. Call before
+  // opening the camera or starting a replay.
+  void registerDriftMap(const std::string& serial, DriftMap map);
   std::string startReplay(const std::string& base);  // "" on success, else the reason
   void stopReplay();
   std::string sendShutter();  // debug / Recalibrate
@@ -136,6 +140,9 @@ class Session {
   std::string pendingStages_;  // guarded by optionsMutex_
   bool stagesPending_ = false;
   Pipeline pipeline_;          // processing thread
+  std::mutex driftMutex_;
+  std::map<std::string, DriftMap> driftMaps_;  // by serial, guarded by driftMutex_
+  DriftMap driftMapFor(const std::string& serial);
   bool pipelineFed_ = false;   // the last frame went through the pipeline
 
   // Start sequence and state (processing thread, except where atomic).

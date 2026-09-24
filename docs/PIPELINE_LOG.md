@@ -43,7 +43,13 @@ Drift alone (3a) gave 54.3 mK of fixed pattern and 21.5 / 28.2 mK of column/row 
 - Cooling (a negative dT), much colder ambients and the 6 % rate difference between sessions are untested. Refining the scale from each calibration's jump is the planned next step.
 - Rows keep ~2× the fresh level.
 
-**Verdict:** pending the owner.
+**Verdict:** approved by the owner (2026-09-25). Stages 3a and 3b are on by default.
+
+**Cost on the tablet:** processing p95 went 3.9 → 12.2 ms with 3b's first version (per-pixel neighbour loops and 448 medians a frame). Two rewrites brought it to 5.7 ms, with latency p95 8.2 ms:
+1. Sliding sums, row-major.
+2. Gated means instead of medians. The gate already bounds every sample, and the metrics are unchanged to within 0.1 mK.
+
+The map is bundled as an APK asset from `native/core/data`, and the overlay shows the drift being compensated.
 
 ## 2026-09-25 — Stage 2: software bad-pixel map (`27894b7+badPixels`)
 

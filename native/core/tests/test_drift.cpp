@@ -35,6 +35,7 @@ TEST_CASE("stage 3 removes a pattern that grew by rate x drift, and does nothing
   tv::PipelineOptions o;
   o.drift = true;
   o.driftScale = 1.0f;
+  o.destripe = false;  // this test is about 3a alone
   tv::Pipeline on(o);
   on.setDriftMap(map);
   std::vector<float> disp(tv::kImagePixels), sig(tv::kImagePixels);
@@ -42,7 +43,10 @@ TEST_CASE("stage 3 removes a pattern that grew by rate x drift, and does nothing
   CHECK(on.lastDriftC() == doctest::Approx(5.0));
   CHECK(sig[0] == doctest::Approx(5000.0f));
   CHECK(sig[1] == doctest::Approx(5000.0f));
-  tv::Pipeline off;  // stage 3 is off by default
+  tv::PipelineOptions none;
+  none.drift = false;
+  none.destripe = false;
+  tv::Pipeline off(none);
   off.setDriftMap(map);
   off.process(img.data(), disp.data(), sig.data(), {31.40, 26.00});
   CHECK(sig[1] == doctest::Approx(5010.0f));
@@ -52,6 +56,7 @@ TEST_CASE("stage 3b removes a column offset but only up to its clamp, and starts
   tv::PipelineOptions o;
   o.destripe = true;
   o.destripeClamp = 2.0f;
+  o.drift = false;
   tv::Pipeline p(o);
   std::vector<float> disp(tv::kImagePixels), sig(tv::kImagePixels);
   auto frame = [](uint32_t seed, float stripe) {
@@ -81,4 +86,18 @@ TEST_CASE("stage 3b removes a column offset but only up to its clamp, and starts
     p.process(img.data(), disp.data(), sig.data());
   }
   CHECK(columnMean(100) == doctest::Approx(2.0).epsilon(0.1));
+}
+
+TEST_CASE("stage 3b gives the same result whether or not the caller asks for the signal") {
+  tv::PipelineOptions o;
+  o.drift = false;
+  tv::Pipeline a(o), b(o);
+  std::vector<float> da(tv::kImagePixels), db(tv::kImagePixels), sig(tv::kImagePixels);
+  std::vector<uint16_t> img(tv::kImagePixels);
+  for (uint32_t k = 0; k < 30; ++k) {
+    for (size_t i = 0; i < img.size(); ++i) img[i] = uint16_t(5000 + (i * 2654435761u + k * 97u) % 7 + (i % 256 == 40 ? 2 : 0));
+    a.process(img.data(), da.data(), sig.data());
+    b.process(img.data(), db.data());  // the pipeline's own buffer holds the signal
+  }
+  CHECK(da == db);
 }

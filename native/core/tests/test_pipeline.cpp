@@ -20,6 +20,8 @@ tv::PipelineOptions allOff() {
   tv::PipelineOptions o;
   o.shutterHold = false;
   o.badPixels = false;
+  o.drift = false;
+  o.destripe = false;
   return o;
 }
 
@@ -72,6 +74,8 @@ TEST_CASE("the defaults are the approved stages") {
   const tv::PipelineOptions o;
   CHECK(o.shutterHold);
   CHECK(o.badPixels);
+  CHECK(o.drift);
+  CHECK(o.destripe);
 }
 
 TEST_CASE("stage 1 off: repeated frames pass straight through") {
@@ -116,12 +120,14 @@ TEST_CASE("stage settings as text") {
   tv::PipelineOptions o;
   CHECK(tv::parseStages("default", &o));
   CHECK(o.shutterHold);
-  CHECK(tv::parseStages("shutter=0,badPixels=0", &o));
+  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0", &o));
   CHECK_FALSE(o.shutterHold);
   CHECK(tv::describeStages(o) == "none");
   CHECK(tv::parseStages("shutter,shutterBlend=12", &o));
   CHECK(tv::describeStages(o) == "shutter(12)");
   CHECK(tv::parseStages("badPixels", &o));
   CHECK(tv::describeStages(o) == "shutter(12),badPixels");
+  CHECK(tv::parseStages("drift,destripe", &o));
+  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe");
   CHECK_FALSE(tv::parseStages("bogus", &o));
 }

@@ -61,7 +61,9 @@ Pipeline::Pipeline(const PipelineOptions& options)
     : options_(options),
       colOffset_(kFrameWidth),
       rowOffset_(kImageRows),
-      scratch_(kImagePixels),
+      colAcc_(kFrameWidth),
+      colCount_(kFrameWidth),
+      colSum_(kFrameWidth),
       work_(kImagePixels),
       previous_(kImagePixels),
       held_(kImagePixels),
@@ -84,48 +86,77 @@ void Pipeline::restartDestripe() {
 
 void Pipeline::destripe(float* sig) {
   const int w = kFrameWidth, h = kImageRows;
-  for (int y = 0; y < h; ++y)
-    for (int x = 0; x < w; ++x) sig[y * w + x] -= colOffset_[size_t(x)] + rowOffset_[size_t(y)];
+  for (int y = 0; y < h; ++y) {
+    float* row = sig + size_t(y) * w;
+    const float r = rowOffset_[size_t(y)];
+    for (int x = 0; x < w; ++x) row[x] -= colOffset_[size_t(x)] + r;
+  }
 
-  // Gated residuals against 8 neighbours along one axis; each column's (row's) median is its
-  // remaining offset. Returns false if too few pixels passed the gate.
+  // Each pixel's residual against its 8 nearest neighbours along one axis (fewer at the borders),
+  // kept only when it and the steps to its two neighbours stay under the gate: real edges drop
+  // out. Row-major passes with sliding sums, no per-pixel buffers.
   const float gate = options_.destripeGate;
-  auto median = [](float* v, int n) {
-    std::nth_element(v, v + n / 2, v + n);
-    return v[n / 2];
-  };
-  auto residual = [&](int x, int y, int dx, int dy, float* out) {
-    const float c = sig[y * w + x];
-    float sum = 0;
-    int n = 0;
-    for (int k = -4; k <= 4; ++k) {
-      const int xx = x + k * dx, yy = y + k * dy;
-      if (k == 0 || xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-      sum += sig[yy * w + xx];
-      ++n;
-    }
-    const float r = c - sum / float(n);
-    const int x0 = std::max(0, x - dx), y0 = std::max(0, y - dy);
-    const int x1 = std::min(w - 1, x + dx), y1 = std::min(h - 1, y + dy);
-    if (std::fabs(r) >= gate || std::fabs(c - sig[y0 * w + x0]) >= gate || std::fabs(c - sig[y1 * w + x1]) >= gate)
-      return false;
-    *out = r;
-    return true;
+  auto keep = [gate](float c, float r, float a, float b) {
+    return std::fabs(r) < gate && std::fabs(c - a) < gate && std::fabs(c - b) < gate;
   };
 
+  // Along rows (for column offsets): a 9-wide window sum slides across each row; each column
+  // accumulates the mean of its gated residuals (the gate bounds every sample, so a mean is as
+  // robust here as a median, at a fraction of the cost).
+  std::vector<float>& colAcc = colAcc_;      // per-column sum of kept residuals
+  std::vector<float>& colCount = colCount_;  // and how many were kept
+  std::fill(colAcc.begin(), colAcc.end(), 0.0f);
+  std::fill(colCount.begin(), colCount.end(), 0.0f);
+  for (int y = 0; y < h; ++y) {
+    const float* row = sig + size_t(y) * w;
+    float sum = 0;
+    int lo = 0, hi = -1;  // the window [lo, hi]
+    for (int x = 0; x < w; ++x) {
+      while (hi < std::min(w - 1, x + 4)) sum += row[++hi];
+      while (lo < x - 4) sum -= row[lo++];
+      const float c = row[x];
+      const float r = c - (sum - c) / float(hi - lo);
+      if (keep(c, r, row[std::max(0, x - 1)], row[std::min(w - 1, x + 1)])) {
+        colAcc[size_t(x)] += r;
+        colCount[size_t(x)] += 1.0f;
+      }
+    }
+  }
   const float tau = destripeFrames_ < 75 ? 1.0f : options_.destripeTauS;  // 25 fps
   const float gain = 1.0f / (25.0f * tau);
-  float* v = scratch_.data();
-  for (int x = 0; x < w; ++x) {
-    int n = 0;
-    for (int y = 0; y < h; ++y) n += residual(x, y, 1, 0, &v[n]);
-    if (n >= h / 2) colOffset_[size_t(x)] += gain * median(v, n);
-  }
+  for (int x = 0; x < w; ++x)
+    if (colCount[size_t(x)] >= float(h / 2)) colOffset_[size_t(x)] += gain * colAcc[size_t(x)] / colCount[size_t(x)];
+
+  // Along columns (for row offsets): running 9-tall column sums, updated a row at a time.
+  std::vector<float>& colSum = colSum_;
+  std::fill(colSum.begin(), colSum.end(), 0.0f);
+  int top = 0, bottom = -1;  // rows in colSum
   for (int y = 0; y < h; ++y) {
+    while (bottom < std::min(h - 1, y + 4)) {
+      const float* add = sig + size_t(++bottom) * w;
+      for (int x = 0; x < w; ++x) colSum[size_t(x)] += add[x];
+    }
+    while (top < y - 4) {
+      const float* sub = sig + size_t(top++) * w;
+      for (int x = 0; x < w; ++x) colSum[size_t(x)] -= sub[x];
+    }
+    const float* row = sig + size_t(y) * w;
+    const float* up = sig + size_t(std::max(0, y - 1)) * w;
+    const float* down = sig + size_t(std::min(h - 1, y + 1)) * w;
+    const float count = float(bottom - top);
+    float acc = 0;
     int n = 0;
-    for (int x = 0; x < w; ++x) n += residual(x, y, 0, 1, &v[n]);
-    if (n >= w / 2) rowOffset_[size_t(y)] += gain * median(v, n);
+    for (int x = 0; x < w; ++x) {
+      const float c = row[x];
+      const float r = c - (colSum[size_t(x)] - c) / count;
+      if (keep(c, r, up[x], down[x])) {
+        acc += r;
+        ++n;
+      }
+    }
+    if (n >= w / 2) rowOffset_[size_t(y)] += gain * acc / float(n);
   }
+
   // Zero mean (a global offset is tone mapping's business), then the clamp.
   auto finish = [this](std::vector<float>& o) {
     float mean = 0;

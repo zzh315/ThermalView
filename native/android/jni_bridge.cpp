@@ -60,6 +60,14 @@ JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_startDump(JNIEnv* en
   return toJava(env, session().startDump(frames));
 }
 
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_registerDriftMap(JNIEnv* env, jobject, jstring serial,
+                                                                          jbyteArray data) {
+  const jsize n = env->GetArrayLength(data);
+  jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+  session().registerDriftMap(toString(env, serial), tv::driftMapFromBytes(bytes, size_t(n)));
+  env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+}
+
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setPipeline(JNIEnv* env, jobject, jstring stages) {
   return toJava(env, session().setPipeline(toString(env, stages)));
 }

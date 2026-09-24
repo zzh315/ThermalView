@@ -28,18 +28,19 @@ struct PipelineOptions {
   // display, from their good neighbours, before anything else sees them.
   bool badPixels = true;
 
-  // Stage 3: subtract each pixel's drift since the last calibration (setDriftMap), scaled by the
-  // drift the frame's metadata reports. It runs first, like a calibration of our own.
-  bool drift = false;
+  // Stage 3 (approved 2026-09-25): subtract each pixel's drift since the last calibration
+  // (setDriftMap), scaled by the drift the frame's metadata reports. It runs first, like a
+  // calibration of our own.
+  bool drift = true;
   float driftScale = 0.9f;  // on the map's rates (M4: 0.86-0.91 fits flat_aged's per-pixel part)
   float driftC0 = 0.40f;    // FPA - shutter right after a calibration, °C
 
   // Stage 3b: a light tracker for the row and column offsets the drift map leaves. Per frame, each
   // pixel's residual against its 8 in-row (or in-column) neighbours counts only when it and the
-  // steps to its neighbours stay under the gate (real edges don't); per-column (per-row) medians are
-  // integrated with time constant destripeTauS (1 s for the first 3 s after a reset or calibration)
+  // steps to its neighbours stay under the gate (real edges don't); per-column (per-row) means of
+  // what's kept are integrated with time constant destripeTauS (1 s for the first 3 s after a reset or calibration)
   // and clamped to +-destripeClamp counts, so a faint real line loses at most that much.
-  bool destripe = false;
+  bool destripe = true;  // approved with stage 3a, 2026-09-25
   float destripeTauS = 4.0f;
   float destripeGate = 5.0f;   // counts
   float destripeClamp = 2.0f;  // counts
@@ -98,7 +99,7 @@ class Pipeline {
   DriftMap drift_;
   double lastDriftC_ = 0.0;
   std::vector<float> colOffset_, rowOffset_;  // stage 3b's corrections, counts
-  std::vector<float> scratch_;
+  std::vector<float> colAcc_, colCount_, colSum_;  // stage 3b's per-column scratch
   int destripeFrames_ = 0;                    // frames since stage 3b last started over
   void destripe(float* sig);
   void restartDestripe();

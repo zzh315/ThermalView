@@ -53,7 +53,7 @@ Block B, at `Q = P + amountPixels`, where `amountPixels = 256` for width 256 (it
 | Offset | Type | Field |
 |---|---|---|
 | +0 | u16 | cal_00 |
-| +1 | u16 | shutter temperature, kelvin × 10 — on our camera it changes only during a shutter cycle (M1) |
+| +1 | u16 | shutter temperature, kelvin × 10 — on our camera it changes only during a shutter cycle (M1), so between calibrations it holds the calibration's value: FPA − shutter − ~0.40 °C is the drift since the last calibration (M4, DEVICE.md "Drift between calibrations") |
 | +2 | u16 | core temperature, kelvin × 10 |
 | +3 | f32 (2 × u16) | cal_01 |
 | +5 | f32 | cal_02 |

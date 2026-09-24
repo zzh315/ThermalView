@@ -143,7 +143,8 @@ struct Session::Snapshot {
   uint16_t vertex = 0, clipRaw = 0, lockoutRaw = 0;
   bool rangeHigh = false, autoRange = false, highMathInfiCam = false;
   std::string pipeline;
-  bool pipelineFrozen = false, pipelineBlending = false;
+  bool pipelineFrozen = false, pipelineBlending = false, driftMap = false;
+  double driftC = 0;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
   uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
@@ -300,6 +301,7 @@ bool Session::startStreaming() {
   lastReadoutNs_ = 0;
   pipeline_.reset();
   pipeline_.setBadPixels(badPixelMapFor(serial_));
+  pipeline_.setDriftMap(driftMapFor(serial_));
   pipelineFed_ = false;
   range_ = TempRange::Normal;  // the start sequence always selects the normal range
   recoveryNucRequested_ = recoveryNucSent_ = false;
@@ -986,7 +988,7 @@ void Session::handleFrame(const RawFrame& frame) {
     }
 
     DisplayFrame& out = renderer_.frameSlot();
-    pipeline_.process(view.image(), out.intensity.data());
+    pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()});
     pipelineFed_ = true;
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
@@ -1027,6 +1029,8 @@ void Session::handleFrame(const RawFrame& frame) {
   s.rangeHigh = range_ == TempRange::High;
   s.autoRange = autoRange_;
   s.pipeline = describeStages(pipeline_.options());
+  s.driftC = pipeline_.lastDriftC();
+  s.driftMap = !pipeline_.driftMap().empty();
   s.pipelineFrozen = pipeline_.frozen();
   s.pipelineBlending = pipeline_.blending();
   s.highMathInfiCam = highMath_ == HighRangeMath::InfiCam;
@@ -1188,6 +1192,7 @@ std::string Session::startReplay(const std::string& base) {
   std::string error;
   if (!loadDump(base, &dump, &error)) return error;
   pipeline_.setBadPixels(badPixelMapFor(dump.serial));  // the dump's camera, not the connected one
+  pipeline_.setDriftMap(driftMapFor(dump.serial));
   replay_ = std::move(dump);
   replayName_ = base.substr(base.find_last_of('/') + 1);
   arrivals_.reset();
@@ -1281,6 +1286,22 @@ std::string Session::triggerLockout() {
 void Session::setOptions(const Options& options) {
   std::lock_guard lock(optionsMutex_);
   options_ = options;
+}
+
+void Session::registerDriftMap(const std::string& serial, DriftMap map) {
+  std::lock_guard lock(driftMutex_);
+  if (map.empty()) {
+    FLOG("drift map for %s: wrong size, ignored", serial.c_str());
+    return;
+  }
+  driftMaps_[serial] = std::move(map);
+  FLOG("drift map for %s registered", serial.c_str());
+}
+
+DriftMap Session::driftMapFor(const std::string& serial) {
+  std::lock_guard lock(driftMutex_);
+  const auto it = driftMaps_.find(serial);
+  return it == driftMaps_.end() ? DriftMap{} : it->second;
 }
 
 std::string Session::setPipeline(const std::string& stages) {
@@ -1383,8 +1404,9 @@ std::string Session::overlayText() {
   auto c = [](double v) { return std::isfinite(v) ? format("%.2f", v) : std::string("--"); };
   o += format("range: %s, auto %s, high-range math %s\n", s.rangeHigh ? "HIGH" : "normal",
               s.autoRange ? "on" : "off", s.highMathInfiCam ? "InfiCam" : "ht301");
-  o += format("pipeline: %s%s\n", s.pipeline.c_str(),
-              s.pipelineFrozen ? "  (holding)" : s.pipelineBlending ? "  (blending back)" : "");
+  o += format("pipeline: %s%s   drift since calibration %+.2f C%s\n", s.pipeline.c_str(),
+              s.pipelineFrozen ? "  (holding)" : s.pipelineBlending ? "  (blending back)" : "", s.driftC,
+              s.driftMap ? "" : " (no drift map for this camera)");
   o += format("temps (%s range, per-frame table, vertex raw %u): high %s @(%.0f,%.0f)  low %s @(%.0f,%.0f)  "
               "center %s   camera's own: max %s min %s center %s\n",
               s.rangeHigh ? "high" : "normal", s.vertex, t(s.raw.high).c_str(), s.raw.high.x, s.raw.high.y,

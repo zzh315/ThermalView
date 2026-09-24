@@ -200,6 +200,21 @@ From the benchmark dumps (`bench/<scene>/thermalview.raw`, 200 frames each, reco
 
 Commands: `tools/py/onboard_filter.py` (the correlations and step responses; `--static bench/room/thermalview.raw` for `room`), and `tools/py/bench.py` for the noise and stripe figures in mK (`bench/results/`).
 
+### Drift between calibrations (M4, 2026-09-25)
+
+Between shutter calibrations, every pixel's offset drifts at its own fixed rate as the focal plane warms. The camera doesn't correct this until its next calibration.
+
+| Fact | Value |
+|---|---|
+| The pattern repeats across sessions | Drift maps from two sessions correlate at +0.99. One is M1's warm-up on a wall (2026-09-24 15:25–15:43, one calibration, FPA 30.1 → 37.3 °C); the other is the desk series (2026-09-25 00:32–00:36, FPA 29.0 → 31.8 °C). Split into parts: columns +0.91, rows +0.97, per-pixel +0.97. Today's rate is ~6 % higher than M1's |
+| Linear in the drift | Per pixel, a straight line in the drift fits M1's 7 dumps with a spatial residual of 0.85 counts, ~2 % of a 43-count pattern. A quadratic lowers it to ~0.65 |
+| Size | 5.2 counts/°C std, per pixel between −18 and +17 counts/°C. At +6 min and ~5 °C of drift the fixed pattern is 9.4 counts (2.3 right after a calibration) |
+| The shutter temperature holds the calibration's value | Q+1 stays at its value from the last calibration (26.35 °C through all of `flat_aged` while the FPA rose to 31.8 °C). It updates during the next cycle (to 31.55 °C in `shutter`, at frame ~70 of the 30 repeats) |
+| So each frame carries its drift | FPA − shutter right after a calibration is +0.35 to +0.50 °C (`flat` 0.40, `room` 0.35, `shutter` 0.39, the power-up cycle 0.50). The drift since the last calibration is (FPA − shutter) − ~0.40 °C |
+| Two pixels drift far more than the rest | (2, 115) −17.6 and (3, 115) −8.7 counts/°C (stage 2's map) |
+
+Commands: `tools/py/drift_map.py` (the map and the cross-validation; M1's dumps are copied to `bench/drift/2026-09-24_pm`), `build/harness/harness temps DUMP` (per-frame FPA and shutter temperatures), and the linearity check in PIPELINE_LOG's stage 3 entry.
+
 ### Power-up calibration (M1, 2026-09-24)
 
 After power-up the camera calibrates itself on a fixed schedule, then stops. Times below are from power-up: the Type-C attach in logcat (`android.hardware.usb@1.2-service-qti: partner added`). The owner listened to one power-up with the start-up `0x8000` skipped and heard pairs of clicks at about 0, 6, 8, 15, 30 and 60 s. Each pair is a close and an open; within counting accuracy they match:
