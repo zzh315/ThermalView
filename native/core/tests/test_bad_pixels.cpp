@@ -27,9 +27,10 @@ TEST_CASE("stage 2 in the pipeline changes only the mapped pixels' display, and 
   std::vector<uint16_t> img(tv::kImagePixels);
   for (size_t i = 0; i < img.size(); ++i) img[i] = uint16_t(5000 + (i * 7) % 13);
   img[115 * tv::kFrameWidth + 2] = 4900;  // a cold dot that would stretch the whole image
-  tv::PipelineOptions o;
+  tv::PipelineOptions o, none;
   o.badPixels = true;
-  tv::Pipeline on(o), off;
+  none.badPixels = false;
+  tv::Pipeline on(o), off(none);
   on.setBadPixels(tv::badPixelMapFor("KA1213"));
   off.setBadPixels(tv::badPixelMapFor("KA1213"));
   std::vector<float> a(tv::kImagePixels), b(tv::kImagePixels), sig(tv::kImagePixels);

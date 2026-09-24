@@ -23,9 +23,9 @@ struct PipelineOptions {
   bool shutterHold = true;
   int shutterBlendFrames = 8;  // ~0.3 s at 25 fps
 
-  // Stage 2: replace the camera's known bad pixels (setBadPixels) for display, from their good
-  // neighbours, before anything else sees them.
-  bool badPixels = false;
+  // Stage 2 (approved 2026-09-25): replace the camera's known bad pixels (setBadPixels) for
+  // display, from their good neighbours, before anything else sees them.
+  bool badPixels = true;
 };
 
 // Stage settings as text, shared by the harness (--pipeline) and the app's debug options: a

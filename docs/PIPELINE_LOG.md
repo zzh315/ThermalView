@@ -34,7 +34,7 @@ Replacing them for display all the time costs nothing, because their neighbours 
 
 **Zoom:** `bench/results/27894b7+badPixels/flat_aged_zoom.png`.
 
-**Verdict:** pending the owner.
+**Verdict:** approved by the owner (2026-09-25). Stage 2 is on by default.
 
 ## 2026-09-25 — Stage 1: shutter-cycle hold and crossfade (`f3d169c+shutter`)
 

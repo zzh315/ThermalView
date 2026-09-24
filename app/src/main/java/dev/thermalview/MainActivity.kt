@@ -25,7 +25,7 @@ data class DebugOptions(
     val lockoutEnabled: Boolean = true,     // off only for tests with hot objects within the sensor's rating
     val rangeSettleMs: Int = 500,           // wait between a range command and its 0x8000 (M2 settling test)
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
-    val badPixels: Boolean = false,         // M4 stage 2: replace the camera's known bad pixels
+    val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = "shutter=" + (if (shutterHold) "1" else "0") + ",badPixels=" + (if (badPixels) "1" else "0")
