@@ -31,7 +31,12 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 - **Against the apps** (captures, `refs.json`): key detail Hti 2.60, Xtherm 3.49, InfiCamPlus 10.3. Screen-edge halo Hti 14.2%, Xtherm 1.37%, InfiCamPlus 2.17%. Our edge widths are at camera resolution, the apps' through their capture, so the two don't compare directly.
 - **Flicker** on `flat` and `room` rises by 0.04–0.07 levels. That comes from mapping the base instead of the signal (it's there at gain 1 with no unsharp), not from the enhancement. It stays at or below Xtherm's 0.21–0.22 and far below visible.
-- **Noise isn't boosted:** the gate keeps `flat` at 1.41 levels. A looser gate (1.5–3×) gave 7.83 key detail at 1.67 levels of noise.
+- **Noise isn't boosted in flat areas:** the gate keeps `flat` at 1.41 levels. A looser gate (1.5–3×) gave 7.83 key detail at 1.67 levels of noise.
+- **Temporal noise in textured areas does rise.** It's the noise riding on the texture, boosted with it. Per-pixel temporal std, frames 50–199, quadratic trend removed:
+  - `keyboard` keys: 0.84 → 1.26 levels (mid layer: 1.35);
+  - `room` (left part): 1.28 → 1.39 (1.46);
+  - `night` (the car): 2.34 → 2.66 (2.81).
+  After stage 4 that noise is slow (lag-1 ρ 0.95), so smoothing the boost over time wouldn't remove it. Judge it in the clips (`bench/out/clips/`, local, from `tools/py/bench.py --pipeline detail`).
 
 **Cost** (`harness perf` over adb, `keyboard`, a big core at 2.42 GHz): 1.76 → 4.64 ms a frame. On a little core (A55, 1.8 GHz) it's 9.5 → 29.9 ms, over the budget. So the app now pins its processing thread to the big cores, not yet verified in the app (commit `def22ad`).
 
