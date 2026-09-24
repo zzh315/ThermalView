@@ -7,8 +7,9 @@ Builds and runs `harness bench` (native/core's display path on every bench/<scen
   palettes/ or this file have uncommitted changes).
 - bench/results/<label>/<scene>.jpg: half-size contact sheets (committed).
 - bench/out/sheets/<scene>.png: full-size contact sheets; bench/out/clips/<scene>.mp4: side-by-side
-  clips (local). Each row puts ours, rendered at the size that reference app draws its image on the
-  tablet (nearest neighbour, like the M1 renderer), next to that app's screenshot or recording.
+  clips; bench/out/review.html shows both per scene (all local). Each row puts ours, rendered at
+  the size that reference app draws its image on the tablet (nearest neighbour, like the M1
+  renderer), next to that app's screenshot or recording.
 
 Metrics, all on the display path's output unless marked °C:
 - temporal_noise (flat): median per-pixel temporal std, after removing each pixel's quadratic trend
@@ -358,6 +359,24 @@ def draw_rois(scene, disp):
     im.save(OUT / "rois" / f"{scene}.png")
 
 
+def review_page(name, scenes, results):
+    """bench/out/review.html: per scene, the clip, then the full-size sheet (click to open it)."""
+    import html
+    parts = [f"<!doctype html><meta charset=utf-8><title>Bench {html.escape(name)}</title>",
+             "<style>body{background:#1e1e1e;color:#ddd;font:15px -apple-system,sans-serif;margin:16px}"
+             "video,img{width:100%;height:auto;display:block;margin:8px 0 24px}"
+             "code{color:#fc6}h2{margin-top:40px}</style>",
+             f"<h1>Benchmark {html.escape(name)}</h1><p>Each row: ThermalView at that app's on-screen size, then the app "
+             "(Hti Image, Xtherm, InfiCamPlus). The clips weren't recorded at the same moment as ours.</p>"]
+    for scene in scenes:
+        parts.append(f"<h2>{html.escape(scene)}</h2><p><code>{html.escape(json.dumps(results['scenes'].get(scene, {})))}</code></p>")
+        if (OUT / "clips" / f"{scene}.mp4").exists():
+            parts.append(f'<video src="clips/{scene}.mp4" controls loop muted playsinline></video>')
+        if (OUT / "sheets" / f"{scene}.png").exists():
+            parts.append(f'<a href="sheets/{scene}.png"><img src="sheets/{scene}.png" loading="lazy"></a>')
+    (OUT / "review.html").write_text("\n".join(parts) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("scenes", nargs="*")
@@ -387,7 +406,8 @@ def main():
         "scenes": dict(sorted(results["scenes"].items()))}
     results_file.parent.mkdir(parents=True, exist_ok=True)
     results_file.write_text(json.dumps(results, indent=2) + "\n")
-    print("wrote", results_file.relative_to(ROOT))
+    review_page(name, scenes, results)
+    print("wrote", results_file.relative_to(ROOT), "and", (OUT / "review.html").relative_to(ROOT))
 
 
 if __name__ == "__main__":
