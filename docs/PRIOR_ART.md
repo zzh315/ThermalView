@@ -65,8 +65,15 @@ Commits below are the ones checked on 2026-09-24.
 | Source | Take |
 |---|---|
 | FLIR Boson "Camera Adjustments" application note (102-2013-100-01) and Lepton software IDD (110-0144-04) | The closest model for box-driven AGC: only the ROI builds the histogram ("this does not mean the portion outside of the ROI is not displayed, just that the portion outside does not factor into the optimization"). "Max Gain" caps the mapping's slope (a minimum span); plateau value; tail rejection under 1 %; damping as an IIR on the transfer function. |
+| 1 Shutter: FLIR Lepton datasheet 500-0659-00-09 §3.2 and Software IDD 110-0144-04 §4.5.16; Boson FFC/NUC Control app note (2018); Adasky US20180352174A1 | The camera freezes video during flat-field correction; radiometry is invalid then; schedule it at known times. No published blend-back method was found. |
+| 2 Bad pixels: FLIR US12166959B2 (active); EMVA 1288 R4.0 §4.4/§8.8; Dudas et al., IEEE DFT 2006, doi:10.1109/dft.2006.48 (patent US8009209B2, expired); Tanbakuchi et al., SPIE 5017, 2003, doi:10.1117/12.499223; Knutsson & Westin, CVPR 1993, doi:10.1109/cvpr.1993.341081 | Flat-field temporal-statistics map; online evidence accumulation; edge-directed replacement; normalized convolution for clusters. |
+| 3 Destripe: FLIR US8780208B2 (active to 2029) and US9237284B2; Lepton IDD §4.7.23 (SCNR); Qian et al., Opt. Rev. 17(1), 2010, doi:10.1007/s10043-010-0005-8; Barral, IPOL preprint 436 (2022); Cao, Yang, Tisse, IEEE TCSVT 26(12), 2016, doi:10.1109/TCSVT.2015.2493443 | Gated recursive row/column offset estimation; the scene-based methods' limits on a fixed mount; a 1-D guided filter as an upgrade. |
+| 4 Temporal: McMann et al., SMPTE J. 87(3), 1978, doi:10.5594/j17406; Dubois & Sabri, IEEE Trans. Commun. 32(7), 1984, doi:10.1109/tcom.1984.1096143; Brailean et al., Proc. IEEE 83(9), 1995, doi:10.1109/5.406412; Hasinoff et al. (HDR+), ACM TOG 35(6), 2016, doi:10.1145/2980179.2980254 | Motion-adaptive recursive filtering; the Kalman-style gain; the tile-merge alternative. |
+| 5 Tone map: Vickers, Opt. Eng. 35(7), 1996, doi:10.1117/1.601006 (patent US5799106, expired); Boson "Camera Adjustments" and Lepton IDD (AGC); Ward Larson et al., IEEE TVCG 3(4), 1997, doi:10.1109/2945.646233; Eilertsen, Mantiuk, Unger, ACM TOG 34(6), 2015, doi:10.1145/2816795.2818092 | Plateau equalization with a max-gain cap, a linear share, damping and ROI statistics; a noise-aware curve as the challenger. |
+| 6 Detail: Liu & Zhao (GF&DDE), Infrared Phys. Technol. 67, 2014, doi:10.1016/j.infrared.2014.07.013; He, Sun, Tang (guided filter), TPAMI 35(6), 2013; Branchitta et al. (BF&DDE), Opt. Eng. 47(7), 2008; Paris et al. / Aubry et al. (local Laplacian), TOG 2011 / 2014; FLIR US9595087B2 (active to 2033: noise-weighted DDE) | Base/detail split with a noise-aware detail gain; the halo-free challenger. |
+| 7 Upscale (M5): Unser, IEEE SPM 16(6), 1999, doi:10.1109/79.799930; Thévenaz, Blu, Unser, IEEE TMI 19(7), 2000; AMD FSR 1.0 EASU (MIT) and Qualcomm SGSR (BSD-3-Clause) | A prefiltered cardinal cubic B-spline; edge-directed 2× for high zoom only. |
 
-Pass 2 adds the strongest papers and code per pipeline stage here.
+Rows 1–7 (one per pipeline stage) came from pass 2 (2026-09-25). Each source was opened, and papers' DOIs were checked against Crossref. The patents are fine for personal use (CLAUDE.md); revisit before ever publishing.
 
 ### UI references (box gestures)
 
@@ -298,6 +305,80 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
     - Never overshoot and snap back, because readouts must come from exactly what's drawn.
   - **Gestures:** one `awaitEachGesture` handler. A second finger at any time restores the box snapshot and becomes a pinch (p2pro-rs's model), and two fingers down to one keeps panning.
   - **Drawing:** dimming goes in the shader (50 % outside, mirrored in `native/core`). The outline and handles go in a Compose Canvas at fixed dp.
+
+**8. Algorithm survey.** Sources are in the catalog. Numbers come from simulations and from analyses of the bench dumps and M1's stats CSVs, not yet from our harness (rule 4 applies to each).
+- **Across stages:**
+  - **A shared global-offset tracker.** c_t accumulates the median of (x_t − x_{t−1}) over valid pixels. It freezes during shutter cycles and leaks slowly. It absorbs:
+    - the step at each NUC (−1 to −40 counts on M1's warm cycles);
+    - a post-NUC transient: the frame mean starts 5–8 counts low, overshoots by 5–6 counts at 2–6 s, and settles by ~10 s (M1 stats CSVs);
+    - the shared wander (DEVICE.md "Onboard filtering").
+
+    Stages 1, 4 and 5 use it.
+  - **Order:** 1 → 2 → 3 → 4 → 5/6 → 7.
+  - **Destripe before detail enhancement.** On `flat`, 1.09 of the 1.47-count single-frame detail floor is fixed pattern.
+- **Stage 1, adopt, refining PLAN:**
+  - **Detect** a freeze by an exact repeat of the image rows (noise makes an accidental repeat impossible). Lockout frames are fresh shutter images, not repeats, so they're flagged from app state.
+  - **Hold** the output and readouts, and freeze every adaptive state.
+  - **Resume:** sanity-check the first fresh frame. Put δ = median(fresh − held) into c_t, reset the destriper, and restart the denoiser (K = 1).
+  - **Blend back** per pixel over ~8 frames, gated by |held − live|/σ, so anything that moved snaps to live instead of showing twice.
+  - **Scheduling:** defer policy NUCs until there's been no touch or pan for ~2 s, capped at ~30 s (Boson's advice to recalibrate at known times).
+- **Stage 2, a diagnostic and guard:** no candidates on `flat`, `room` or `keyboard`, because the camera corrects its own defects.
+  - An offline map from a flat dump (flag any of these):
+    - offset > 6σ against the 5×5 ring median;
+    - std > 3× or < 0.2× the median, excluding clipped pixels (raw ≥ 13700);
+    - blinks > 8× the median jump.
+
+    Confirm the map on two dumps and keep it per serial.
+  - Online detection watches for blinkers only. On a fixed mount, a small hot part looks just like a stuck pixel.
+  - Replace isolated pixels edge-directed; use normalized convolution for clusters.
+- **Stage 3:**
+  - **Growth:** stripes grow ~0.8 counts/°C in columns and ~0.6 in rows between NUCs. Static scenes can't be separated from the pattern by motion.
+  - **Adopt a gated recursive row/column offset tracker:**
+    - residuals against the in-row neighbours, dropped at edges above ~4σ;
+    - per-column medians, integrated with τ ≈ 4 s;
+    - reset at each NUC and frozen during cycles;
+    - clamped to what the FPA drift since the NUC explains.
+  - **Edge test:** an injected faint line must keep ≥ 90 % of its amplitude after 60 s static.
+  - **Challenger:** a stripe profile scaled by FPA drift, learned from the jump at each NUC. Verify it first on M1's warm-up dumps.
+  - **Rejected:** MIRE (GPL, single-frame), per-pixel scene-based NUC (needs motion), deep destripers.
+- **Stage 4:**
+  - **Why it gains less:** our noise already arrives filtered in time (ρ 0.72), so a second recursive filter gains less. At β = 0.25 it gives ×0.69, against ×0.38 on white noise.
+  - **Adopt a per-pixel motion-adaptive recursive filter:**
+    - K = k_min + (1 − k_min)·m;
+    - m = smoothstep(2, 4, |box3×3(x − y)| / σ_D);
+    - K = 1 after a NUC.
+  - **On the bench dumps, with faint discs injected:**
+
+    | k_min | Noise | Hand steps | Faint-disc trails |
+    |---|---|---|---|
+    | 0.25 | ×0.68 | unchanged | 4–8 % |
+    | 0.10 | ×0.49 | unchanged | 6–16 % |
+
+  - **Rejected:** HDR+-style tile merges (costlier, with worse trails), CNN denoisers (no ML runtime), V-BM3D (research-only licence).
+- **Stage 5, adopt FLIR-style plateau-equalization AGC** on x − c_t:
+  - percentiles 0.3 / 99.9 %;
+  - a double plateau and a 20 % linear share;
+  - max gain ≈ 0.8 display level per count of residual noise (0.66 now, ~1.0–1.25 after stage 4);
+  - damping: expand in ~0.1 s, contract in ~1.3 s, with a deadband;
+  - statistics from the measurement region.
+
+  It reproduces Xtherm's gain cap on `flat`. A car covering 5 % of the view leaves the background ~81 % of the range, against 25 % with min/max. The challenger is Eilertsen et al.'s noise-aware curve. CLAHE is off by default (halos, seams).
+- **Stage 6, adopt a raw-domain self-guided-filter DDE:**
+  - r = 2, ε ≈ (6σ)²;
+  - a detail gain tapered by the local noise floor;
+  - a residual limiter;
+  - a camera-resolution unsharp pass clamped to the 3×3 min/max.
+
+  In synthetic tests the halo stays ≤ 0.8 % (an Hti-like gain gives 25 %), texture rises ×1.85, and edge FWHM goes 1.32 → 1.07 px. On the real `keyboard`, key detail is only 1.7× the noise floor, so stages 3–5 matter as much as the DDE gain. The challenger is the fast local Laplacian.
+- **Stage 7 (M5):**
+  - **Sharpening can't come from the upscaler.** Every linear kernel stays ≥ 1.71 px averaged back, against the apps' 1.26–1.30, so sharpness comes from stage 6.
+  - **Top pick:** a prefiltered cardinal cubic B-spline (a ~0.1 ms prefilter in `native/core`, 4 `textureGather`s in highp) with the 2×2 min/max clamp.
+  - **Alternatives:** A/B it against separable Lanczos-3/4 with anti-ringing. Use an edge-gated 2× pre-scaler (FSR EASU, MIT, or SGSR, BSD-3) only at high zoom.
+  - **No CNN in v1:** there's no ML runtime, and on the thermal SR benchmark (PBVS 2020 real data) learned SR scored about the same as bicubic.
+- **For the owner** (they change the plan):
+  - **Stage 6:** split base and detail in raw counts, before the tone curve. PLAN says after it, on the tone-mapped signal.
+  - **Stage 5:** build its histogram from stage 6's base.
+  - **M5:** add the prefiltered cardinal B-spline to the kernel list.
 
 ### Pass 1 (M0, 2026-09-24)
 
