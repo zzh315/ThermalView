@@ -147,6 +147,21 @@ Manual switches on the tablet with the stats CSV on (PROTOCOL.md "Ranges"):
 
 Commands: the debug range buttons / adb `--es range`, `--ei rangeSettleMs 60000`, the stats CSV, and `tools/harness temps --range high --math ht301|infi`.
 
+### Over-range lockout, end to end (M2, 2026-09-24 21:28)
+
+The owner held the soldering iron at 300 °C about 30 cm from the camera, with default settings (the lockout on).
+
+- **Lockout #1:**
+  - It triggered after 10 s of clipping: 943 pixels at raw ≥ 12645 (120 °C through the table at FPA ~37 °C), hottest raw 13923.
+  - It held for 43.6 s while the iron stayed in view: 5 s holds, then a re-check about every 6.2 s, each followed by "still too hot, holding again".
+  - It ended at the first re-check after the iron left.
+- **Lockout #2:** 474 pixels; it released 6.2 s later, at the first re-check.
+- **Found and fixed:**
+  - During #1 no banner showed: the lockout aborted a Ready capture, and the abort cleared the lockout's banner.
+  - The re-hold also retried inside the gate's 1.5 s quiet gap, logging refused commands.
+
+Commands: the field log and the lockout dump `dump_20260924_212923`.
+
 Long run: `tools/py/shutter_stats.py` on the run's CSV. Tablet temperatures, every minute: `dumpsys battery`, `dumpsys thermalservice`, and `/sys/class/thermal/thermal_zone*/{type,temp}` (quiet_therm, conn_therm, cpu-1-0-usr, gpuss-0-usr; readable without root).
 
 Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.

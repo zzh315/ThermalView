@@ -46,7 +46,7 @@ Work through the milestones in order. Each one ends with evidence shown to the o
 - Hot-object test, with the owner's temperature-controlled soldering station (TC22 with a C245 cartridge), after M1's lockout test:
   - Setpoints 150, 200 and 300 °C; no higher, to spare the tip (owner, 2026-09-24). The tip is shiny tinned metal with low emissivity, so it reads far below its setpoint; aim at the dull shaft just behind it, which reads truer.
   - Take a full-frame dump with the iron in view: is the normal range's clip (raw 14192, M1) one global level or per pixel? Clipped frames already pass the sanity checks (M1).
-  - Check the lockout, triggered by the clip held for 10 s. It must release within ~3 frames once the iron leaves the view.
+  - Check the lockout, triggered by the clip held for 10 s. It must release at its first re-check once the iron leaves the view. Done 2026-09-24 (DEVICE.md "Over-range lockout, end to end").
   - Record the results in DEVICE.md.
 - High range: **parked** (owner decision, 2026-09-24). See "Parked: high range" at the end.
 - Camera-hot banner: if the FPA temperature passes 55 °C, show "Camera is hot (xx °C): readings may drift; let it cool". At the M1 long run's ~11 °C self-heating, that means an ambient of about 44 °C, still inside the module's rated range (PROTOCOL.md "Heat, hot scenes and the sun").

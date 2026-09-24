@@ -101,6 +101,7 @@ class Session {
   void writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
                    uint32_t flags, bool frozen, int hotPixels, const Readouts* readouts);
   bool bannerIs(const std::string& text);
+  void captureSetBanner(const std::string& text);  // a banner the capture may clear again
   void openCsv();
   void closeCsv();
   void replayLoop();
@@ -152,6 +153,7 @@ class Session {
   std::atomic<bool> capturePairRequested_{false};
   bool capturePair_ = false;
   int captureGapMs_ = 60000;
+  std::string captureBanner_;  // the last banner the capture showed
   CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
   int64_t capturePhaseNs_ = 0;
   int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's

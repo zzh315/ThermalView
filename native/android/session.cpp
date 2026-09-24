@@ -506,7 +506,8 @@ void Session::tickCapture(int64_t now) {
   if (state != State::Running && state != State::ShutterHold && state != State::RangeSwitch) {
     FLOG("capture: aborted (%s)", stateName(state));
     capturePhase_ = CapturePhase::None;
-    setBanner("");
+    // Only clear our own banner: a lockout that aborts the capture has just set its own (M2).
+    if (bannerIs(captureBanner_)) setBanner("");
     return;
   }
   switch (capturePhase_) {
@@ -514,13 +515,13 @@ void Session::tickCapture(int64_t now) {
       if (state != State::Running) break;
       const int64_t gap = since(std::max(lastShutterNs_, lastFreezeEndNs_));
       if (gap < captureGapMs_) {
-        setBanner(format("%s: waiting %" PRId64 " s for the shutter to cool…", leg,
-                         (captureGapMs_ - gap) / 1000 + 1));
+        captureSetBanner(format("%s: waiting %" PRId64 " s for the shutter to cool…", leg,
+                                (captureGapMs_ - gap) / 1000 + 1));
         break;
       }
       if (command(kCmdShutter) != CommandResult::Sent) break;  // retried on the next tick
       FLOG("capture: recalibrating");
-      setBanner(format("%s: recalibrating…", leg));
+      captureSetBanner(format("%s: recalibrating…", leg));
       capturePhase_ = CapturePhase::Recalibrating;
       beginHold(now);
       break;
@@ -529,7 +530,7 @@ void Session::tickCapture(int64_t now) {
       if (state == State::Running) {
         capturePhase_ = CapturePhase::Settle;
         capturePhaseNs_ = now;
-        setBanner(format("%s: recording, keep still…", leg));
+        captureSetBanner(format("%s: recording, keep still…", leg));
       }
       break;
     case CapturePhase::Settle:
@@ -542,18 +543,18 @@ void Session::tickCapture(int64_t now) {
       if (dumpWanted_.load() != 0) break;
       if (capturePair_ && range_ == TempRange::Normal) {
         FLOG("capture: normal leg done, switching to the high range");
-        setBanner("Range test: switching to the high range…");
+        captureSetBanner("Range test: switching to the high range…");
         capturePhase_ = CapturePhase::SwitchHigh;
         break;
       }
       if (capturePair_) {
         FLOG("capture: high leg done, switching back");
-        setBanner("Range test: switching back…");
+        captureSetBanner("Range test: switching back…");
         capturePhase_ = CapturePhase::SwitchBack;
         break;
       }
       FLOG("capture: done");
-      setBanner("Capture done: measure again now");
+      captureSetBanner("Capture done: measure again now");
       capturePhase_ = CapturePhase::Done;
       capturePhaseNs_ = now;
       break;
@@ -566,7 +567,7 @@ void Session::tickCapture(int64_t now) {
       if (state != State::Running) break;  // still switching (the switch recalibrates)
       capturePhase_ = CapturePhase::Settle;
       capturePhaseNs_ = now;
-      setBanner(format("%s: recording, keep still…", leg));
+      captureSetBanner(format("%s: recording, keep still…", leg));
       break;
     case CapturePhase::SwitchBack:
       if (range_ != TempRange::Normal) {
@@ -575,13 +576,13 @@ void Session::tickCapture(int64_t now) {
       }
       if (state != State::Running) break;
       FLOG("capture: range test done");
-      setBanner("Range test done");
+      captureSetBanner("Range test done");
       capturePhase_ = CapturePhase::Done;
       capturePhaseNs_ = now;
       break;
     case CapturePhase::Done:
       if (since(capturePhaseNs_) >= 5000) {
-        setBanner("");
+        if (bannerIs(captureBanner_)) setBanner("");
         capturePhase_ = CapturePhase::None;
       }
       break;
@@ -730,6 +731,7 @@ void Session::tick(int64_t now) {
         }
       } else if (lockoutPeekHot_) {
         // Still too hot after the shutter reopened: hold again once the gate's quiet gap is over.
+        if ((nowNs() - lockoutLastCmdNs_) / kMs < 1510) break;
         if (command(kCmdShutter, CommandPurpose::Lockout) == CommandResult::Sent) {
           lockoutHoldStartNs_ = now;
           lockoutLastCmdNs_ = nowNs();
@@ -1244,6 +1246,11 @@ std::string Session::triggerLockout() {
 void Session::setOptions(const Options& options) {
   std::lock_guard lock(optionsMutex_);
   options_ = options;
+}
+
+void Session::captureSetBanner(const std::string& text) {
+  captureBanner_ = text;
+  setBanner(text);
 }
 
 bool Session::bannerIs(const std::string& text) {
