@@ -152,6 +152,12 @@ private fun DebugPanel(
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
                     Toggle("Stage 6: detail + sharpening", options.detail) { onOptions(options.copy(detail = it)) }
                     Toggle("Processing on big cores", options.bigCores) { onOptions(options.copy(bigCores = it)) }
+                    Toggle("Upscaler: B-spline (off: nearest)", options.upscaler == 1) {
+                        onOptions(options.copy(upscaler = if (it) 1 else 0))
+                    }
+                    Button(onClick = { onOptions(options.copy(palette = (options.palette + 1) % 3)) }) {
+                        Text("Palette: " + listOf("gray", "white_hot", "rainbow_hc")[options.palette.coerceIn(0, 2)])
+                    }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }

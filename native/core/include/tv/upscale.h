@@ -30,6 +30,10 @@ struct ViewRect {
 // prefiltered coefficients (a recursive filter along rows and columns, mirror boundaries).
 std::vector<float> kernelInput(const float* image, Kernel kernel);
 
+// The cardinal B-spline's coefficients of a kFrameWidth x kImageRows image, into coeffs (same
+// size; may not alias image): what the GPU's B-spline samples.
+void bsplineCoefficients(const float* image, float* coeffs);
+
 // Renders input (kernelInput of a kFrameWidth x kImageRows image) at dstW x dstH output pixels
 // covering rect. Output pixel (i, j) samples camera coordinate rect.x + (i + 0.5) * rect.w / dstW
 // - 0.5 (pixel centers at integers), borders clamped. With clamp, each output is limited to the

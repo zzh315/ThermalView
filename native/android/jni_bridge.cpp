@@ -72,6 +72,11 @@ JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setPipeline(JNIEnv* 
   return toJava(env, session().setPipeline(toString(env, stages)));
 }
 
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setDisplay(JNIEnv* env, jobject, jint upscaler,
+                                                                       jstring paletteJson) {
+  return toJava(env, session().setDisplay(int(upscaler), toString(env, paletteJson)));
+}
+
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_startReplay(JNIEnv* env, jobject, jstring base) {
   return toJava(env, session().startReplay(toString(env, base)));
 }

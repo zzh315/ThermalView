@@ -31,6 +31,8 @@ data class DebugOptions(
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val detail: Boolean = false,            // M4 stage 6 (awaiting the owner's verdict): detail + sharpening
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
+    val upscaler: Int = 1,                  // M5 preview: 0 nearest (M1), 1 cardinal B-spline + 2x2 clamp
+    val palette: Int = 0,                   // M5 preview: 0 gray (as before), 1 white_hot, 2 rainbow_hc
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -101,13 +103,17 @@ class MainActivity : ComponentActivity() {
             value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs, value.bigCores,
         )
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
+        val palette = PALETTES.getOrNull(value.palette - 1)?.let { name ->
+            runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
+        } ?: ""
+        NativeBridge.setDisplay(value.upscaler, palette).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
     }
 
     /**
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans), upscaler, palette (ints; applied first); reconnect, shutter, lockout, stopReplay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -131,6 +137,8 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("tone")) o = o.copy(tone = extras.getBoolean("tone"))
         if (extras.containsKey("detail")) o = o.copy(detail = extras.getBoolean("detail"))
         if (extras.containsKey("bigCores")) o = o.copy(bigCores = extras.getBoolean("bigCores"))
+        if (extras.containsKey("upscaler")) o = o.copy(upscaler = extras.getInt("upscaler"))
+        if (extras.containsKey("palette")) o = o.copy(palette = extras.getInt("palette"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -161,5 +169,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "ThermalView"
+        val PALETTES = listOf("white_hot", "rainbow_hc")  // assets from palettes/, DebugOptions.palette 1 and 2
     }
 }

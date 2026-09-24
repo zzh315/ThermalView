@@ -24,6 +24,7 @@ object NativeBridge {
 
     /** Debug: pipeline stages as text, e.g. "shutter=0" (native/core parseStages). "" or the error. */
     external fun setPipeline(stages: String): String
+    external fun setDisplay(upscaler: Int, paletteJson: String): String  // "" or an error
 
     /** Stage 3's drift map for a camera serial: the bundled native/core/data/drift_<serial>.f32. */
     external fun registerDriftMap(serial: String, data: ByteArray)

@@ -32,7 +32,7 @@ android {
     // Stage 3's drift maps ship from native/core/data, the copy the harness uses too.
     sourceSets {
         getByName("main") {
-            assets.srcDirs("src/main/assets", "../native/core/data")
+            assets.srcDirs("src/main/assets", "../native/core/data", "../palettes")
         }
     }
 

@@ -15,6 +15,7 @@
 #include "libusb.h"
 #include "libuvc/libuvc.h"
 #include "log.h"
+#include "tv/palette.h"
 
 namespace tv {
 namespace {
@@ -1342,6 +1343,18 @@ std::string Session::triggerLockout() {
 void Session::setOptions(const Options& options) {
   std::lock_guard lock(optionsMutex_);
   options_ = options;
+}
+
+std::string Session::setDisplay(int upscaler, const std::string& paletteJson) {
+  std::vector<std::array<uint8_t, 3>> lut;
+  if (!paletteJson.empty()) {
+    PaletteSpec spec;
+    std::string error;
+    if (!parsePalette(paletteJson, &spec, &error)) return "palette: " + error;
+    lut = buildPaletteLut(spec);
+  }
+  renderer_.setDisplay(upscaler, std::move(lut));
+  return "";
 }
 
 void Session::registerDriftMap(const std::string& serial, DriftMap map) {

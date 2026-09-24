@@ -1,5 +1,6 @@
 // GLES render thread: draws the pipeline's display intensity (native/core Pipeline, docs/PLAN.md M4)
-// as grayscale, nearest-neighbor for now (M5 brings the upscalers), letterboxed to 4:3.
+// letterboxed to 4:3, upscaled nearest-neighbor or with the cardinal B-spline (M5's pick so far; the
+// owner reviews it), gray or through a palette.
 #pragma once
 
 #include <EGL/egl.h>
@@ -9,8 +10,10 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "tv/frame.h"
 #include "tv/stats.h"
@@ -44,6 +47,10 @@ class Renderer {
   // Mirror the image horizontally/vertically (the M1 orientation check decides).
   void setMirror(bool x, bool y);
 
+  // Any thread: the upscaler (0 nearest, 1 cardinal B-spline with the 2x2 clamp) and the palette's
+  // 1024-entry table (anything else: gray), from the next frame drawn.
+  void setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut);
+
   double latencyP50Ms() const;
   double latencyP95Ms() const;
   uint64_t framesDrawn() const { return drawn_.load(); }
@@ -73,8 +80,13 @@ class Renderer {
   EGLContext context_ = EGL_NO_CONTEXT;
   EGLSurface surface_ = EGL_NO_SURFACE;
   ANativeWindow* window_ = nullptr;
-  GLuint program_ = 0, texture_ = 0, vao_ = 0;
-  GLint uMirror_ = -1;
+  GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, vao_ = 0;
+  GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1;
+  std::vector<float> coeffs_;  // the B-spline's coefficients of the frame being drawn
+  std::mutex displayMutex_;
+  int upscaler_ = 1;
+  std::vector<std::array<uint8_t, 3>> pendingLut_;
+  bool lutPending_ = false, havePalette_ = false;
   std::atomic<float> mirrorX_{1.0f}, mirrorY_{1.0f};
 
   RollingWindow latencyMs_{250};

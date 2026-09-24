@@ -120,12 +120,15 @@ const char* kernelName(Kernel kernel) {
   return "?";
 }
 
+void bsplineCoefficients(const float* image, float* coeffs) {
+  std::copy(image, image + kImagePixels, coeffs);
+  for (int y = 0; y < H; ++y) prefilterLine(coeffs + size_t(y) * W, W, 1);
+  for (int x = 0; x < W; ++x) prefilterLine(coeffs + x, H, W);
+}
+
 std::vector<float> kernelInput(const float* image, Kernel kernel) {
   std::vector<float> c(image, image + kImagePixels);
-  if (kernel == Kernel::CardinalBSpline) {
-    for (int y = 0; y < H; ++y) prefilterLine(c.data() + size_t(y) * W, W, 1);
-    for (int x = 0; x < W; ++x) prefilterLine(c.data() + x, H, W);
-  }
+  if (kernel == Kernel::CardinalBSpline) bsplineCoefficients(image, c.data());
   return c;
 }
 

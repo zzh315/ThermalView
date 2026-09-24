@@ -3,6 +3,7 @@
 #include <ctime>
 
 #include "log.h"
+#include "tv/upscale.h"
 
 namespace tv {
 namespace {
@@ -23,9 +24,63 @@ void main() {
 }
 )";
 
-// Nearest-neighbor fetch of the pipeline's intensity (R32F: GLES can't filter it, texelFetch doesn't
-// need to), drawn as gray.
+// The pipeline's intensity (R32F: GLES can't filter it, so every tap is a texelFetch), upscaled
+// either nearest-neighbor or with the cardinal cubic B-spline (native/core upscale.h: 4x4 taps on
+// its prefiltered coefficients, mirror borders, then clamped to the 2x2 image pixels around, so it
+// never rings past its neighbors), then gray or through the palette's 1024-entry table.
 constexpr const char* kFragmentShader = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+uniform sampler2D uImage;
+uniform sampler2D uCoeffs;
+uniform sampler2D uLut;
+uniform int uMode;     // 0 nearest, 1 cardinal B-spline
+uniform int uPalette;  // 0 gray, 1 uLut
+in vec2 vUV;
+out vec4 outColor;
+int mirror(int k, int n) {  // whole-sample symmetric; one reflection covers the taps' reach
+  k = k < 0 ? -k : k;
+  return k >= n ? 2 * (n - 1) - k : k;
+}
+void main() {
+  ivec2 size = textureSize(uImage, 0);
+  float g;
+  if (uMode == 0) {
+    g = texelFetch(uImage, clamp(ivec2(vUV * vec2(size)), ivec2(0), size - 1), 0).r;
+  } else {
+    vec2 u = vUV * vec2(size) - 0.5;  // camera coordinates, pixel centers at integers
+    vec2 fl = floor(u);
+    vec2 f = u - fl;
+    ivec2 i0 = ivec2(fl);
+    vec2 r = 1.0 - f;
+    vec4 wx = vec4(r.x * r.x * r.x, ((3.0 * f.x - 6.0) * f.x * f.x + 4.0),
+                   (((-3.0 * f.x + 3.0) * f.x + 3.0) * f.x + 1.0), f.x * f.x * f.x) / 6.0;
+    vec4 wy = vec4(r.y * r.y * r.y, ((3.0 * f.y - 6.0) * f.y * f.y + 4.0),
+                   (((-3.0 * f.y + 3.0) * f.y + 3.0) * f.y + 1.0), f.y * f.y * f.y) / 6.0;
+    int x0 = mirror(i0.x - 1, size.x), x1 = mirror(i0.x, size.x), x2 = mirror(i0.x + 1, size.x),
+        x3 = mirror(i0.x + 2, size.x);
+    float sum = 0.0;
+    for (int j = 0; j < 4; ++j) {
+      int y = mirror(i0.y - 1 + j, size.y);
+      vec4 c = vec4(texelFetch(uCoeffs, ivec2(x0, y), 0).r, texelFetch(uCoeffs, ivec2(x1, y), 0).r,
+                    texelFetch(uCoeffs, ivec2(x2, y), 0).r, texelFetch(uCoeffs, ivec2(x3, y), 0).r);
+      sum += wy[j] * dot(wx, c);
+    }
+    ivec2 a = clamp(i0, ivec2(0), size - 1), b = clamp(i0 + 1, ivec2(0), size - 1);
+    float p00 = texelFetch(uImage, a, 0).r, p10 = texelFetch(uImage, ivec2(b.x, a.y), 0).r;
+    float p01 = texelFetch(uImage, ivec2(a.x, b.y), 0).r, p11 = texelFetch(uImage, b, 0).r;
+    g = clamp(sum, min(min(p00, p10), min(p01, p11)), max(max(p00, p10), max(p01, p11)));
+  }
+  g = clamp(g, 0.0, 1.0);
+  outColor = uPalette == 1 ? vec4(texture(uLut, vec2((g * 1023.0 + 0.5) / 1024.0, 0.5)).rgb, 1.0)
+                           : vec4(vec3(g), 1.0);
+}
+)";
+
+// If the upscaling shader fails to build on some driver: M1's nearest-neighbor gray, so the image
+// still shows.
+constexpr const char* kFallbackFragmentShader = R"(#version 300 es
 precision highp float;
 precision highp sampler2D;
 uniform sampler2D uImage;
@@ -33,8 +88,7 @@ in vec2 vUV;
 out vec4 outColor;
 void main() {
   ivec2 size = textureSize(uImage, 0);
-  ivec2 p = clamp(ivec2(vUV * vec2(size)), ivec2(0), size - 1);
-  float g = clamp(texelFetch(uImage, p, 0).r, 0.0, 1.0);
+  float g = clamp(texelFetch(uImage, clamp(ivec2(vUV * vec2(size)), ivec2(0), size - 1), 0).r, 0.0, 1.0);
   outColor = vec4(vec3(g), 1.0);
 }
 )";
@@ -101,6 +155,13 @@ void Renderer::clear() {
     clearPending_ = true;
   }
   wake_.notify_one();
+}
+
+void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut) {
+  std::lock_guard lock(displayMutex_);
+  upscaler_ = upscaler;
+  pendingLut_ = std::move(lut);
+  lutPending_ = true;
 }
 
 void Renderer::setMirror(bool x, bool y) {
@@ -210,33 +271,64 @@ void Renderer::switchSurface(ANativeWindow* window) {
 }
 
 bool Renderer::initGl() {
-  const GLuint vs = compile(GL_VERTEX_SHADER, kVertexShader);
-  const GLuint fs = compile(GL_FRAGMENT_SHADER, kFragmentShader);
-  if (!vs || !fs) return false;
-  program_ = glCreateProgram();
-  glAttachShader(program_, vs);
-  glAttachShader(program_, fs);
-  glLinkProgram(program_);
-  glDeleteShader(vs);
-  glDeleteShader(fs);
-  GLint ok = 0;
-  glGetProgramiv(program_, GL_LINK_STATUS, &ok);
-  if (!ok) {
+  auto build = [](const char* fragment) -> GLuint {
+    const GLuint vs = compile(GL_VERTEX_SHADER, kVertexShader);
+    const GLuint fs = compile(GL_FRAGMENT_SHADER, fragment);
+    if (!vs || !fs) {
+      if (vs) glDeleteShader(vs);
+      if (fs) glDeleteShader(fs);
+      return 0;
+    }
+    const GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    GLint ok = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (!ok) {
+      glDeleteProgram(program);
+      return 0;
+    }
+    return program;
+  };
+  program_ = build(kFragmentShader);
+  if (!program_) {
+    LOGE("renderer: the upscaling shader failed; falling back to nearest-neighbor gray");
+    program_ = build(kFallbackFragmentShader);
+  }
+  if (!program_) {
     LOGE("renderer: program link failed");
     return false;
   }
   uMirror_ = glGetUniformLocation(program_, "uMirror");
+  uMode_ = glGetUniformLocation(program_, "uMode");
+  uPalette_ = glGetUniformLocation(program_, "uPalette");
   glUseProgram(program_);
   glUniform1i(glGetUniformLocation(program_, "uImage"), 0);
+  glUniform1i(glGetUniformLocation(program_, "uCoeffs"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uLut"), 2);
 
-  glGenTextures(1, &texture_);
-  glBindTexture(GL_TEXTURE_2D, texture_);
-  glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, kFrameWidth, kImageRows);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // R32F isn't filterable in GLES
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  for (GLuint* t : {&texture_, &coeffTexture_}) {
+    glGenTextures(1, t);
+    glBindTexture(GL_TEXTURE_2D, *t);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, kFrameWidth, kImageRows);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // R32F isn't filterable in GLES
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  }
+  // The palette: 1024 x 1 RGBA8 (GLES has no 1D textures), linear between entries.
+  glGenTextures(1, &lutTexture_);
+  glBindTexture(GL_TEXTURE_2D, lutTexture_);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1024, 1);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glGenVertexArrays(1, &vao_);
+  coeffs_.resize(kImagePixels);
   return true;
 }
 
@@ -254,12 +346,43 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   if (int64_t(w) * 3 > int64_t(h) * 4) vw = h * 4 / 3; else vh = w * 3 / 4;
   glViewport((w - vw) / 2, (h - vh) / 2, vw, vh);
 
+  int upscaler;
+  bool palette;
+  {
+    std::lock_guard lock(displayMutex_);
+    upscaler = upscaler_;
+    if (lutPending_) {
+      havePalette_ = pendingLut_.size() == 1024;
+      if (havePalette_) {
+        std::vector<uint8_t> rgba(1024 * 4, 255);
+        for (size_t i = 0; i < 1024; ++i)
+          for (size_t k = 0; k < 3; ++k) rgba[4 * i + k] = pendingLut_[i][k];
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, lutTexture_);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1024, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+      }
+      lutPending_ = false;
+    }
+    palette = havePalette_;
+  }
+
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture_);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_FLOAT, frame.intensity.data());
+  if (upscaler == 1) {
+    bsplineCoefficients(frame.intensity.data(), coeffs_.data());
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, coeffTexture_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_FLOAT, coeffs_.data());
+  }
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, lutTexture_);
   glUseProgram(program_);
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
+  glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
+  glUniform1i(uPalette_, palette ? 1 : 0);
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }

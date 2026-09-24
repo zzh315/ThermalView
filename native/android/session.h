@@ -69,6 +69,10 @@ class Session {
   std::string startDump(int frames);
   // Debug: pipeline stages as text (tv::parseStages); "" when accepted, else what's wrong.
   std::string setPipeline(const std::string& stages);
+
+  // The display's upscaler (0 nearest, 1 cardinal B-spline) and palette (a palettes/*.json file's
+  // text; empty: gray). Returns an error, or "".
+  std::string setDisplay(int upscaler, const std::string& paletteJson);
   // Stage 3's drift maps, bundled with the app (native/core/data), by camera serial. Call before
   // opening the camera or starting a replay.
   void registerDriftMap(const std::string& serial, DriftMap map);
