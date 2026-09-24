@@ -16,6 +16,8 @@ enum class Kernel {
   CatmullRom,       // Keys cubic, a = -0.5 (4x4 taps)
   Lanczos3,         // windowed sinc (6x6 taps), weights normalized
   CardinalBSpline,  // cubic B-spline on prefiltered coefficients (Unser 1999): interpolating, C2
+  Easu,             // experimental: AMD FSR 1's edge-adaptive upsampling (MIT), a 12-tap Lanczos-2-like
+                    // kernel stretched along the local edge, clamped to the 4 nearest pixels
 };
 
 bool parseKernel(const std::string& name, Kernel* kernel);  // "nearest", "bilinear", "catmullrom", ...

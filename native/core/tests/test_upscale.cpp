@@ -20,7 +20,7 @@ std::vector<float> randomImage(uint32_t s) {
 TEST_CASE("every kernel reproduces the frame at 1:1") {
   const auto img = randomImage(7);
   for (tv::Kernel k : {tv::Kernel::Nearest, tv::Kernel::Bilinear, tv::Kernel::CatmullRom, tv::Kernel::Lanczos3,
-                       tv::Kernel::CardinalBSpline}) {
+                       tv::Kernel::CardinalBSpline}) {  // (EASU resamples: it needn't pass through the pixels)
     CAPTURE(tv::kernelName(k));
     std::vector<float> out(tv::kImagePixels);
     tv::upscale(tv::kernelInput(img.data(), k), img.data(), k, false, {}, W, H, out.data());
@@ -32,7 +32,7 @@ TEST_CASE("every kernel reproduces the frame at 1:1") {
 
 TEST_CASE("kernel names round-trip") {
   for (tv::Kernel k : {tv::Kernel::Nearest, tv::Kernel::Bilinear, tv::Kernel::CatmullRom, tv::Kernel::Lanczos3,
-                       tv::Kernel::CardinalBSpline}) {
+                       tv::Kernel::CardinalBSpline, tv::Kernel::Easu}) {
     tv::Kernel parsed = tv::Kernel::Nearest;
     CHECK(tv::parseKernel(tv::kernelName(k), &parsed));
     CHECK(parsed == k);
@@ -72,4 +72,27 @@ TEST_CASE("a zoomed view samples the rectangle it names") {
     CHECK(out[0] == doctest::Approx(100.0f + 50000.0f).epsilon(1e-5));
     CHECK(out[size_t(47) * 64 + 63] == doctest::Approx(163.0f + 97000.0f).epsilon(1e-5));
   }
+}
+
+TEST_CASE("EASU stays within each sample's 4 nearest pixels and keeps a flat field flat") {
+  const auto img = randomImage(21);
+  const int dw = 3 * W, dh = 3 * H;
+  std::vector<float> out(size_t(dw) * dh);
+  tv::upscale(tv::kernelInput(img.data(), tv::Kernel::Easu), img.data(), tv::Kernel::Easu, false, {}, dw, dh, out.data());
+  int outside = 0;
+  for (int y = 0; y < dh; ++y)
+    for (int x = 0; x < dw; ++x) {
+      const float u = (float(x) + 0.5f) / 3.0f - 0.5f, v = (float(y) + 0.5f) / 3.0f - 0.5f;
+      const int x0 = std::clamp(int(std::floor(u)), 0, W - 1), x1 = std::clamp(int(std::floor(u)) + 1, 0, W - 1);
+      const int y0 = std::clamp(int(std::floor(v)), 0, H - 1), y1 = std::clamp(int(std::floor(v)) + 1, 0, H - 1);
+      const float a = img[size_t(y0) * W + x0], b = img[size_t(y0) * W + x1], c = img[size_t(y1) * W + x0],
+                  d = img[size_t(y1) * W + x1];
+      const float o = out[size_t(y) * dw + x];
+      outside += o < std::min({a, b, c, d}) - 1e-6f || o > std::max({a, b, c, d}) + 1e-6f;
+    }
+  CHECK(outside == 0);
+  std::vector<float> flat(tv::kImagePixels, 0.4f);
+  tv::upscale(tv::kernelInput(flat.data(), tv::Kernel::Easu), flat.data(), tv::Kernel::Easu, false, {}, dw, dh, out.data());
+  CHECK(*std::max_element(out.begin(), out.end()) == doctest::Approx(0.4f));
+  CHECK(*std::min_element(out.begin(), out.end()) == doctest::Approx(0.4f));
 }

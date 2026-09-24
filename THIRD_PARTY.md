@@ -35,3 +35,15 @@ Everything here is used for personal use only. Revisit these licenses before eve
 | He, Sun and Tang, "Guided Image Filtering" (ECCV 2010 / TPAMI 2013) | paper | Stage 6's self-guided base/detail split (`native/core/src/filters.cpp`), written from the paper's box-filter formulation |
 | Björn Ottosson, "A perceptual color space for image processing" (2020, bottosson.github.io) | published formulas (public domain) | OKLab and OKLCh conversions in `native/core/src/palette.cpp`: the paper's matrices, our code |
 | Unser, IEEE Signal Processing Magazine 16(6), 1999; Thévenaz, Blu and Unser, IEEE TMI 19(7), 2000 | papers | The cardinal cubic B-spline's recursive prefilter (pole √3 − 2, mirror boundaries) in `native/core/src/upscale.cpp`, written from the papers' algorithm |
+
+## Adapted code
+
+| Source | License | Where | What |
+|---|---|---|---|
+| AMD FidelityFX Super Resolution 1.0, `ffx_fsr1.h` (EASU), Copyright (c) 2021 Advanced Micro Devices, Inc. | MIT (notice below) | `native/core/src/upscale.cpp`, `easuSample` | EASU's edge-adaptive 12-tap filter, adapted to one scalar channel with exact arithmetic. Experimental: in the harness only, for M5/M6's high-zoom comparison |
+
+AMD's notice for the adapted EASU code:
+
+> Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
