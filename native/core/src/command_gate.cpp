@@ -41,6 +41,13 @@ CommandResult CameraCommands::send(uint16_t value, CommandPurpose purpose) {
     // Count the attempt even if the transfer fails: the camera may still have acted on it.
     shutterSent_ = true;
     lastShutter_ = now;
+  } else if (value == kCmdRangeHigh) {
+    if (rangeHighSent_ && now - lastRangeHigh_ < kRangeHighMinInterval) {
+      record(value, CommandResult::RefusedRateLimited, now);
+      return CommandResult::RefusedRateLimited;
+    }
+    rangeHighSent_ = true;
+    lastRangeHigh_ = now;
   }
   const bool ok = sender_ && sender_(value);
   const auto result = ok ? CommandResult::Sent : CommandResult::SendFailed;

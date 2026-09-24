@@ -60,8 +60,45 @@ From ThermalView's debug overlay and field log (`adb logcat -s 'ThermalView:*'`)
 | Reconnect and replug | Clean teardown and reopen. 178–180 fds (always one USB fd) and 33–34 threads before and after, so nothing leaks |
 | Background and foreground | Home, then back after 35 s and after 69 s. The camera stays warm: no power-up series. Our start-up `0x8000` gave one cycle each time (the owner heard one pair of clicks), and Running began 0.36 s after the freeze. Afterwards 178 fds (one USB) and 34 threads |
 | Long run (2026-09-24, room ~21.5 °C, camera on the tablet) | 37 min from plug-in. FPA 28.0 → 32.3 °C and core 26.6 → 30.9 °C, then steady within ±0.1 °C for the last 15 min: the camera settles ~11 °C above the room. The 26-minute logged stretch had 39,212 frames at 25.15 fps: no drops, no gaps, no self-cycles. Tablet: battery 21.3 → 21.7 °C, big CPU cores ~25 °C, GPU ~22 °C, thermal status 0 (no throttling) throughout. Battery 89 → 87 % over 27 min with the screen on. Specs for comparison: operating ambient −15 to +60 °C for the Xmodule S0 (reseller copy of the datasheet), −10 to +50 °C for the T2L (PROTOCOL.md "Heat, hot scenes and the sun") |
-| Normal-range ceiling | Raw 16383 (the 14-bit maximum) maps to 144.2–144.3 °C at FPA 31–32 °C; nothing hotter can be measured in this range. 140 °C ↔ raw 15835, 120 °C ↔ 13447, 100 °C ↔ 11301. From the oracle's LUT on our frames, so M2 re-derives these with our own LUT. What saturated pixels actually read is still unverified: the hot-object test is next |
+| Normal-range ceiling | The output clips at raw **14192**, about 120–123 °C depending on the FPA (123.2 °C at FPA 28.7 °C). Seen with the soldering iron at 300 °C in view for 21 s (6 frames at exactly 14192, none higher) and in the power-up frames of two sessions. The LUT continues to raw 16383 (137–144 °C), but the camera never outputs above 14192. Frames with clipped pixels pass all the sanity checks. Whether the clip is one global level or varies per pixel needs a full-frame dump with a hot object in view (M2) |
 | Performance (optimized native code) | Latency p50 3.2 / p95 4.3 ms (callback to buffer swap); processing p95 ~1 ms; no drops, overruns or rejects over 8700+ frames |
+
+### Recalibration, lockout and hot objects (M1, 2026-09-24 afternoon)
+
+Camera cold (unplugged for hours), room ~25 °C, aimed at a plain wall 50 cm away; stats CSV and dumps throughout. Wall temperatures come from the oracle's LUT on each frame's own metadata.
+
+**Warm-up with no recalibration** after the camera's own power-up series (last cycle at 65 s):
+
+| Minutes after plug-in | FPA °C | Wall reads °C | Pattern growth vs +2 min (raw counts; columns / rows) |
+|---|---|---|---|
+| 2.1 | 30.03 | 24.57 | 0 |
+| 4.1 | 31.76 | 22.67 | 3.5 (1.4 / 1.1) |
+| 6.0 | 33.08 | 21.15 | 6.1 (2.2 / 1.8) |
+| 9.0 | 34.62 | 19.31 | 9.1 (3.5 / 2.7) |
+| 12.1 | 35.74 | 17.93 | 11.5 (4.3 / 3.3) |
+| 16.0 | 36.69 | 16.69 | 13.5 (5.2 / 3.9) |
+| 20.0 | 37.25 | 16.01 | 14.8 (5.9 / 4.2) |
+
+- The shutter temperature in the frame (Q+1) stays at its value from the last cycle (28.55 °C) while the camera warms. The reading drifts about −1.2 °C per °C of FPA rise.
+- At 27 minutes a recalibration moved the wall from 15.09 to 23.91 °C.
+- The residual pattern reached ~0.3 °C, more than ten times the temporal noise.
+- Recalibrating only after power-up is therefore not enough during warm-up (PLAN M4). In this run the camera settled at FPA ~38.5 °C, about 13 °C above the room.
+
+**Lockout.** Manual trigger, 18 commands about 280 ms apart:
+- The shutter stayed closed for the whole 5 s. Every frame during the hold showed the shutter (~6020–6075 raw, rising); each command let through one or two fresh shutter frames ~80 ms later.
+- The owner heard two single clicks, one closing and one opening, not pairs. So the repeats don't re-drive the shutter.
+- The lockout ended 6.2 s after it began.
+
+**Side effects of shutter use:**
+- **Holding the shutter warms it.** Its image rose ~50 counts, unevenly, over the 5 s. After release the wall read 0.5 °C low (last night's run: ~1 °C).
+- **Back-to-back recalibrations each read lower.** Yesterday, warm and steady: −0.20 then −0.32 °C at 14.5 s spacing. Today, while still warming: −0.8, −0.5 and then +0.1 °C at ~11 s spacing.
+- So a quick recalibration after a lockout doesn't restore accuracy; the shutter needs time to cool (duration not measured yet).
+
+**Soldering iron.** TC22 with a C245 cartridge at 300 °C, 30 cm away, in view for 21 s:
+- The hottest pixels reached the clip (raw 14192) and no higher; the tip is shiny.
+- The lockout didn't fire: its trigger was then 140 °C (raw 15835), which the camera can never output. It has since moved to the clip (CLAUDE.md rule 1).
+
+Commands: stats CSV pulled with `adb pull`, dumps through `tools/py/flat_noise.py`, and the oracle (`CameraEmulator`) with each frame's FPA, shutter and core fields.
 
 Long run: `tools/py/shutter_stats.py` on the run's CSV. Tablet temperatures, every minute: `dumpsys battery`, `dumpsys thermalservice`, and `/sys/class/thermal/thermal_zone*/{type,temp}` (quiet_therm, conn_therm, cpu-1-0-usr, gpuss-0-usr; readable without root).
 

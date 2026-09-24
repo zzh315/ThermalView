@@ -31,10 +31,10 @@ struct FakeClock {
 
 }  // namespace
 
-TEST_CASE("the allowlist is exactly {0x8000, 0x8004, 0x8020}") {
+TEST_CASE("the allowlist is exactly {0x8000, 0x8004, 0x8020, 0x8021}") {
   std::vector<uint16_t> allowed(tv::kAllowedCommands.begin(), tv::kAllowedCommands.end());
   std::sort(allowed.begin(), allowed.end());
-  CHECK(allowed == std::vector<uint16_t>{0x8000, 0x8004, 0x8020});
+  CHECK(allowed == std::vector<uint16_t>{0x8000, 0x8004, 0x8020, 0x8021});
 }
 
 TEST_CASE("every other 16-bit value is refused and never reaches the camera") {
@@ -46,14 +46,14 @@ TEST_CASE("every other 16-bit value is refused and never reaches the camera") {
     if (tv::isAllowedCommand(uint16_t(v))) continue;
     refused += gate.send(uint16_t(v)) == CommandResult::RefusedNotAllowed;
   }
-  CHECK(refused == 0x10000 - 3);
+  CHECK(refused == 0x10000 - 4);
   CHECK(camera.received.empty());
 }
 
 TEST_CASE("forbidden values named in CLAUDE.md are refused") {
   FakeCamera camera;
   CameraCommands gate(camera.sender());
-  for (uint16_t v : {0x80FF, 0xEC00, 0xEE12, 0x8001, 0x8002, 0x8003, 0x8005, 0x8021, 0x8081,
+  for (uint16_t v : {0x80FF, 0xEC00, 0xEE12, 0x8001, 0x8002, 0x8003, 0x8005, 0x8081,
                      0x7FFF, 0x0000, 0x1400, 0xF000, 0xFB00}) {
     CHECK(gate.send(v) == CommandResult::RefusedNotAllowed);
   }
@@ -66,10 +66,24 @@ TEST_CASE("allowed values reach the camera") {
   CHECK(gate.send(0x8004) == CommandResult::Sent);
   CHECK(gate.send(0x8020) == CommandResult::Sent);
   CHECK(gate.send(0x8000) == CommandResult::Sent);
-  CHECK(camera.received == std::vector<uint16_t>{0x8004, 0x8020, 0x8000});
+  CHECK(gate.send(0x8021) == CommandResult::Sent);
+  CHECK(camera.received == std::vector<uint16_t>{0x8004, 0x8020, 0x8000, 0x8021});
 }
 
-TEST_CASE("0x8000 is limited to once per 10 s; the others are not rate-limited") {
+TEST_CASE("0x8021 is limited to once per 10 s; 0x8020 never is") {
+  FakeCamera camera;
+  FakeClock clock;
+  CameraCommands gate(camera.sender(), clock.clock());
+  CHECK(gate.send(0x8021) == CommandResult::Sent);
+  CHECK(gate.send(0x8020) == CommandResult::Sent);
+  clock.now += 9999ms;
+  CHECK(gate.send(0x8021) == CommandResult::RefusedRateLimited);
+  CHECK(gate.send(0x8020) == CommandResult::Sent);
+  clock.now += 1ms;
+  CHECK(gate.send(0x8021) == CommandResult::Sent);
+}
+
+TEST_CASE("0x8000 is limited to once per 10 s; 0x8004 and 0x8020 are not rate-limited") {
   FakeCamera camera;
   FakeClock clock;
   CameraCommands gate(camera.sender(), clock.clock());

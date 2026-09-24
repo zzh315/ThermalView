@@ -141,7 +141,7 @@ Our sequence (owner decision, 2026-09-24; CLAUDE.md rule 1): stream → `0x8004`
 | 0x8002 | Raw output without dark-frame compensation | Forbidden |
 | 0x8003 | Unknown mode | Forbidden |
 | 0x8005 | YUV output | Forbidden |
-| 0x8021 | High temperature range (120 to 400 °C) | Forbidden |
+| 0x8021 | High temperature range: "120 to 400C range (followed by shutter)" per InfiCam's notes; "-20°C to 450°C" per ht301_hacklib | **Allowed** — automatic range switching (owner decision, 2026-09-24); max once per 10 s |
 | 0x8081 | Asks a raw-sensor camera to send its per-pixel calibration data (InfiCamPlus `CMD_DOWNLOAD_CAL`) | Forbidden |
 | 0x80FF | Saves the user area to non-volatile storage | **Forbidden — persistent write** |
 | 0xEC.. / 0xEE.. | Appear to mark dead pixels in the camera's own dead-pixel table ("用户盲元表", per InfiCam's reading of the original SDK) | **Forbidden — treat as persistent write** |
@@ -186,7 +186,27 @@ Researched 2026-09-24. Quotes are from the manufacturers' own documents unless m
 
   These are blackbody figures; shiny metal gives off much less.
 - **Pixel speed and shutter wear.** InfiRay's 12 µm Tiny1-C quotes a thermal time constant "＜10ms", and FLIR's cores are 8–12 ms. So pixels settle to what they see within a frame, and pulsing the shutter cuts exposure time, not the peak. No shutter lifetime (rated actuations) was found for any of these modules.
-- **Measurement ranges of related products:** T2L −20 to 120 °C; T2S+ −20 to 120 °C and 120 to 450 °C; P2 Pro up to 550 °C; the S0 sheet says "-20℃~+120℃（可扩展至600℃）" (extendable to 600 °C). The extended ranges need `0x8021`, which rule 1 forbids.
+- **Measurement ranges of related products:** T2L −20 to 120 °C; T2S+ −20 to 120 °C and 120 to 450 °C; P2 Pro up to 550 °C; the S0 sheet says "-20℃~+120℃（可扩展至600℃）" (extendable to 600 °C). The extended ranges use `0x8021` (see "Ranges").
+- **Our normal range clips at raw 14192, about 120–123 °C** depending on the FPA temperature (DEVICE.md). That is the rated top, not the 137–144 °C that the LUT's raw 16383 maps to. Anything hotter reads the same.
+
+## Ranges
+
+The normal range (`0x8020`) clips at ~120–123 °C, so the app switches to the high range (`0x8021`) when pixels clip, and back again (owner decision, 2026-09-24; CLAUDE.md rule 1).
+
+What the sources say:
+
+- **InfiCam** (`InfiCam::set_range`) sends `0x8021` for "400".
+  - Its math (`InfiFrame::update`) differs between ranges in one place only: the `cal_00` correction `round(390 − Tfpa × 7.05)` is applied in the 120 range alone.
+  - Its note: "Decompiled libthermometry.so … handles 400C range for 640px wide cameras differently, having different offsets for calibration values in that mode. I couldn't wrap my head around how that worked so it's not implemented here."
+- **ht301_hacklib** (`temperature_range_high`) sends `0x8021` and scales its whole temperature table: `1.17 × T − 40.9` (normal range: `1 × T + 0`). It describes the high range as "-20°C to 450°C".
+
+The two disagree, so M2 settles the high range's math by measurement. **VERIFY (M2):**
+
+- whether the camera runs a shutter cycle by itself after `0x8021` (and after `0x8020` when leaving the high range);
+- the frame's calibration constants in the high range (do they change?);
+- the high range's clip level and its low end;
+- which math matches known hot references;
+- noise at ordinary temperatures, compared with the normal range.
 
 ## Android USB notes
 

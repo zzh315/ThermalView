@@ -133,11 +133,21 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
   - Its notes list "user setting for protection max temp" as a to-do.
 - **The P2 Pro and HIKMICRO** close the shutter in firmware (PROTOCOL.md "Heat, hot scenes and the sun"). This module has no known hold command.
 - **Verdict: adopt InfiCam's approach, adapted.**
-  - Trigger at ≥ 140 °C on ≥ 4 pixels for 2 frames, so a single bad pixel can't hold it closed.
+  - Trigger on ≥ 4 pixels, so a single bad pixel can't hold it closed.
   - Repeat `0x8000` every 260 ms for 5 s, then peek: fresh frames only, at least 1.5 s after the last command.
   - Hold again if the view is still hot; resume after 3 clear frames.
   - The limits live in the command gate, not only in the app logic.
   - Owner decision; CLAUDE.md rule 1.
+- **M1 findings.**
+  - The hold works: the shutter stays shut, with one click each way.
+  - The first trigger (140 °C) could never fire, because the normal range clips at ~120–123 °C.
+  - A trigger at that clip would also freeze the view on harmless hot parts: the camera can't tell 130 °C from 1000 °C there.
+  - Hence the owner's choice: automatic switching to the high range, with the lockout only at the high range's ceiling. Until M2, an interim trigger applies: the clip held for 10 s.
+- **High-range maths.** The sources disagree:
+  - ht301_hacklib scales the table by `1.17 × T − 40.9`.
+  - InfiCam drops the `cal_00` correction and notes the vendor library does something else it didn't decode.
+
+  M2 decides by measurement (PROTOCOL.md "Ranges").
 
 ### Pass 1 (M0, 2026-09-24)
 

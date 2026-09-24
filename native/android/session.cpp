@@ -30,11 +30,12 @@ constexpr int kValidStreak = 3;        // consecutive valid frames before 0x8020
 constexpr int kStallMs = 500;          // watchdog (docs/PLAN.md M1, tunable)
 constexpr int kFailStreak = 50;        // 2 s of failing frames after start-up -> stop
 
-// Over-range lockout (owner decision, 2026-09-24; CLAUDE.md rule 1). The normal range can't measure
-// above ~144 °C (raw 16383), so the trigger sits just below that.
-constexpr uint16_t kLockoutRaw = 15835;  // ~140 °C at FPA ~32 °C (oracle); M2 derives it from our LUT
+// Over-range lockout (owner decision, 2026-09-24; CLAUDE.md rule 1). Interim form until the high
+// range lands (M2): the normal range clips at raw 14192 (~120-123 °C, docs/DEVICE.md), so clipped
+// pixels held for 10 s trigger it; brief looks at a hot part or the iron never freeze the view.
+constexpr uint16_t kLockoutRaw = 14000;  // just under the clip; saturated pixels read at most 14192
 constexpr int kLockoutPixels = 4;        // pixels at or above it, in...
-constexpr int kLockoutFrames = 2;        // ...this many consecutive frames, trigger a lockout
+constexpr int kLockoutFrames = 250;      // ...this many consecutive frames (10 s), trigger a lockout
 constexpr int kLockoutRepeatMs = 260;    // 0x8000 spacing that keeps the shutter closed (gate: >= 250)
 constexpr int kLockoutHoldMs = 5000;     // hold, then let the shutter reopen and look again
 constexpr int kLockoutClearFrames = 3;   // fresh frames with no hot pixels end the lockout
@@ -374,7 +375,7 @@ void Session::beginLockout(int64_t now, int hotPixels, uint16_t maxRaw, bool man
   if (dump && !manual) startDump(kLockoutDumpFrames);  // before leaving Running
   enter(State::Lockout, now);
   if (command(kCmdShutter, CommandPurpose::Lockout) == CommandResult::Sent) lockoutLastCmdNs_ = nowNs();
-  setBanner("Too hot to measure (above ~140 °C): shutter closed to protect the sensor");
+  setBanner("Too hot to measure (above ~120 °C) for 10 s: shutter closed to protect the sensor");
   if (manual)
     FLOG("lockout #%" PRIu64 " (manual)", lockouts_);
   else

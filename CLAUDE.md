@@ -12,7 +12,7 @@ Known facts (docs/DEVICE.md holds the verified record once M0 creates it):
 
 - **Camera:** InfiRay Xmodule S0H, variant 212-40. USB product "S0H-40", manufacturer "Infiray", VID:PID `0x1514:0x0001`, USB 2.0 High Speed, requests 500 mA.
 - **This unit:** bought second-hand on Xianyu, built into a 3D-printed housing with a focus ring. The seller's listing calls it an InfiRay S0 with "the same core as the T2L/T2S". It claims 256×192 at 25 Hz, −20 to 120 °C ("about 200 °C in practice"), and a replaceable 4 mm lens (M17×0.75 thread, same as T2/T3 lenses), for use with Xtherm. The seller notes cosmetic scratches on the lens.
-- **Module spec:** 256×192, 12 µm VOx, 4.0 mm lens, FOV 42.0°×32.1°, 25/15 Hz (this unit offers 25 fps only — docs/DEVICE.md), NETD ≤ 60 mK, mechanical shutter, -20 to 120 °C. This is InfiRay's sheet for the Xmodule **S0** (212-40), and it matches the seller's claims. But the USB product string says S0H, and the only S0H listing found (a bbs.16rd.com reseller page) differs: NETD ≤ 50 mK, measurement range 30–45 °C at ±0.5–0.8 °C, operating ambient 10–40 °C. That reads like a body-temperature variant. Treat accuracy outside 30–45 °C, and use below 10 °C ambient, as unverified until M2's absolute check.
+- **Module spec:** 256×192, 12 µm VOx, 4.0 mm lens, FOV 42.0°×32.1°, 25/15 Hz (this unit offers 25 fps only — docs/DEVICE.md), NETD ≤ 60 mK, mechanical shutter, -20 to 120 °C (in the normal range this unit clips at ~120–123 °C; a high range reaches further — docs/DEVICE.md). This is InfiRay's sheet for the Xmodule **S0** (212-40), and it matches the seller's claims. But the USB product string says S0H, and the only S0H listing found (a bbs.16rd.com reseller page) differs: NETD ≤ 50 mK, measurement range 30–45 °C at ±0.5–0.8 °C, operating ambient 10–40 °C. That reads like a body-temperature variant. Treat accuracy outside 30–45 °C, and use below 10 °C ambient, as unverified until M2's absolute check.
 - It shares VID:PID with the HTI HT-301 (a 384×288 camera) because both speak InfiRay's "Xtherm" UVC protocol. That's why the Xtherm app calls it a "T3" device. Nothing 384×288-specific applies here.
 - **Focus:** manual focus ring on the housing; the seller says it focuses near and far. Software can't control it; don't try.
 - **Host:** Xiaomi Pad 5 Pro 12.4 (codename `dagu`): Snapdragon 870, Adreno 650 (GLES 3.2), 12.4" 2560×1600 IPS LCD at 244 ppi, 60/120 Hz, one USB-C port (USB 3.2 Gen 1). Launched on Android 12 (MIUI 13); it now runs HyperOS OS2.0.10.0.ULZCNXM (China ROM) on Android 14, API 34, its last update (verified in M0 — docs/DEVICE.md).
@@ -27,22 +27,26 @@ Vendor commands are 16-bit values written with UVC SET_CUR to the Camera Termina
 | Value | Effect | When |
 | --- | --- | --- |
 | `0x8004` | Select raw 16-bit output | Once per stream start, after streaming begins |
-| `0x8020` | Select normal range (-20 to 120 °C) | Once, after `0x8004` has taken effect |
+| `0x8020` | Select normal range (-20 to 120 °C) | Once, after `0x8004` has taken effect; and to switch back from the high range |
+| `0x8021` | Select high range (~120 to 400+ °C; figures and maths to verify in M2) | Automatic range switching (docs/PLAN.md M2 and M6): up when pixels clip in the normal range, back down when nothing is near the top of the normal range for a while. Max once per 10 s |
 | `0x8000` | Shutter close + dark-frame (NUC) refresh — the runtime calibration Xtherm and InfiRay's demo trigger on connect and every 380 s, and the camera runs by itself for ~65 s after power-up; it does not touch factory calibration | Once ~0.5 s after `0x8020`, unless the camera is still calibrating after power-up; the Recalibrate button; a periodic policy once the owner approves its numbers (docs/PLAN.md M4); the over-range lockout (below). Max once per 10 s, except in a lockout |
 
 Start sequence: stream → `0x8004` → drop frames until they pass the sanity checks (docs/PROTOCOL.md) → `0x8020` → `0x8000` about 0.5 s later → drop frames through the shutter cycle. If the stream began with repeated frames, the camera is calibrating after power-up: skip that `0x8000` and just wait the calibration out (owner decision, 2026-09-24; docs/DEVICE.md). If M1 shows trouble with streaming first, the owner-approved fallback is InfiCam's order: `0x8004` and `0x8020` before streaming starts, the rest unchanged.
 
+Ranges (owner decision, 2026-09-24): the normal range clips at ~120–123 °C (raw 14192), so the app also uses the high range. The start sequence always selects the normal range, and the app switches automatically.
+
 Over-range lockout (owner decision, 2026-09-24): protects the sensor from very hot scenes and the sun.
-- **Trigger:** at least 4 pixels at or above 140 °C, in 2 consecutive frames. 140 °C sits just under the normal range's ~144 °C ceiling, the most this range can measure.
-- **Hold:** `0x8000` repeated at least 250 ms apart for at most 5 s. Repeating it before each cycle ends is meant to keep the shutter closed; that's verified or not in the M1 lockout test (docs/DEVICE.md).
+- **Trigger:** at least 4 pixels at the high range's ceiling, in 2 consecutive frames. There, a hot part or the iron can be measured, so only extreme sources (glowing charcoal, fire, the sun) trigger it.
+  - Until the high range lands (M2), an interim trigger applies: at least 4 pixels at the normal range's clip (raw ≥ 14000) continuously for 10 s, so brief looks at a hot part or the iron don't freeze the view.
+- **Hold:** `0x8000` repeated at least 250 ms apart for at most 5 s. Verified in M1: the shutter stays closed through the whole hold, with one click to close and one to open (docs/DEVICE.md).
 - **Peek:** at least 1.5 s with no command, so the shutter reopens and the view is checked again.
 - **Enforcement:** the gate enforces all of these limits (`CommandPurpose::Lockout`), not just the app's logic.
 
-Everything else is forbidden, including: `0x80FF` (writes the user area to non-volatile memory), `0xEC..`/`0xEE..` (write the camera's dead-pixel table), `0x8081` (asks raw-sensor cameras for per-pixel calibration data), `0x8001`, `0x8002`, `0x8003`, `0x8005`, `0x8021`, any value below `0x8000` (user-area byte writes), and `0xF0..`–`0xFB..` (measurement points).
+Everything else is forbidden, including: `0x80FF` (writes the user area to non-volatile memory), `0xEC..`/`0xEE..` (write the camera's dead-pixel table), `0x8081` (asks raw-sensor cameras for per-pixel calibration data), `0x8001`, `0x8002`, `0x8003`, `0x8005`, any value below `0x8000` (user-area byte writes), and `0xF0..`–`0xFB..` (measurement points).
 
 Enforcement:
 
-- One function owns this channel: `CameraCommands::send(uint16_t)`. It checks a compile-time allowlist, refuses and logs anything else, and rate-limits `0x8000`. Its logic lives in `native/core`, so its unit tests run on the Mac: one asserts the allowlist is exactly `{0x8000, 0x8004, 0x8020}`, others check the rate limit and the lockout limits. `native/android` supplies the single sender that calls `uvc_set_zoom_abs`.
+- One function owns this channel: `CameraCommands::send(uint16_t)`. It checks a compile-time allowlist, refuses and logs anything else, and rate-limits `0x8000` and `0x8021`. Its logic lives in `native/core`, so its unit tests run on the Mac: one asserts the allowlist is exactly `{0x8000, 0x8004, 0x8020, 0x8021}`, others check the rate limits and the lockout limits. `native/android` supplies the single sender that calls `uvc_set_zoom_abs`.
 - A test fails the build if our code (anything outside `native/third_party`) calls a `uvc_set_*` function or `libusb_control_transfer` anywhere but that sender.
 - The only other SET_CUR requests allowed are libuvc's standard stream negotiation (VideoStreaming probe/commit). No SET_CUR on any other control.
 - Never extend the allowlist or send a command "to see what happens". If a problem seems to need one, stop and ask the owner.
@@ -70,9 +74,9 @@ Enforcement:
 
 ## Scope
 
-- **v1:** live view; palettes `white_hot` and `rainbow_hc`; auto range and manual (locked, adjustable) range; low, high and center-crosshair temperature readouts; palette scale bar with °C endpoints; a Recalibrate button; view-size presets (the image always stays 4:3); pinch zoom; a measurement box. docs/PLAN.md M6 specifies the UI.
+- **v1:** live view; palettes `white_hot` and `rainbow_hc`; auto range and manual (locked, adjustable) range; low, high and center-crosshair temperature readouts; palette scale bar with °C endpoints; a Recalibrate button; view-size presets (the image always stays 4:3); pinch zoom; a measurement box; normal and high temperature ranges with automatic switching, and the over-range lockout. docs/PLAN.md M6 specifies the UI.
 - **Debug builds only:** raw frame dumper, dump replay, debug overlay, pipeline stage toggles and tuning sliders.
-- **Out of scope — don't build:** photo capture, video recording, tablet-camera overlay, other cameras, other palettes, iOS, emissivity UI, high-temperature range, cropped or stretched aspect ratios.
+- **Out of scope — don't build:** photo capture, video recording, tablet-camera overlay, other cameras, other palettes, iOS, emissivity UI, cropped or stretched aspect ratios.
 
 ## Fresh code, best-of-breed approaches
 

@@ -15,11 +15,13 @@ namespace tv {
 inline constexpr uint16_t kCmdShutter = 0x8000;      // shutter close + dark-frame refresh
 inline constexpr uint16_t kCmdRawOutput = 0x8004;    // raw 16-bit output
 inline constexpr uint16_t kCmdRangeNormal = 0x8020;  // -20 to 120 °C
+inline constexpr uint16_t kCmdRangeHigh = 0x8021;    // high range, ~120 to 400+ °C (owner, 2026-09-24)
 
 // Compile-time allowlist: the only values the app may ever send.
-inline constexpr std::array<uint16_t, 3> kAllowedCommands = {kCmdShutter, kCmdRawOutput,
-                                                             kCmdRangeNormal};
+inline constexpr std::array<uint16_t, 4> kAllowedCommands = {kCmdShutter, kCmdRawOutput,
+                                                             kCmdRangeNormal, kCmdRangeHigh};
 inline constexpr std::chrono::seconds kShutterMinInterval{10};
+inline constexpr std::chrono::seconds kRangeHighMinInterval{10};  // bounds range switching
 
 // Over-range lockout (owner decision, 2026-09-24): while the scene is hotter than the camera can
 // measure, the app holds the shutter closed by repeating 0x8000 before each cycle ends, then lets it
@@ -53,7 +55,8 @@ class CameraCommands {
 
   explicit CameraCommands(Sender sender, Clock clock = std::chrono::steady_clock::now);
 
-  // Refuses anything outside the allowlist, rate-limits 0x8000, and logs every attempt. A normal
+  // Refuses anything outside the allowlist, rate-limits 0x8000 and 0x8021 (once per 10 s; 0x8020,
+  // the safe default, is never limited), and logs every attempt. A normal
   // 0x8000 needs 10 s since the last one of either purpose; a lockout 0x8000 either continues the
   // current hold (>= 250 ms after the previous command, <= 5 s after the hold's first) or, after a
   // 1.5 s quiet gap, starts a new one.
@@ -78,6 +81,8 @@ class CameraCommands {
   std::deque<CommandLogEntry> history_;
   bool shutterSent_ = false;
   std::chrono::steady_clock::time_point lastShutter_{};
+  bool rangeHighSent_ = false;
+  std::chrono::steady_clock::time_point lastRangeHigh_{};
   bool lockoutSent_ = false;
   std::chrono::steady_clock::time_point holdStart_{}, lastLockout_{};
 };
