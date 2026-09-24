@@ -118,6 +118,10 @@ struct Session::Snapshot {
   uint64_t lockouts = 0, lockoutCommands = 0;
   uint32_t lastHotPixels = 0;
   uint16_t lastHotMax = 0;
+  Readouts raw, shown;  // this frame's readouts, unsmoothed and as displayed
+  uint16_t vertex = 0;
+  bool rangeHigh = false;
+  double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
   uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
   // Metadata of the latest frame.
@@ -268,6 +272,9 @@ bool Session::startStreaming() {
   lastFreshNs_ = 0;
   liveStreak_ = 0;
   coldStart_ = false;
+  readoutFilter_.reset();
+  rawReadouts_ = shownReadouts_ = Readouts{};
+  lastReadoutNs_ = 0;
   hotStreak_ = 0;
   lockoutHoldStartNs_ = 0;
   lockoutPeekHot_ = false;
@@ -685,6 +692,13 @@ void Session::handleFrame(const RawFrame& frame) {
     lastHotMax_ = stats.max;
   }
 
+  // Temperatures: a fresh table from this frame's own metadata (PROTOCOL.md "Temperature math"),
+  // readouts from raw values (CLAUDE.md rule 2).
+  if (usable) {
+    lut_.build(temperatureInputs(view), range_, highMath_);
+    rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, kNormalClipRaw);
+  }
+
   {
     bool wantCsv;
     {
@@ -693,7 +707,7 @@ void Session::handleFrame(const RawFrame& frame) {
     }
     if (wantCsv && !csv_) openCsv();
     if (!wantCsv && csv_) closeCsv();
-    if (csv_) writeCsvRow(frame, view, stats, flags, frozen, hotPixels);
+    if (csv_) writeCsvRow(frame, view, stats, flags, frozen, hotPixels, usable ? &rawReadouts_ : nullptr);
   }
 
   if (state == State::Running) {
@@ -751,6 +765,21 @@ void Session::handleFrame(const RawFrame& frame) {
   }
 
   if (accepted) {
+    const double dt = lastReadoutNs_ ? double(frame.arrivalNs - lastReadoutNs_) / 1e9 : 0.04;
+    lastReadoutNs_ = frame.arrivalNs;
+    shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, Region{}, kNormalClipRaw, dt);
+
+    // Camera-hot banner (PLAN M2): the module is rated to ~60 °C ambient and runs ~11-13 °C above it.
+    const double fpa = view.fpaC();
+    if (cameraHotText_.empty() && fpa > 55.0 && bannerIs("")) {
+      cameraHotText_ = format("Camera is hot (%.0f °C): readings may drift; let it cool", fpa);
+      setBanner(cameraHotText_);
+      FLOG("camera hot: FPA %.1f C", fpa);
+    } else if (!cameraHotText_.empty() && fpa < 53.0) {
+      if (bannerIs(cameraHotText_)) setBanner("");  // leave any other banner alone
+      cameraHotText_.clear();
+    }
+
     DisplayFrame& out = renderer_.frameSlot();
     std::memcpy(out.image.data(), view.image(), kImagePixels * sizeof(uint16_t));
     out.min = stats.min;
@@ -786,6 +815,13 @@ void Session::handleFrame(const RawFrame& frame) {
   s.lockoutCommands = lockoutCommands_;
   s.lastHotPixels = lastHotPixels_;
   s.lastHotMax = lastHotMax_;
+  s.raw = rawReadouts_;
+  s.shown = shownReadouts_;
+  s.vertex = lut_.vertex();
+  s.rangeHigh = range_ == TempRange::High;
+  s.camMaxC = lut_.valid(view.maxRaw()) ? lut_[view.maxRaw()] : NAN;
+  s.camMinC = lut_.valid(view.minRaw()) ? lut_[view.minRaw()] : NAN;
+  s.camCenterC = lut_.valid(view.centerRaw()) ? lut_[view.centerRaw()] : NAN;
   s.lastCycleMs = lastCycleMs_;
   s.procP95Ms = procMs_.percentile(95);
   s.bytes = frame.bytes;
@@ -899,7 +935,7 @@ void Session::openCsv() {
   for (int i = 0; i < 16; ++i) std::fprintf(csv_, ",P%d", i);
   for (int i : {0, 1, 2}) std::fprintf(csv_, ",Q%d", i);
   for (int i = 13; i < 24; ++i) std::fprintf(csv_, ",Q%d", i);
-  std::fprintf(csv_, "\n");
+  std::fprintf(csv_, ",lo_c,hi_c,hi_over,ce_c\n");
   FLOG("stats CSV started: %s", path.c_str());
 }
 
@@ -911,7 +947,7 @@ void Session::closeCsv() {
 }
 
 void Session::writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
-                          uint32_t flags, bool frozen, int hotPixels) {
+                          uint32_t flags, bool frozen, int hotPixels, const Readouts* r) {
   std::fprintf(csv_, "%.3f,%u,%s,%u,%u,%u,%u,%.2f,%.2f,%d,%d",
                double(frame.arrivalNs - streamStartNs_) / 1e6, frame.sequence, stateName(state_.load()),
                frame.bytes, flags, stats.min, stats.max, stats.mean, stats.stddev, frozen ? 1 : 0,
@@ -919,6 +955,12 @@ void Session::writeCsvRow(const RawFrame& frame, const FrameView& view, const Im
   for (int i = 0; i < 16; ++i) std::fprintf(csv_, ",%u", view.at(kOffsetP + i));
   for (int i : {0, 1, 2}) std::fprintf(csv_, ",%u", view.at(kOffsetQ + i));
   for (int i = 13; i < 24; ++i) std::fprintf(csv_, ",%u", view.at(kOffsetQ + i));
+  // Unsmoothed readouts (the M2 device check compares them with tools/harness temps).
+  if (r)
+    std::fprintf(csv_, ",%.3f,%.3f,%d,%.3f", r->low.tempC, r->high.tempC, r->high.overRange ? 1 : 0,
+                 r->center.tempC);
+  else
+    std::fprintf(csv_, ",,,,");
   std::fprintf(csv_, "\n");
 }
 
@@ -941,6 +983,9 @@ std::string Session::startReplay(const std::string& base) {
   inFreeze_ = false;
   lastFreshNs_ = 0;
   liveStreak_ = 0;
+  readoutFilter_.reset();
+  rawReadouts_ = shownReadouts_ = Readouts{};
+  lastReadoutNs_ = 0;
   enter(State::Replay, nowNs());
   startProcessing();
   replayRun_ = true;
@@ -1016,6 +1061,24 @@ void Session::setOptions(const Options& options) {
   options_ = options;
 }
 
+bool Session::bannerIs(const std::string& text) {
+  std::lock_guard lock(snapshotMutex_);
+  return banner_ == text;
+}
+
+std::vector<float> Session::readouts() {
+  std::lock_guard lock(snapshotMutex_);
+  std::vector<float> v;
+  for (const Spot* spot : {&snapshot_->shown.high, &snapshot_->shown.low, &snapshot_->shown.center}) {
+    v.push_back(float(spot->tempC));
+    v.push_back(float(spot->x));
+    v.push_back(float(spot->y));
+    v.push_back(float((std::isfinite(spot->tempC) ? 1 : 0) | (spot->overRange ? 2 : 0)));
+  }
+  v.push_back(snapshot_->rangeHigh ? 1.0f : 0.0f);
+  return v;
+}
+
 void Session::setBanner(const std::string& text) {
   std::lock_guard lock(snapshotMutex_);
   banner_ = text;
@@ -1076,6 +1139,16 @@ std::string Session::overlayText() {
               s.shutterCommanded, s.shutterDetected, s.shutterUncommanded, s.lastCycleMs, s.frozen);
   o += format("lockout: %" PRIu64 " (%" PRIu64 " commands)  trigger %d px >= raw %u  last hot: %u px, max %u\n",
               s.lockouts, s.lockoutCommands, kLockoutPixels, kLockoutRaw, s.lastHotPixels, s.lastHotMax);
+  auto t = [](const Spot& sp) {
+    if (sp.overRange) return std::string("> 120");
+    return std::isfinite(sp.tempC) ? format("%.2f", sp.tempC) : std::string("--");
+  };
+  auto c = [](double v) { return std::isfinite(v) ? format("%.2f", v) : std::string("--"); };
+  o += format("temps (%s range, per-frame table, vertex raw %u): high %s @(%.0f,%.0f)  low %s @(%.0f,%.0f)  "
+              "center %s   camera's own: max %s min %s center %s\n",
+              s.rangeHigh ? "high" : "normal", s.vertex, t(s.raw.high).c_str(), s.raw.high.x, s.raw.high.y,
+              t(s.raw.low).c_str(), s.raw.low.x, s.raw.low.y, t(s.raw.center).c_str(), c(s.camMaxC).c_str(),
+              c(s.camMinC).c_str(), c(s.camCenterC).c_str());
   o += "commands:";
   const size_t first = commands.size() > 6 ? commands.size() - 6 : 0;
   const auto origin = commands.empty() ? std::chrono::steady_clock::time_point{} : commands.front().time;

@@ -17,6 +17,8 @@
 #include "tv/dump.h"
 #include "tv/frame.h"
 #include "tv/frame_ring.h"
+#include "tv/readouts.h"
+#include "tv/temperature.h"
 #include "tv/stats.h"
 
 struct libusb_context;
@@ -58,6 +60,9 @@ class Session {
   std::string sendShutter();  // debug / Recalibrate
   std::string triggerLockout();  // debug: run one over-range lockout without a hot scene
   std::string requestCapture(const std::string& label);  // debug: recalibrate, then dump 200 frames
+  // Shown readouts for the UI: {temp, x, y, flags} for high, low and center, then 1 if the high
+  // range is active. flags: 1 = a valid temperature, 2 = over range. temp is NaN when invalid.
+  std::vector<float> readouts();
   void setOptions(const Options& options);
 
  private:
@@ -85,7 +90,8 @@ class Session {
   void captureForDump(const RawFrame& frame);
   void finishDump();
   void writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
-                   uint32_t flags, bool frozen, int hotPixels);
+                   uint32_t flags, bool frozen, int hotPixels, const Readouts* readouts);
+  bool bannerIs(const std::string& text);
   void openCsv();
   void closeCsv();
   void replayLoop();
@@ -137,6 +143,15 @@ class Session {
   CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
   int64_t capturePhaseNs_ = 0;
   int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's
+
+  // Temperatures (processing thread; the snapshot carries copies to the UI).
+  TemperatureLut lut_;
+  ReadoutFilter readoutFilter_;
+  Readouts rawReadouts_{}, shownReadouts_{};
+  int64_t lastReadoutNs_ = 0;
+  TempRange range_ = TempRange::Normal;
+  HighRangeMath highMath_ = HighRangeMath::Ht301;
+  std::string cameraHotText_;  // the camera-hot banner while it shows
 
   // Over-range lockout (processing thread).
   int hotStreak_ = 0;

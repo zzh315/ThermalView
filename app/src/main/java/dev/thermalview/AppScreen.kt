@@ -69,6 +69,7 @@ fun AppScreen(message: String, dumpsDir: String, options: DebugOptions, onOption
             factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(SurfaceCallbacks) } },
             modifier = Modifier.fillMaxSize(),
         )
+        ReadoutOverlay(active = status.streaming || status.replay.isNotEmpty())
         // A replay runs without the camera, so the "plug in" prompt doesn't apply then.
         val banner = status.banner.ifEmpty { if (status.replay.isNotEmpty()) "" else message }
         if (banner.isNotEmpty()) {

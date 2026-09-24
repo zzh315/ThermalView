@@ -31,6 +31,12 @@ object NativeBridge {
     external fun triggerLockout(): String
     external fun mark(label: String)  // debug: "owner mark: <label>" in the field log
     external fun readyCapture(label: String): String  // debug: mark, recalibrate, dump 200 frames
+
+    /**
+     * Shown readouts: {temp °C, x, y, flags} for high, low and center (camera pixels), then 1 if
+     * the high range is active. flags: 1 = valid temperature, 2 = over range. temp is NaN if invalid.
+     */
+    external fun readouts(): FloatArray
 }
 
 data class Status(

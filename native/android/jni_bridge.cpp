@@ -4,6 +4,7 @@
 #include <jni.h>
 
 #include <string>
+#include <vector>
 
 #include "field_log.h"
 #include "session.h"
@@ -88,6 +89,13 @@ JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_readyCapture(JNIEnv*
   const std::string text = s;
   env->ReleaseStringUTFChars(label, s);
   return toJava(env, session().requestCapture(text));
+}
+
+JNIEXPORT jfloatArray JNICALL Java_dev_thermalview_NativeBridge_readouts(JNIEnv* env, jobject) {
+  const std::vector<float> v = session().readouts();
+  jfloatArray a = env->NewFloatArray(jsize(v.size()));
+  if (a) env->SetFloatArrayRegion(a, 0, jsize(v.size()), v.data());
+  return a;
 }
 
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {
