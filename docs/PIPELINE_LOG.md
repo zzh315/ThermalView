@@ -4,6 +4,45 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 6: detail enhancement (`b848b57+detail`: stages 1–6; awaiting the owner's verdict)
+
+**What:** PLAN M4 stage 6, as the approved plan change (PRIOR_ART pass 2 item 8): a guided-filter base/detail split before tone mapping (`native/core` `filters.h`, `Pipeline::enhance`).
+- **Split:** He et al.'s guided filter with the signal as its own guide (radius 2, eps 50 counts²) gives the base; detail = signal − base.
+- **Tone:** stage 5's curve comes from the base, so noise and fine texture don't bend it. The detail comes back at the curve's local slope: out = T(base) + T′(base) × detail.
+- **Gain:** 2.5 on the detail, limited to ±7 counts, applied only where:
+  - a **noise gate** is open: the detail's 3×3 RMS clears 2–4× the frame's noise floor (its 10th percentile, sampled over every column);
+  - the **halo guard** allows it: the guided filter leaves a residual of about 2% of every step, up to ~5 px out, along both sides. Boosted, that residual is a rim (the first version drew one: `keyboard` screen-edge halo 2.66 → 5.77%). The gain fades out where the base's local range within 6 px is 12–25× the local detail's RMS. The rule is scale-free, so it holds for a 50-count edge and a 1000-count one alike, while texture, a good fraction of its own local range, keeps its gain. A unit test builds a lens-blurred step and checks the rim stays under half a level (over one without the guard).
+- **Smoothing:** the added contrast is blurred (σ 1 px) before it's added. Texture a few pixels across keeps its gain; pixel-scale structure (noise, the stair-steps of a slanted edge) passes at gain 1.
+- **Unsharp:** 1.0 (σ 0.7 px) on the display where there is texture or an edge, clamped to each pixel's 3×3 min/max so it can't overshoot.
+
+**Why unsharp 1.0 and the smoothing:** at 1.5 with no smoothing (the "crisp" variant), each edge shrank to about a pixel, losing where it sits within the pixel, and slanted key edges came out as stair-steps at 8× (`stage6_review/keyboard_crop0.jpg`, right). That is the "jagged" look the owner dislikes. The proposed settings keep most of the gain without it.
+
+**Metrics** (stages 1–5 = `903d02a+default`; the crisp variant from a `--no-clips` run):
+
+| Metric | Stages 1–5 | Stage 6 (proposed) | Crisp (unsharp 1.5, no smoothing) |
+|---|---|---|---|
+| `keyboard` key detail | 4.66 levels | 6.42 | 7.29 |
+| `keyboard` screen edge: width / halo | 2.10 px / 2.66% | 1.77 px / 2.73% | 1.15 px / 2.71% |
+| `hand` edges: wrist / palm / thumb width | 2.73 / 2.10 / 2.59 px | 2.23 / 1.56 / 2.39 | 2.07 / 1.47 / 2.27 |
+| `hand` halos | 0 / 0 / 0.46% | 0 / 0 / 0.50% | 0 / 0 / 0.5% |
+| `flat` / `flat_aged` display noise | 1.40 / 1.42 levels | 1.41 / 1.44 | 1.43 / — |
+| Fixed pattern, stripes, `motion` step response | — | unchanged | unchanged |
+| Flicker `flat` / `room` / `keyboard` / `night` | 0.15 / 0.09 / 0.24 / 0.13 | 0.22 / 0.13 / 0.24 / 0.11 | 0.22 / 0.13 / 0.23 / 0.11 |
+
+- **Against the apps** (captures, `refs.json`): key detail Hti 2.60, Xtherm 3.49, InfiCamPlus 10.3. Screen-edge halo Hti 14.2%, Xtherm 1.37%, InfiCamPlus 2.17%. Our edge widths are at camera resolution, the apps' through their capture, so the two don't compare directly.
+- **Flicker** on `flat` and `room` rises by 0.04–0.07 levels. That comes from mapping the base instead of the signal (it's there at gain 1 with no unsharp), not from the enhancement. It stays at or below Xtherm's 0.21–0.22 and far below visible.
+- **Noise isn't boosted:** the gate keeps `flat` at 1.41 levels. A looser gate (1.5–3×) gave 7.83 key detail at 1.67 levels of noise.
+
+**Cost** (`harness perf` over adb, `keyboard`, a big core at 2.42 GHz): 1.76 → 4.64 ms a frame. On a little core (A55, 1.8 GHz) it's 9.5 → 29.9 ms, over the budget. So the app now pins its processing thread to the big cores, not yet verified in the app (commit `def22ad`).
+
+**Found on the way:**
+- A NaN on very quiet fields: running sums dip a hair below zero before a sqrt.
+- The noise floor's subsample, every 192nd pixel, only ever hit 4 columns (192 = ¾ × 256). Now it's every 191st.
+
+**Review:** `bench/results/b848b57+detail/stage6_review/` shows stages 1–5, stage 6 as proposed, and the crisp variant side by side: `keyboard` (with the keys at 8× and the screen edge), `room`, `night` (the car at 8×), `hand`, `flat_aged`. Sheets against the baseline and the apps: `bench/results/b848b57+detail/<scene>.jpg`.
+
+**Verdict:** pending the owner's review (proposed vs crisp vs off). Stage 6 stays off by default until then (debug toggle "Stage 6: detail + sharpening").
+
 ## 2026-09-25 — Stage 5: automatic tone mapping (`903d02a+default`: stages 1–5)
 
 **What:** PLAN M4 stage 5 as FLIR-style plateau equalization (PRIOR_ART pass 2 item 8; `native/core` `tone.h`):
