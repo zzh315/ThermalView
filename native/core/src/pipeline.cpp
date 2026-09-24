@@ -375,7 +375,11 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
 
   // The mid-scale layer: the base against a wider self-guided filter (surfaces and shapes a few to
   // ~16 pixels across), with its own noise gate and the same halo guard over the wider filter's
-  // reach (its local range at half resolution: 4x cheaper, a pixel more conservative).
+  // reach (its local range at half resolution: 4x cheaper, a pixel more conservative). Its extra
+  // contrast goes into the tone curve's input, not onto the display: the curve's range and
+  // histogram then make room for it, where added after the curve it pushed warm areas past white
+  // (the owner saw the keyboard's warm middle lose its key lines).
+  const float* toneInput = base;
   if (mid) {
     midBase_.resize(kImagePixels);
     mid_.resize(kImagePixels);
@@ -393,10 +397,11 @@ void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude)
       const float ratio = range_[i] / std::max(rms, 1e-3f);
       const float open = options_.detailMidGate ? smooth(mLo, mHi, rms) : 1.0f;
       const float extra = gm * open * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio)) * mid_[i];
-      det[i] = std::clamp(det[i] + extra, -2.0f * lim, 2.0f * lim);
+      mb[i] = base[i] + std::clamp(extra, -2.0f * lim, 2.0f * lim);  // (mb: the squares are spent)
     }
+    toneInput = mb;
   }
-  tone_.map(base, display, exclude, 0.04f, det);
+  tone_.map(toneInput, display, exclude, 0.04f, det);
 
   // Unsharp on the display where there is texture (the gate) or an edge (the base's 3x3 range well
   // above the noise floor), clamped to each pixel's 3x3 min/max: sharper edges and texture with no
