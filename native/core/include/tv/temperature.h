@@ -54,6 +54,10 @@ class TemperatureLut {
   uint16_t vertex() const { return vertex_; }
   bool valid(uint16_t raw) const;
 
+  // The smallest valid raw value reading at least tempC (kSize if none): the table rises
+  // monotonically above its vertex.
+  uint16_t rawAtOrAbove(double tempC) const;
+
  private:
   std::array<double, kSize> table_{};
   uint16_t vertex_ = 0;

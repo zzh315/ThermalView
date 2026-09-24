@@ -30,10 +30,9 @@ constexpr int kValidStreak = 3;        // consecutive valid frames before 0x8020
 constexpr int kStallMs = 500;          // watchdog (docs/PLAN.md M1, tunable)
 constexpr int kFailStreak = 50;        // 2 s of failing frames after start-up -> stop
 
-// Over-range lockout (owner decision, 2026-09-24; CLAUDE.md rule 1). Interim form until the high
-// range lands (M2): the normal range clips at raw 14192 (~120-123 °C, docs/DEVICE.md), so clipped
-// pixels held for 10 s trigger it; brief looks at a hot part or the iron never freeze the view.
-constexpr uint16_t kLockoutRaw = 14000;  // just under the clip; saturated pixels read at most 14192
+// Over-range lockout (owner decision, 2026-09-24; CLAUDE.md rule 1): pixels over range (readouts.h
+// overRangeRaw: 120 °C or the per-pixel clip floor) held for 10 s trigger it, so brief looks at a
+// hot part or the iron never freeze the view.
 constexpr int kLockoutPixels = 4;        // pixels at or above it, in...
 constexpr int kLockoutFrames = 250;      // ...this many consecutive frames (10 s), trigger a lockout
 constexpr int kLockoutRepeatMs = 260;    // 0x8000 spacing that keeps the shutter closed (gate: >= 250)
@@ -141,7 +140,7 @@ struct Session::Snapshot {
   uint32_t lastHotPixels = 0;
   uint16_t lastHotMax = 0;
   Readouts raw, shown;  // this frame's readouts, unsmoothed and as displayed
-  uint16_t vertex = 0;
+  uint16_t vertex = 0, clipRaw = 0;
   bool rangeHigh = false, autoRange = false, highMathInfiCam = false;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
@@ -422,7 +421,7 @@ void Session::beginLockout(int64_t now, int hotPixels, uint16_t maxRaw, bool man
   if (manual)
     FLOG("lockout #%" PRIu64 " (manual)", lockouts_);
   else
-    FLOG("lockout #%" PRIu64 ": %d pixels >= %u (max %u)", lockouts_, hotPixels, kLockoutRaw, maxRaw);
+    FLOG("lockout #%" PRIu64 ": %d pixels >= %u (max %u)", lockouts_, hotPixels, clipRaw_, maxRaw);
 }
 
 void Session::endLockout(int64_t now) {
@@ -815,18 +814,6 @@ void Session::handleFrame(const RawFrame& frame) {
   if (flags) lastFlags_ = flags;
   trackFreezes(frame, view, flags, frozen, state);
 
-  // Pixels too hot to measure. A frame whose only failure is values above 14 bits counts too, in
-  // case saturated pixels read that way (unverified until the hot-object test).
-  int hotPixels = 0;
-  const bool usable = !flags || flags == kSanityOver14Bit;
-  if (usable && stats.max >= kLockoutRaw) {
-    const uint16_t* img = view.image();
-    for (size_t i = 0; i < kImagePixels; ++i) hotPixels += img[i] >= kLockoutRaw;
-  }
-  if (hotPixels) {
-    lastHotPixels_ = hotPixels;
-    lastHotMax_ = stats.max;
-  }
 
   // Temperatures: a fresh table from this frame's own metadata (PROTOCOL.md "Temperature math"),
   // readouts from raw values (CLAUDE.md rule 2).
@@ -839,10 +826,24 @@ void Session::handleFrame(const RawFrame& frame) {
     lockoutEnabled_ = options_.lockoutEnabled;
     highMath_ = options_.highMathInfiCam ? HighRangeMath::InfiCam : HighRangeMath::Ht301;
   }
+  // A frame whose only failure is values above 14 bits counts too, in case saturated pixels ever
+  // read that way (M2: they clip per pixel at raw ~13835-14192 instead).
+  const bool usable = !flags || flags == kSanityOver14Bit;
+  int hotPixels = 0;
   if (usable) {
     lastMeta_.assign(frame.data.begin(), frame.data.end());
     lut_.build(temperatureInputs(view), range_, highMath_);
-    rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, kNormalClipRaw);
+    clipRaw_ = overRangeRaw(lut_);
+    rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, clipRaw_);
+    // Pixels too hot to measure, for the lockout and the (parked) range switching.
+    if (stats.max >= clipRaw_) {
+      const uint16_t* img = view.image();
+      for (size_t i = 0; i < kImagePixels; ++i) hotPixels += img[i] >= clipRaw_;
+    }
+  }
+  if (hotPixels) {
+    lastHotPixels_ = hotPixels;
+    lastHotMax_ = stats.max;
   }
 
   {
@@ -939,7 +940,7 @@ void Session::handleFrame(const RawFrame& frame) {
   if (accepted) {
     const double dt = lastReadoutNs_ ? double(frame.arrivalNs - lastReadoutNs_) / 1e9 : 0.04;
     lastReadoutNs_ = frame.arrivalNs;
-    shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, Region{}, kNormalClipRaw, dt);
+    shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, Region{}, clipRaw_, dt);
 
     // Camera-hot banner (PLAN M2): the module is rated to ~60 °C ambient and runs ~11-13 °C above it.
     // The FPA word means something else in the high range (M2: it decodes to ~70 °C there).
@@ -991,6 +992,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.raw = rawReadouts_;
   s.shown = shownReadouts_;
   s.vertex = lut_.vertex();
+  s.clipRaw = clipRaw_;
   s.rangeHigh = range_ == TempRange::High;
   s.autoRange = autoRange_;
   s.highMathInfiCam = highMath_ == HighRangeMath::InfiCam;
@@ -1322,7 +1324,7 @@ std::string Session::overlayText() {
               ")  last %.0f ms  frozen frames %" PRIu64 "\n",
               s.shutterCommanded, s.shutterDetected, s.shutterUncommanded, s.lastCycleMs, s.frozen);
   o += format("lockout: %" PRIu64 " (%" PRIu64 " commands)  trigger %d px >= raw %u  last hot: %u px, max %u\n",
-              s.lockouts, s.lockoutCommands, kLockoutPixels, kLockoutRaw, s.lastHotPixels, s.lastHotMax);
+              s.lockouts, s.lockoutCommands, kLockoutPixels, s.clipRaw, s.lastHotPixels, s.lastHotMax);
   auto t = [](const Spot& sp) {
     if (sp.overRange) return std::string("> 120");
     return std::isfinite(sp.tempC) ? format("%.2f", sp.tempC) : std::string("--");

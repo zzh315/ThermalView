@@ -37,7 +37,7 @@ TEST_CASE("low and high are the region's extremes; center averages the 4 middle 
   img.at(10, 20) = 7000;
   img.at(200, 150) = 5000;
   img.at(127, 95) = 5600;  // one of the 4 center pixels of the full frame (127-128, 95-96)
-  const Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw);
+  const Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut));
   CHECK(r.high.x == 10);
   CHECK(r.high.y == 20);
   CHECK(r.high.tempC == doctest::Approx(lut[7000]));
@@ -55,7 +55,7 @@ TEST_CASE("pixels at the clip read over range; at or below the vertex, no temper
   Image img;
   img.at(5, 5) = 14192;             // the normal range's clip (docs/DEVICE.md)
   img.at(6, 6) = lut.vertex();      // bottom of the folded table
-  const Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw);
+  const Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut));
   CHECK(r.high.overRange);
   CHECK_FALSE(r.high.valid());
   CHECK(std::isnan(r.low.tempC));
@@ -69,9 +69,9 @@ TEST_CASE("bad pixels are skipped and the region limits the search") {
   img.at(40, 40) = 7000;
   std::vector<uint8_t> bad(tv::kImagePixels, 0);
   bad[size_t(20) * tv::kFrameWidth + 10] = 1;
-  Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw, &bad);
+  Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut), &bad);
   CHECK(r.high.x == 40);
-  r = tv::computeReadouts(img.px.data(), lut, Region{100, 100, 111, 121}, tv::kNormalClipRaw);
+  r = tv::computeReadouts(img.px.data(), lut, Region{100, 100, 111, 121}, tv::overRangeRaw(lut));
   CHECK(r.high.x >= 100);
   CHECK(r.high.x < 111);
   CHECK(r.center.x == doctest::Approx(105));  // odd width: a single center column
@@ -84,22 +84,22 @@ TEST_CASE("the high marker stays put unless a new maximum wins by the hysteresis
   Image img;
   img.at(10, 10) = 7000;
   ReadoutFilter filter(0.2, 0.3);
-  Readouts shown = filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw),
-                                 img.px.data(), lut, Region{}, tv::kNormalClipRaw, 0.04);
+  Readouts shown = filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut)),
+                                 img.px.data(), lut, Region{}, tv::overRangeRaw(lut), 0.04);
   CHECK(shown.high.x == 10);
   // A pixel slightly hotter (less than 0.2 °C) elsewhere: the marker stays on (10,10).
   uint16_t slightly = 7000;
   while (lut[uint16_t(slightly + 1)] - lut[7000] < 0.1) ++slightly;
   img.at(50, 50) = slightly;
-  shown = filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw),
-                        img.px.data(), lut, Region{}, tv::kNormalClipRaw, 0.04);
+  shown = filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut)),
+                        img.px.data(), lut, Region{}, tv::overRangeRaw(lut), 0.04);
   CHECK(shown.high.x == 10);
   // Clearly hotter (> 0.2 °C): the marker moves.
   uint16_t hotter = 7000;
   while (lut[hotter] - lut[7000] < 0.5) ++hotter;
   img.at(60, 60) = hotter;
-  shown = filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw),
-                        img.px.data(), lut, Region{}, tv::kNormalClipRaw, 0.04);
+  shown = filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut)),
+                        img.px.data(), lut, Region{}, tv::overRangeRaw(lut), 0.04);
   CHECK(shown.high.x == 60);
 }
 
@@ -108,8 +108,8 @@ TEST_CASE("shown values ease toward a step change; over range shows at once") {
   Image img;
   ReadoutFilter filter(0.2, 0.3);
   auto step = [&](double dt) {
-    return filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::kNormalClipRaw),
-                         img.px.data(), lut, Region{}, tv::kNormalClipRaw, dt);
+    return filter.update(tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut)),
+                         img.px.data(), lut, Region{}, tv::overRangeRaw(lut), dt);
   };
   step(0.04);
   const double before = lut[5500];
@@ -122,4 +122,15 @@ TEST_CASE("shown values ease toward a step change; over range shows at once") {
   CHECK(step(0.04).center.tempC == doctest::Approx(after).epsilon(1e-4));
   img.at(127, 95) = 14192;
   CHECK(step(0.04).center.overRange);
+}
+
+TEST_CASE("over range starts at the rated 120 C or the clip floor, whichever is lower") {
+  const auto lut = realLut();  // FPA ~36 °C: 120 °C sits well below the clip floor
+  const uint16_t at120 = lut.rawAtOrAbove(tv::kRatedTopC);
+  CHECK(lut[at120] >= tv::kRatedTopC);
+  CHECK(lut[uint16_t(at120 - 1)] < tv::kRatedTopC);
+  CHECK(tv::overRangeRaw(lut) == std::min<uint16_t>(at120, tv::kClipFloorRaw));
+  Image img;
+  img.at(3, 3) = 13841;  // a pixel clipped low (the 300 °C iron, docs/DEVICE.md)
+  CHECK(tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut)).high.overRange);
 }

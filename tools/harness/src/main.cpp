@@ -72,7 +72,7 @@ int temps(int argc, char** argv) {
     const uint16_t* data = &dump.frames[f * tv::kFramePixels];
     const tv::FrameView view(data);
     lut.build(tv::temperatureInputs(view), range, math);
-    const tv::Readouts r = tv::computeReadouts(view.image(), lut, region, tv::kNormalClipRaw);
+    const tv::Readouts r = tv::computeReadouts(view.image(), lut, region, tv::overRangeRaw(lut));
     const double tMs = dump.timestampsNs.size() == dump.frameCount
                            ? double(dump.timestampsNs[f] - dump.timestampsNs[0]) / 1e6
                            : double(f) * 40.0;

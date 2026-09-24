@@ -95,4 +95,13 @@ bool TemperatureLut::valid(uint16_t raw) const {
   return raw > vertex_ && raw < kSize && std::isfinite(table_[raw]);
 }
 
+uint16_t TemperatureLut::rawAtOrAbove(double tempC) const {
+  size_t lo = size_t(vertex_) + 1, hi = kSize;  // answer in [lo, hi]
+  while (lo < hi) {
+    const size_t mid = (lo + hi) / 2;
+    if (std::isfinite(table_[mid]) && table_[mid] >= tempC) hi = mid; else lo = mid + 1;
+  }
+  return uint16_t(std::min(lo, kSize));
+}
+
 }  // namespace tv

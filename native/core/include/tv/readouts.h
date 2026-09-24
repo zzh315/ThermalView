@@ -28,9 +28,15 @@ struct Readouts {
   Spot low, high, center;
 };
 
-// The normal range clips at raw 14192 (~120-123 °C, docs/DEVICE.md); pixels at or above this
-// may be hotter than they read.
-inline constexpr uint16_t kNormalClipRaw = 14000;
+// The normal range clips per pixel, at raw ~13835-14192 (docs/DEVICE.md), and the rated range ends
+// at 120 °C. A pixel is over range at 120 °C through the table or at kClipFloorRaw, whichever comes
+// first, so every clipped pixel counts at any camera temperature.
+inline constexpr double kRatedTopC = 120.0;
+inline constexpr uint16_t kClipFloorRaw = 13700;
+inline uint16_t overRangeRaw(const TemperatureLut& lut) {
+  const uint16_t t = lut.rawAtOrAbove(kRatedTopC);
+  return t < kClipFloorRaw ? t : kClipFloorRaw;
+}
 
 // One frame, unsmoothed. Low and high are our own argmin/argmax over the region, skipping pixels
 // marked in badPixels (width x rows, nonzero = bad; empty until M4 builds the map). The center is
