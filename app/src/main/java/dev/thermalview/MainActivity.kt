@@ -27,10 +27,12 @@ data class DebugOptions(
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
+    val denoise: Boolean = true,            // M4 stage 4 (approved): motion-adaptive temporal filter
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
         "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
+        "denoise=" + bit(denoise),
     ).joinToString(",")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
@@ -102,7 +104,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * shutterHold, badPixels, drift, denoise (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -122,6 +124,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("shutterHold")) o = o.copy(shutterHold = extras.getBoolean("shutterHold"))
         if (extras.containsKey("badPixels")) o = o.copy(badPixels = extras.getBoolean("badPixels"))
         if (extras.containsKey("drift")) o = o.copy(drift = extras.getBoolean("drift"))
+        if (extras.containsKey("denoise")) o = o.copy(denoise = extras.getBoolean("denoise"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()

@@ -29,7 +29,11 @@ The camera already runs its own motion-adaptive filter (DEVICE.md "Onboard filte
 
 **Clips:** `bench/out/stage4_{flat,motion,night,room}.mp4` (local), with three panels: baseline, k_min 0.25, k_min 0.10.
 
-**Verdict:** pending the owner.
+**Verdict:** the owner (2026-09-25) "could not tell any difference" and left it to me, provided it doesn't hog performance. It's on by default at k_min 0.25, for two reasons:
+- It's the safest setting for faint moving detail.
+- Its gain shows through stage 5: the tone curve's gain cap scales with the residual noise, so lower noise buys contrast on low-ΔT scenes.
+
+**Cost on the tablet:** ~1.3 ms. Processing p95 is 7.0 ms and latency p95 9.7 ms with stages 1–4.
 
 ## 2026-09-25 — Stage 3: drift compensation and stripe cleanup (`7c8f0ba+drift_destripe`)
 

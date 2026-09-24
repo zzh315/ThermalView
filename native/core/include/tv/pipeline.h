@@ -50,7 +50,7 @@ struct PipelineOptions {
   // estimate over the frame, smoothed over time): smoothstep(motionLo, motionHi, |box| / sigma).
   // Starts over (K = 1) after a calibration. The camera already filters in time (DEVICE.md
   // "Onboard filtering"), so this gains less than it would on white noise.
-  bool denoise = false;
+  bool denoise = true;  // approved 2026-09-25 (owner: "do what you think is best"), at 0.25
   float denoiseKMin = 0.25f;
   float denoiseMotionLo = 2.0f, denoiseMotionHi = 4.0f;  // in sigmas of the pooled difference
 };

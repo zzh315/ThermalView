@@ -30,6 +30,7 @@ TEST_CASE("stage 2 in the pipeline changes only the mapped pixels' display, and 
   tv::PipelineOptions o, none;
   o.badPixels = true;
   o.destripe = none.destripe = false;  // stage 3b would also touch these pixels
+  o.denoise = none.denoise = false;
   none.badPixels = false;
   tv::Pipeline on(o), off(none);
   on.setBadPixels(tv::badPixelMapFor("KA1213"));

@@ -22,6 +22,7 @@ tv::PipelineOptions allOff() {
   o.badPixels = false;
   o.drift = false;
   o.destripe = false;
+  o.denoise = false;
   return o;
 }
 
@@ -40,7 +41,7 @@ TEST_CASE("with every stage off the pipeline equals the baseline") {
 }
 
 TEST_CASE("stage 1 holds the last output through repeated frames, then crossfades back") {
-  tv::PipelineOptions o;
+  tv::PipelineOptions o = allOff();
   o.shutterHold = true;
   o.shutterBlendFrames = 4;
   tv::Pipeline p(o);
@@ -76,6 +77,7 @@ TEST_CASE("the defaults are the approved stages") {
   CHECK(o.badPixels);
   CHECK(o.drift);
   CHECK(o.destripe);
+  CHECK(o.denoise);
 }
 
 TEST_CASE("stage 1 off: repeated frames pass straight through") {
@@ -89,7 +91,7 @@ TEST_CASE("stage 1 off: repeated frames pass straight through") {
 }
 
 TEST_CASE("reset forgets the previous frame, so a repeat right after it isn't a freeze") {
-  tv::PipelineOptions o;
+  tv::PipelineOptions o = allOff();
   o.shutterHold = true;
   tv::Pipeline p(o);
   std::vector<float> out(tv::kImagePixels);
@@ -101,7 +103,8 @@ TEST_CASE("reset forgets the previous frame, so a repeat right after it isn't a 
 }
 
 TEST_CASE("hold(): the next frame crossfades from the last output, as after a cycle in the frames") {
-  tv::PipelineOptions o;
+  tv::PipelineOptions o = allOff();
+  o.shutterHold = true;
   o.shutterBlendFrames = 2;
   tv::Pipeline p(o);
   std::vector<float> out(tv::kImagePixels), held(tv::kImagePixels), live(tv::kImagePixels);
@@ -120,7 +123,7 @@ TEST_CASE("stage settings as text") {
   tv::PipelineOptions o;
   CHECK(tv::parseStages("default", &o));
   CHECK(o.shutterHold);
-  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0", &o));
+  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0,denoise=0", &o));
   CHECK_FALSE(o.shutterHold);
   CHECK(tv::describeStages(o) == "none");
   CHECK(tv::parseStages("shutter,shutterBlend=12", &o));
@@ -129,5 +132,7 @@ TEST_CASE("stage settings as text") {
   CHECK(tv::describeStages(o) == "shutter(12),badPixels");
   CHECK(tv::parseStages("drift,destripe", &o));
   CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe");
+  CHECK(tv::parseStages("denoise", &o));
+  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,denoise(k0.25)");
   CHECK_FALSE(tv::parseStages("bogus", &o));
 }

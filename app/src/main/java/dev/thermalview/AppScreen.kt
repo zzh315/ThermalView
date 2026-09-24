@@ -148,6 +148,7 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
+                    Toggle("Stage 4: temporal filter", options.denoise) { onOptions(options.copy(denoise = it)) }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }
