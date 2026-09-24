@@ -1,0 +1,13 @@
+{
+  "name": "rainbow_hc",
+  "space": "oklch",
+  "stops": [
+    [0.0,  "#00FF00"],
+    [0.25, "#80FF00"],
+    [0.5,  "#FFFF00"],
+    [0.75, "#FF8000"],
+    [1.0,  "#FF0000"]
+  ],
+  "saturation": "#808080",
+  "note": "A continuous rainbow: cold green, mid yellow, hot red, sweeping through every hue between along the OKLCh hue arc with chroma as high as sRGB allows (docs/PLAN.md M5). The owner tunes hues and stop positions by eye; the order stays green, yellow, red. saturation: pixels at the camera's clip."
+}

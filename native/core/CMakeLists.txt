@@ -14,11 +14,13 @@ add_library(thermalcore STATIC
   src/dump.cpp
   src/filters.cpp
   src/frame.cpp
+  src/palette.cpp
   src/pipeline.cpp
   src/readouts.cpp
   src/stats.cpp
   src/temperature.cpp
   src/tone.cpp
+  src/upscale.cpp
 )
 target_include_directories(thermalcore PUBLIC include)
 target_compile_options(thermalcore PRIVATE -Wall -Wextra -Wpedantic)
@@ -35,17 +37,19 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_dump.cpp
     tests/test_filters.cpp
     tests/test_frame.cpp
+    tests/test_palette.cpp
     tests/test_pipeline.cpp
     tests/test_queues.cpp
     tests/test_readouts.cpp
     tests/test_stats.cpp
     tests/test_temperature.cpp
     tests/test_tone.cpp
+    tests/test_upscale.cpp
   )
   target_include_directories(core_tests PRIVATE ${TV_ROOT}/native/third_party/doctest/doctest)
   target_link_libraries(core_tests PRIVATE thermalcore)
   target_compile_definitions(core_tests PRIVATE TV_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
-    TV_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+    TV_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data" TV_PALETTE_DIR="${TV_ROOT}/palettes")
   target_compile_options(core_tests PRIVATE -Wall -Wextra)
   add_test(NAME core_tests COMMAND core_tests)
   add_test(NAME no_stray_control_writes

@@ -1,0 +1,10 @@
+{
+  "name": "white_hot",
+  "space": "oklab",
+  "stops": [
+    [0.0, "#000000"],
+    [1.0, "#FFFFFF"]
+  ],
+  "saturation": "#FF0000",
+  "note": "Black (cold) to white (hot) in OKLab, lightness linear in intensity, so equal steps look equal (docs/PLAN.md M5). saturation: the color of pixels at the camera's clip (too hot to measure); red is proposed for white_hot, the owner confirms."
+}
