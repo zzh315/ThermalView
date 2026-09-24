@@ -429,6 +429,7 @@ void Session::applyAffinity(bool big) {
     FLOG("processing thread on %s", big && CPU_COUNT(&bigCpus_) > 0 ? ("cpus " + bigCpusText_).c_str() : "any core");
   affinityBig_ = big;
   affinitySet_ = true;
+  cpuFrames_ = cpuFramesBig_ = 0;  // the overlay's share starts over with the new setting
 }
 
 void Session::processLoop() {
