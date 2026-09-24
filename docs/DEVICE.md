@@ -162,6 +162,25 @@ The owner held the soldering iron at 300 °C about 30 cm from the camera, with d
 
 Commands: the field log and the lockout dump `dump_20260924_212923`.
 
+### Cross-check with the reference apps (M2, 2026-09-24 21:39–21:51)
+
+A plain wall about 50 cm away, the camera propped still, screenshots 2–3 minutes after each app came to the front:
+
+| App (order) | Centre | Coldest | Hottest | How it got the camera |
+|---|---|---|---|---|
+| ThermalView | 24.4 °C | 23.9 °C | 25.0 °C | running (warm) |
+| Xtherm 7.0.260325 | 23.4 °C | 22.4 °C | ~24 °C (label cut off) | replug, so the camera ran its power-up series |
+| Hti Image 6.4 | 25.6 °C | 24.7 °C | 26.4 °C | adb app switch, no replug |
+| ThermalView | 24.5 °C | 24.0 °C | 25.0 °C | adb app switch, no replug |
+
+- **Ours repeats:** 24.4 then 24.5 °C.
+- **The reference apps disagree with each other by 2.2 °C,** and ours sits between them: Xtherm −1.0 °C from ours, Hti +1.2 °C. Both also show a wider spread than ours across the same wall.
+- **Neither app writes the camera's user area:** read right after Hti without a replug, it still held the power-up defaults (emissivity 0.980, reflected and air 25 °C, humidity 0.450, distance 0). So their environment settings and maths live app-side.
+- **Xtherm's lower reading may partly be shutter self-heating:** its session began with the camera's power-up series.
+- **Verdict:** the reference apps can't both be right, so the ±1 °C criterion can't be met against both. Our readings agree with a contact thermometer within ±1 °C at 10 and 48 °C ("Absolute check"). Reviewed with the owner.
+
+Commands: `adb exec-out screencap -p` (screenshots in the session scratchpad), `am force-stop` and `monkey -p` for the app switches, and our debug overlay for the user area.
+
 Long run: `tools/py/shutter_stats.py` on the run's CSV. Tablet temperatures, every minute: `dumpsys battery`, `dumpsys thermalservice`, and `/sys/class/thermal/thermal_zone*/{type,temp}` (quiet_therm, conn_therm, cpu-1-0-usr, gpuss-0-usr; readable without root).
 
 Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.

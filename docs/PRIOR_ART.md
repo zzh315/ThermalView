@@ -125,6 +125,12 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 - **Capture internals, from their logs:** Hti Image runs libuvc with 192 packets per transfer (stock libuvc uses 32) and initializes OpenCL. ThruTracker queues 16 URBs × 32 packets. InfiCamPlus renders through a CPU canvas in 17–27 ms per frame. Compare transfer sizing in M1 if our capture drops frames.
 - **Verdict:** keep our box-driven color range, and zoom 1×–8× with double-tap back to 1× (PLAN M6). Take "mark out-of-range pixels in Manual mode instead of clipping them silently" to pass 2 item 6.
 
+### Reference apps' temperatures (M2 cross-check, 2026-09-24)
+
+- On the same wall, Xtherm read 23.4 °C at the centre and Hti Image 25.6 °C, 2.2 °C apart. ThermalView read 24.4–24.5 °C, and it matches a contact thermometer within ±1 °C at 10 and 48 °C (DEVICE.md).
+- Neither app writes the camera's user area; their environment settings and maths are app-side.
+- **Verdict:** use them as image-quality references (M3), not as temperature truth.
+
 ### Over-temperature protection (2026-09-24)
 
 - **InfiCam** (`app/.../MainActivity.java` `onFrame` and `overTempLockout`, setting "Overtemperature Protection", on by default):
