@@ -126,6 +126,12 @@ bool loadDump(const std::string& base, LoadedDump* out, std::string* error) {
     s << json.rdbuf();
     out->timestampsNs = parseJsonIntArray(s.str(), "timestamps_ns");
     if (out->timestampsNs.size() != out->frameCount) out->timestampsNs.clear();
+    const std::string text = s.str(), key = "\"serial\": \"";
+    const size_t k = text.find(key);
+    if (k != std::string::npos) {
+      const size_t from = k + key.size(), to = text.find('"', from);
+      if (to != std::string::npos) out->serial = text.substr(from, to - from);
+    }
   }
   return true;
 }

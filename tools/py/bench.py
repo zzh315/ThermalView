@@ -16,6 +16,8 @@ Metrics, all on the display path's output unless marked °C:
 - temporal_noise (flat, flat_aged): median per-pixel temporal std, after removing each pixel's quadratic trend
   over the dump (the camera drifts a few counts in 8 s after a NUC); 8-bit display levels and mK.
   Also in mK: the part all pixels share (common_mk) and the noise's lag-1 correlation (rho1).
+- defects (flat, flat_aged): pixels that stand out from their 5x5 ring in the time-averaged
+  frame: the worst in robust sigmas and mK, and how many exceed 6 sigma (stage 2).
 - stripes (flat, flat_aged): std of column means and of row means of the time-averaged frame after removing a
   cubic 2D polynomial; levels and mK.
 - flicker (static scenes): std of the frame's mean display level over time, quadratic trend removed.
@@ -124,6 +126,20 @@ def stripes(mean_frame):
     return float(np.nanstd(np.nanmean(r, axis=0))), float(np.nanstd(np.nanmean(r, axis=1)))
 
 
+def defects(mean_frame):
+    """Stage 2 (flat, flat_aged): pixels that stand out from the median of their 5x5 ring (inner 3x3
+    left out) in the time-averaged frame, in robust sigmas (tools/py/bad_pixels.py's offset test)."""
+    p = np.pad(mean_frame, 2, mode="reflect")
+    h, w = mean_frame.shape
+    ring = [p[2 + dy:2 + dy + h, 2 + dx:2 + dx + w] for dy in range(-2, 3) for dx in range(-2, 3)
+            if max(abs(dy), abs(dx)) == 2]
+    e = mean_frame - np.median(np.stack(ring), axis=0)
+    s = 1.4826 * np.median(np.abs(e - np.median(e)))
+    z = np.abs(e) / s
+    return {"max_sigmas": round(float(np.nanmax(z)), 2), "over_6_sigma": int((z > 6).sum()),
+            "worst_mk": round(1000 * float(np.nanmax(np.abs(e))), 1)}
+
+
 def flicker(disp):
     m = disp.reshape(disp.shape[0], -1).mean(axis=1) * 255
     return float(np.std(detrend(m), ddof=3))
@@ -226,6 +242,7 @@ def scene_metrics(scene, disp, temp):
         cm, rm = stripes(np.mean(temp, axis=0).astype(np.float64))
         m["stripes"] = {"col_levels": round(cl, 4), "row_levels": round(rl, 4),
                         "col_mk": round(1000 * cm, 2), "row_mk": round(1000 * rm, 2)}
+        m["defects"] = defects(np.mean(temp, axis=0).astype(np.float64))
     if scene in STATIC:
         m["flicker_levels"] = round(flicker(disp), 4)
     roi_file = BENCH / scene / "roi.json"

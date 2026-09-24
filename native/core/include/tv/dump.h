@@ -30,9 +30,10 @@ struct LoadedDump {
   std::vector<uint16_t> frames;       // frameCount × kFramePixels
   size_t frameCount = 0;
   std::vector<int64_t> timestampsNs;  // from the sidecar; empty if it was missing or unreadable
+  std::string serial;                 // the camera's, from the sidecar ("" if absent)
 };
 
-// Loads base + ".raw" and, if present, the timestamps from base + ".json".
+// Loads base + ".raw" and, if present, the timestamps and camera serial from base + ".json".
 bool loadDump(const std::string& base, LoadedDump* out, std::string* error);
 
 // The integers of a top-level JSON array field, e.g. "timestamps_ns": [1, 2, 3]. Only for the

@@ -146,6 +146,7 @@ private fun DebugPanel(
                     Toggle("Stage 1: shutter hold + crossfade", options.shutterHold) {
                         onOptions(options.copy(shutterHold = it))
                     }
+                    Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }

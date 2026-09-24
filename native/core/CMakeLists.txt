@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(thermalcore STATIC
+  src/bad_pixels.cpp
   src/command_gate.cpp
   src/display.cpp
   src/dump.cpp
@@ -24,6 +25,7 @@ if(PROJECT_IS_TOP_LEVEL)
   set(TV_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
   add_executable(core_tests
     tests/main.cpp
+    tests/test_bad_pixels.cpp
     tests/test_command_gate.cpp
     tests/test_display.cpp
     tests/test_dump.cpp

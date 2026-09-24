@@ -25,9 +25,10 @@ data class DebugOptions(
     val lockoutEnabled: Boolean = true,     // off only for tests with hot objects within the sensor's rating
     val rangeSettleMs: Int = 500,           // wait between a range command and its 0x8000 (M2 settling test)
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
+    val badPixels: Boolean = false,         // M4 stage 2: replace the camera's known bad pixels
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
-    fun stages(): String = "shutter=" + (if (shutterHold) "1" else "0")
+    fun stages(): String = "shutter=" + (if (shutterHold) "1" else "0") + ",badPixels=" + (if (badPixels) "1" else "0")
 }
 
 class MainActivity : ComponentActivity() {
@@ -95,7 +96,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * shutterHold, badPixels (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -113,6 +114,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("lockoutEnabled")) o = o.copy(lockoutEnabled = extras.getBoolean("lockoutEnabled"))
         if (extras.containsKey("rangeSettleMs")) o = o.copy(rangeSettleMs = extras.getInt("rangeSettleMs"))
         if (extras.containsKey("shutterHold")) o = o.copy(shutterHold = extras.getBoolean("shutterHold"))
+        if (extras.containsKey("badPixels")) o = o.copy(badPixels = extras.getBoolean("badPixels"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()

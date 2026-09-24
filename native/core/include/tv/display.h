@@ -13,4 +13,7 @@ namespace tv {
 // out holds kImagePixels values.
 void renderBaseline(const uint16_t* image, float* out);
 
+// The same stretch of a float signal (the pipeline's, after stages that change values).
+void renderBaseline(const float* signal, float* out);
+
 }  // namespace tv

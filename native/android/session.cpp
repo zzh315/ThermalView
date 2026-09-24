@@ -299,6 +299,7 @@ bool Session::startStreaming() {
   rawReadouts_ = shownReadouts_ = Readouts{};
   lastReadoutNs_ = 0;
   pipeline_.reset();
+  pipeline_.setBadPixels(badPixelMapFor(serial_));
   pipelineFed_ = false;
   range_ = TempRange::Normal;  // the start sequence always selects the normal range
   recoveryNucRequested_ = recoveryNucSent_ = false;
@@ -852,7 +853,10 @@ void Session::handleFrame(const RawFrame& frame) {
     // measure (up to ~131-134 °C when it's warm) don't freeze the view. The parked high range keeps
     // its own threshold.
     lockoutRaw_ = range_ == TempRange::Normal ? kClipFloorRaw : clipRaw_;
-    rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, clipRaw_);
+    // Stage 2 on: readouts also stay off the known bad pixels (PLAN M4).
+    const BadPixelMap& bad = pipeline_.badPixels();
+    const bool exclude = pipeline_.options().badPixels && !bad.empty();
+    rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, clipRaw_, exclude ? &bad.mask : nullptr);
     if (stats.max >= std::min(clipRaw_, lockoutRaw_)) {
       const uint16_t* img = view.image();
       for (size_t i = 0; i < kImagePixels; ++i) {
@@ -1183,6 +1187,7 @@ std::string Session::startReplay(const std::string& base) {
   LoadedDump dump;
   std::string error;
   if (!loadDump(base, &dump, &error)) return error;
+  pipeline_.setBadPixels(badPixelMapFor(dump.serial));  // the dump's camera, not the connected one
   replay_ = std::move(dump);
   replayName_ = base.substr(base.find_last_of('/') + 1);
   arrivals_.reset();

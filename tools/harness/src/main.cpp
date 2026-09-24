@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "tv/bad_pixels.h"
 #include "tv/display.h"
 #include "tv/dump.h"
 #include "tv/pipeline.h"
@@ -153,6 +154,8 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
     pipeCelsius.resize(display.size());
   }
   tv::Pipeline pipeline(pipelineOptions ? *pipelineOptions : tv::PipelineOptions{});
+  // Stage 2's map is the dump's camera's (its sidecar's serial).
+  pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
   for (size_t f = 0; f < dump.frameCount; ++f) {
     const uint16_t* image = tv::FrameView(&dump.frames[f * tv::kFramePixels]).image();
     tv::renderBaseline(image, &display[f * tv::kImagePixels]);

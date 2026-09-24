@@ -5,8 +5,10 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "tv/bad_pixels.h"
 #include "tv/frame.h"
 
 namespace tv {
@@ -20,11 +22,16 @@ struct PipelineOptions {
   // change is large and coherent (PIPELINE_LOG, stage 1), so it would read as motion.
   bool shutterHold = true;
   int shutterBlendFrames = 8;  // ~0.3 s at 25 fps
+
+  // Stage 2: replace the camera's known bad pixels (setBadPixels) for display, from their good
+  // neighbours, before anything else sees them.
+  bool badPixels = false;
 };
 
 // Stage settings as text, shared by the harness (--pipeline) and the app's debug options: a
 // comma-separated list applied on top of the defaults. "default" changes nothing; "shutter" or
-// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade. False on an unknown item.
+// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade; "badPixels" / "badPixels=0"
+// switches stage 2. False on an unknown item.
 bool parseStages(const std::string& text, PipelineOptions* options);
 std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"
 
@@ -34,6 +41,10 @@ class Pipeline {
 
   void setOptions(const PipelineOptions& options);
   const PipelineOptions& options() const { return options_; }
+
+  // Stage 2's map, for the camera in use (badPixelMapFor its serial).
+  void setBadPixels(BadPixelMap map) { badPixels_ = std::move(map); }
+  const BadPixelMap& badPixels() const { return badPixels_; }
 
   // A new stream, replay start or range switch: forget every frame seen so far.
   void reset();
@@ -53,6 +64,8 @@ class Pipeline {
 
  private:
   PipelineOptions options_;
+  BadPixelMap badPixels_;
+  std::vector<float> work_;  // the signal, when the caller doesn't ask for it
   std::vector<uint16_t> previous_;
   std::vector<float> held_, heldSignal_;
   bool havePrevious_ = false;

@@ -22,6 +22,8 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->shutterHold = on;
     } else if (key == "shutterBlend" && !value.empty()) {
       o->shutterBlendFrames = std::atoi(value.c_str());
+    } else if (key == "badPixels") {
+      o->badPixels = on;
     } else {
       return false;
     }
@@ -32,12 +34,14 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
 
 std::string describeStages(const PipelineOptions& o) {
   std::string s;
-  if (o.shutterHold) s += "shutter(" + std::to_string(o.shutterBlendFrames) + ")";
+  auto add = [&s](const std::string& item) { s += (s.empty() ? "" : ",") + item; };
+  if (o.shutterHold) add("shutter(" + std::to_string(o.shutterBlendFrames) + ")");
+  if (o.badPixels) add("badPixels");
   return s.empty() ? "none" : s;
 }
 
 Pipeline::Pipeline(const PipelineOptions& options)
-    : options_(options), previous_(kImagePixels), held_(kImagePixels), heldSignal_(kImagePixels) {}
+    : options_(options), work_(kImagePixels), previous_(kImagePixels), held_(kImagePixels), heldSignal_(kImagePixels) {}
 
 void Pipeline::setOptions(const PipelineOptions& options) { options_ = options; }
 
@@ -66,9 +70,11 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal) {
     return;
   }
 
-  renderBaseline(image, display);
-  if (signal)
-    for (size_t i = 0; i < kImagePixels; ++i) signal[i] = float(image[i]);
+  // The signal, in raw counts: what each stage passes on and tone mapping starts from.
+  float* sig = signal ? signal : work_.data();
+  for (size_t i = 0; i < kImagePixels; ++i) sig[i] = float(image[i]);
+  if (options_.badPixels) replaceBadPixels(badPixels_, sig);  // stage 2
+  renderBaseline(sig, display);
 
   if (!options_.shutterHold) return;
   if (frozen_) {  // the first fresh frame after a cycle
@@ -82,7 +88,7 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal) {
     --blendLeft_;
   }
   std::copy(display, display + kImagePixels, held_.begin());
-  if (signal) std::copy(signal, signal + kImagePixels, heldSignal_.begin());
+  std::copy(sig, sig + kImagePixels, heldSignal_.begin());
 }
 
 }  // namespace tv
