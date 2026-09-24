@@ -44,6 +44,15 @@ struct PipelineOptions {
   float destripeTauS = 4.0f;
   float destripeGate = 5.0f;   // counts
   float destripeClamp = 2.0f;  // counts
+
+  // Stage 4: a per-pixel recursive filter, y += K (x - y), with K = kMin where nothing moves and 1
+  // where it does. Motion is the 3x3 box of (x - y) against its own noise level (sigma, a robust
+  // estimate over the frame, smoothed over time): smoothstep(motionLo, motionHi, |box| / sigma).
+  // Starts over (K = 1) after a calibration. The camera already filters in time (DEVICE.md
+  // "Onboard filtering"), so this gains less than it would on white noise.
+  bool denoise = false;
+  float denoiseKMin = 0.25f;
+  float denoiseMotionLo = 2.0f, denoiseMotionHi = 4.0f;  // in sigmas of the pooled difference
 };
 
 // What the pipeline needs from a frame's metadata (FrameView fpaC(), shutterC()).
@@ -57,7 +66,8 @@ struct FrameMeta {
 // "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade; "badPixels" / "badPixels=0"
 // switches stage 2; "drift" / "drift=0" switches stage 3's compensation, "driftScale=X" and
 // "driftC0=X" tune it; "destripe" / "destripe=0" switches stage 3b, "destripeTau=X",
-// "destripeGate=X" and "destripeClamp=X" tune it. False on an unknown item.
+// "destripeGate=X" and "destripeClamp=X" tune it; "denoise" / "denoise=0" switches stage 4,
+// "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it. False on an unknown item.
 bool parseStages(const std::string& text, PipelineOptions* options);
 std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"
 
@@ -100,6 +110,10 @@ class Pipeline {
   double lastDriftC_ = 0.0;
   std::vector<float> colOffset_, rowOffset_;  // stage 3b's corrections, counts
   std::vector<float> colAcc_, colCount_, colSum_;  // stage 3b's per-column scratch
+  std::vector<float> filtered_, diff_, pooled_;    // stage 4's state and scratch
+  bool haveFiltered_ = false;
+  float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
+  void denoise(float* sig);
   int destripeFrames_ = 0;                    // frames since stage 3b last started over
   void destripe(float* sig);
   void restartDestripe();

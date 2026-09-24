@@ -29,6 +29,9 @@ Metrics, all on the display path's output unless marked °C:
 - detail (roi.json "detail"): RMS of the time-averaged frame minus its Gaussian blur (sigma 2 px)
   inside the ROI; levels and mK. Fine structure a stage must keep (key gaps on `keyboard`).
 
+- step_response (`motion`): for pixels the moving hand leaves or reaches (steps >= 2 °C, found in
+  the baseline), the median fraction of the step done 1, 2 and 4 frames after its biggest change,
+  in each output's °C signal; trails from temporal filtering show as lower numbers (stage 4).
 - shutter (`shutter`): the biggest frame-to-frame display change in the second after the freeze,
   and the total change the NUC brings.
 
@@ -271,6 +274,38 @@ def scene_metrics(scene, disp, temp):
             m["detail"] = {r["name"]: {"levels": round(detail(md, r), 4), "mk": round(1000 * detail(mt, r), 2)}
                            for r in rois["detail"]}
     return m
+
+
+def step_pixels(temp_baseline, min_step_c=2.0):
+    """`motion`: pixels a moving edge leaves or reaches, found in the baseline's °C signal: for each,
+    the frame of its biggest one-frame change and the levels 3 frames before and 8 after. The same
+    pixels and frames are then read in every output, so a slower response means a trail."""
+    x = temp_baseline.astype(np.float64)
+    d = np.diff(x, axis=0)
+    k = np.argmax(np.abs(d), axis=0)
+    picks = []
+    for y, xx in zip(*np.nonzero(np.abs(np.take_along_axis(d, k[None], 0)[0]) > min_step_c / 3)):
+        t = int(k[y, xx])
+        if t < 4 or t + 9 >= x.shape[0]:
+            continue
+        before, after = x[t - 3:t, y, xx].mean(), x[t + 6:t + 9, y, xx].mean()
+        if abs(after - before) >= min_step_c:
+            picks.append((t, y, xx))
+    return picks
+
+
+def step_response(temp, picks):
+    """Median fraction of each picked step done 1, 2 and 4 frames after its biggest change."""
+    if not picks:
+        return None
+    x = temp.astype(np.float64)
+    done = []
+    for t, y, xx in picks:
+        before, after = x[t - 3:t, y, xx].mean(), x[t + 6:t + 9, y, xx].mean()
+        done.append([(x[t + j, y, xx] - before) / (after - before) for j in (1, 2, 4)])
+    med = np.median(np.array(done), axis=0)
+    return {"pixels": len(picks), "done_1": round(float(med[0]), 3), "done_2": round(float(med[1]), 3),
+            "done_4": round(float(med[2]), 3)}
 
 
 def freeze_span(disp):
@@ -522,10 +557,13 @@ def main():
         # The environment the mK figures were computed with (the camera's user area, as-is).
         res = {"environment": info["environment"]}
         span = freeze_span(outputs["baseline"]) if scene == "shutter" else None
+        picks = step_pixels(temps["baseline"]) if scene == "motion" else None
         for st in stages:
             res[st] = scene_metrics(scene, outputs[st], temps[st])
             if span:
                 res[st]["shutter"] = shutter_metrics(outputs[st], span)
+            if picks is not None:
+                res[st]["step_response"] = step_response(temps[st], picks)
         results["scenes"][scene] = res
         if args.rois:
             draw_rois(scene, outputs["baseline"])

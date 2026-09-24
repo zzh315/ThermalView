@@ -39,6 +39,14 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->destripeGate = float(std::atof(value.c_str()));
     } else if (key == "destripeClamp" && !value.empty()) {
       o->destripeClamp = float(std::atof(value.c_str()));
+    } else if (key == "denoise") {
+      o->denoise = on;
+    } else if (key == "denoiseK" && !value.empty()) {
+      o->denoiseKMin = float(std::atof(value.c_str()));
+    } else if (key == "denoiseLo" && !value.empty()) {
+      o->denoiseMotionLo = float(std::atof(value.c_str()));
+    } else if (key == "denoiseHi" && !value.empty()) {
+      o->denoiseMotionHi = float(std::atof(value.c_str()));
     } else {
       return false;
     }
@@ -54,6 +62,7 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.drift) add("drift(x" + std::to_string(o.driftScale).substr(0, 4) + ")");
   if (o.badPixels) add("badPixels");
   if (o.destripe) add("destripe");
+  if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
   return s.empty() ? "none" : s;
 }
 
@@ -64,6 +73,9 @@ Pipeline::Pipeline(const PipelineOptions& options)
       colAcc_(kFrameWidth),
       colCount_(kFrameWidth),
       colSum_(kFrameWidth),
+      filtered_(kImagePixels),
+      diff_(kImagePixels),
+      pooled_(kImagePixels),
       work_(kImagePixels),
       previous_(kImagePixels),
       held_(kImagePixels),
@@ -76,6 +88,7 @@ void Pipeline::reset() {
   frozen_ = false;
   blendLeft_ = blendTotal_ = 0;
   restartDestripe();
+  haveFiltered_ = false;
 }
 
 void Pipeline::restartDestripe() {
@@ -169,6 +182,60 @@ void Pipeline::destripe(float* sig) {
   ++destripeFrames_;
 }
 
+void Pipeline::denoise(float* sig) {
+  const int w = kFrameWidth, h = kImageRows;
+  float* y = filtered_.data();
+  if (!haveFiltered_) {
+    std::copy(sig, sig + kImagePixels, y);
+    haveFiltered_ = true;
+    sigmaD_ = 0.0f;
+    return;
+  }
+  float* d = diff_.data();
+  for (size_t i = 0; i < kImagePixels; ++i) d[i] = sig[i] - y[i];
+  // 3x3 box of the difference: rows first, then columns (edge pixels average what they have).
+  float* p = pooled_.data();
+  for (int r = 0; r < h; ++r) {
+    const float* in = d + size_t(r) * w;
+    float* out = p + size_t(r) * w;
+    for (int x = 0; x < w; ++x) {
+      const int a = std::max(0, x - 1), b = std::min(w - 1, x + 1);
+      float s = 0;
+      for (int k = a; k <= b; ++k) s += in[k];
+      out[x] = s / float(b - a + 1);
+    }
+  }
+  for (int x = 0; x < w; ++x) {
+    // in place, column by column, keeping the row above's original value
+    float above = p[size_t(x)];
+    for (int r = 0; r < h; ++r) {
+      const float here = p[size_t(r) * w + x];
+      const float below = r + 1 < h ? p[size_t(r + 1) * w + x] : here;
+      const float s = (r > 0 ? above : here) + here + below;
+      above = here;
+      p[size_t(r) * w + x] = s / 3.0f;  // edges count themselves twice: close enough
+    }
+  }
+  // Noise level of the pooled difference: a robust sigma from a subsample (most pixels don't move),
+  // smoothed over ~1 s so one busy frame doesn't swing it.
+  float* sample = colAcc_.data();  // 256 entries is plenty: every 192nd pixel
+  int n = 0;
+  for (size_t i = 97; i < kImagePixels && n < kFrameWidth; i += 192) sample[n++] = std::fabs(p[i]);
+  std::nth_element(sample, sample + n / 2, sample + n);
+  const float sigma = 1.4826f * sample[n / 2];
+  sigmaD_ = sigmaD_ > 0.0f ? sigmaD_ + 0.04f * (sigma - sigmaD_) : sigma;
+  const float s = std::max(sigmaD_, 0.05f);
+  const float lo = options_.denoiseMotionLo * s, hi = options_.denoiseMotionHi * s;
+  const float kMin = options_.denoiseKMin;
+  for (size_t i = 0; i < kImagePixels; ++i) {
+    const float m = std::clamp((std::fabs(p[i]) - lo) / (hi - lo), 0.0f, 1.0f);
+    const float motion = m * m * (3.0f - 2.0f * m);  // smoothstep
+    const float k = kMin + (1.0f - kMin) * motion;
+    y[i] += k * d[i];
+    sig[i] = y[i];
+  }
+}
+
 void Pipeline::hold() {
   if (options_.shutterHold && havePrevious_) frozen_ = true;
 }
@@ -191,7 +258,10 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   // The first fresh frame after a cycle (or after hold()): a calibration reset the pattern stage 3b
   // tracks, so it starts over before it runs.
   const bool resuming = frozen_;
-  if (resuming) restartDestripe();
+  if (resuming) {
+    restartDestripe();
+    haveFiltered_ = false;  // stage 4 starts over from the fresh frame
+  }
 
   // The signal, in raw counts: what each stage passes on and tone mapping starts from.
   float* sig = signal ? signal : work_.data();
@@ -206,6 +276,7 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   }
   if (options_.badPixels) replaceBadPixels(badPixels_, sig);  // stage 2
   if (options_.destripe) destripe(sig);                       // stage 3b
+  if (options_.denoise) denoise(sig);                         // stage 4
   renderBaseline(sig, display);
 
   if (!options_.shutterHold) return;
