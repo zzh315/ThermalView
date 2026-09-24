@@ -4,7 +4,7 @@
 Builds and runs `harness bench` (native/core's display path on every bench/<scene>/ dump), then:
 
 - bench/results/<commit>[-dirty].json: the metrics below. <commit> is the last one that touched
-  native/, tools/harness/, palettes/ or this file; "-dirty" while they have uncommitted changes.
+  native/core/, tools/harness/, palettes/ or this file; "-dirty" while they have uncommitted changes.
 - bench/results/<label>/<scene>.jpg: half-size contact sheets (committed).
 - bench/out/sheets/<scene>.png: full-size contact sheets; bench/out/clips/<scene>.mp4: side-by-side
   clips; bench/out/review.html shows both per scene (all local). Each row puts ours, rendered at
@@ -68,7 +68,7 @@ def load(scene, stage="baseline"):
 def label():
     """The last commit that changed the display path or the metrics (docs-only commits don't fork
     results), suffixed -dirty while those paths have uncommitted changes."""
-    paths = ["native", "tools/harness", "palettes", "tools/py/bench.py"]
+    paths = ["native/core", "tools/harness", "palettes", "tools/py/bench.py"]  # what the harness runs
     git = lambda *a: subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True, check=True).stdout.strip()
     commit = git("log", "-1", "--format=%h", "--", *paths)
     dirty = git("status", "--porcelain", "--", *paths) != ""
