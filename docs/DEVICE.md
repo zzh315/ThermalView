@@ -279,3 +279,21 @@ Commands: `adb shell getprop <prop>`, `pm list features`, `wm size`, `wm density
 | App stores | Xiaomi app store (`com.xiaomi.market`) and Google Play both installed | — |
 | adb | Wireless debugging at 192.168.1.114; this Mac was already paired. The connect port changes whenever wireless debugging restarts (41373, then 44269). During camera testing it dropped twice: once briefly (reconnecting on the same port worked), and once for good — the tablet still showed it on, but `adb mdns services` advertised nothing until it was restarted. When the tablet vanishes, check `adb mdns services` first, then ask the owner to toggle wireless debugging | Workflow note for M1 |
 | USB chooser | On plug-in, Android offers the apps whose USB filters match: Hti Image, Xtherm infrared, InfiCam (InfiCamPlus) and ThruTracker Recorder. Apps already running with the camera attached ask for permission directly | M0 compatibility matrix |
+
+### CPU and the pipeline's cost per core (M4, 2026-09-25)
+
+Commands:
+- `adb shell cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq` and `grep "CPU part" /proc/cpuinfo`;
+- `ls /sys/devices/system/cpu/cpu4/core_ctl` and its `min_cpus` / `max_cpus`;
+- `taskset <mask> /data/local/tmp/tv/harness perf thermalview --pipeline <stages>`: the harness built with the NDK and pushed with a benchmark dump, so no install is needed (`tools/harness`, `harness perf`).
+
+| Fact | Value |
+|---|---|
+| Cores | cpus 0–3: 1.80 GHz, CPU part 0x805 (Kryo 585 Silver, Cortex-A55 class). cpus 4–6: 2.42 GHz. cpu 7: 3.19 GHz (0xd0d, Cortex-A77) |
+| core_ctl | Active: cpus 4–6 keep 2–3 cores running, cpu 7 can be paused entirely. `taskset` to a paused core fails with "Invalid argument" (seen for cpu 4 and cpu 7 at different moments), though sysfs still reports it online |
+| Pipeline per frame, `keyboard` (p50) | Stages 1–5: 1.30 ms on cpu 7, 1.76 ms on cpus 5–6, 9.5 ms on cpus 0–3. Stages 1–6: 3.4 / 4.6 / 29.9 ms |
+| The app's other per-frame work | Sanity checks, the per-frame temperature table and readouts: 0.36 ms on cpu 7, 0.47 ms on cpus 5–6, 2.3 ms on cpus 0–3 |
+
+- **Little cores:** they run the pipeline about 7–9× slower than the prime core, and with stage 6 they would miss the 20 ms latency budget.
+- **The app's thread:** with stages 1–5 on replay, the app reported processing p95 8.9 ms (PIPELINE_LOG stage 5). That is between the big-core total (~2.3 ms) and the little-core one (~12 ms), so its processing thread likely spent at least part of the time on little cores.
+- **Pinning:** since `def22ad` the processing thread pins itself to cpus 4–7, and the overlay shows its core and the share of frames on a big core. This is still to be checked in the app.
