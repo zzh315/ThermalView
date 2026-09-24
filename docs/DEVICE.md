@@ -185,6 +185,21 @@ Long run: `tools/py/shutter_stats.py` on the run's CSV. Tablet temperatures, eve
 
 Commands: stats CSVs from the debug "Stats CSV" option, pulled with `adb pull /sdcard/Android/data/dev.thermalview/files/stats/…`, then `tools/py/shutter_stats.py`. Noise came from four dumps through `tools/py/flat_noise.py`. fds and threads came from `run-as dev.thermalview ls /proc/<pid>/fd` and `…/task`.
 
+### Onboard filtering (M3, 2026-09-24 22:10–22:40)
+
+From the benchmark dumps (`bench/<scene>/thermalview.raw`, 200 frames each, recorded 3 s after a NUC; FPA ~36 °C, wall ~24.5 °C). The camera filters its raw output before we see it:
+
+| Fact | Value |
+|---|---|
+| Temporal filter on static noise | Each pixel's noise, with its quadratic trend over the dump removed, correlates with later frames at ρ = +0.72 / +0.54 / +0.39 / +0.19 / −0.01 (lags 1, 2, 3, 5, 10) on `flat`; `room` gives +0.71 / +0.52 / +0.37 / +0.18 / −0.03. That's ρᵏ, the signature of a first-order recursive filter weighting the new frame ~0.28 |
+| …but it passes big changes | On `motion`, pixels that a hand's edge leaves or reaches (steps ≥ 150 counts) are 77–78 % of the way there one frame after the biggest change starts and 93 % after two, both directions (12–13 % the frame before, as the blurred edge arrives). A plain recursive filter would manage 28 % and 48 %. So it's motion-adaptive. How it treats small moving differences (low-ΔT scenes) is untested; `night` will show |
+| Spatially correlated noise | Neighbouring pixels' temporal noise correlates at +0.27 horizontally and +0.30 vertically on `flat` (+0.19 / +0.23 on `room`): the camera also filters spatially, or its readout couples neighbours |
+| A shared slow wander | The frame mean (trend removed) moves with a std of 0.57 counts (11.5 mK) on `flat`, 9–13 mK across `flat`, `room` and `keyboard`, and stays correlated for seconds (lag 5: +0.26 to +0.58); largest frame-to-frame step 17–26 mK. About 11 of `flat`'s 24.7 mK per-pixel noise is this shared part |
+| Per-pixel temporal noise | 1.22 counts (24.7 mK) on `flat`, the same as M1's 1.22–1.30 counts (above) |
+| Fixed pattern right after a NUC | After removing a cubic surface, `flat`'s time-averaged column means vary by 0.56 counts (11.6 mK) and row means by 0.54 counts (11.3 mK), against 2.0–2.2 counts of columns in M1's flat dumps, which were taken longer after a NUC. The pattern grows as the FPA drifts from the NUC (~2 counts per °C, "Recalibration, lockout and hot objects"), so the benchmark's `flat` is the best case |
+
+Commands: `tools/py/onboard_filter.py` (the correlations and step responses; `--static bench/room/thermalview.raw` for `room`), and `tools/py/bench.py` for the noise and stripe figures in mK (`bench/results/`).
+
 ### Power-up calibration (M1, 2026-09-24)
 
 After power-up the camera calibrates itself on a fixed schedule, then stops. Times below are from power-up: the Type-C attach in logcat (`android.hardware.usb@1.2-service-qti: partner added`). The owner listened to one power-up with the start-up `0x8000` skipped and heard pairs of clicks at about 0, 6, 8, 15, 30 and 60 s. Each pair is a close and an open; within counting accuracy they match:

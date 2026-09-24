@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(thermalcore STATIC
   src/command_gate.cpp
+  src/display.cpp
   src/dump.cpp
   src/frame.cpp
   src/readouts.cpp
@@ -23,6 +24,7 @@ if(PROJECT_IS_TOP_LEVEL)
   add_executable(core_tests
     tests/main.cpp
     tests/test_command_gate.cpp
+    tests/test_display.cpp
     tests/test_dump.cpp
     tests/test_frame.cpp
     tests/test_queues.cpp

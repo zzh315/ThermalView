@@ -1,5 +1,6 @@
 # Mac-side tools (docs/PLAN.md). Python 3.13 (CPython 3.13.13 on the dev Mac).
-# opencv-python-headless: imported by the vendored oracle (tools/py/vendor/ht301_hacklib.py).
+# opencv-python-headless: imported by the vendored oracle (tools/py/vendor/ht301_hacklib.py) and
+# used by tools/py/bench.py (Gaussian blur). FFmpeg (bench.py clips) is an external command.
 numpy==2.5.3
 pillow==12.3.0
 pyusb==1.3.1

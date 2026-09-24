@@ -13,3 +13,4 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../native/core ${CMAKE_CURRENT_B
 add_executable(harness src/main.cpp)
 target_link_libraries(harness PRIVATE thermalcore)
 target_compile_options(harness PRIVATE -Wall -Wextra)
+target_compile_definitions(harness PRIVATE TV_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")

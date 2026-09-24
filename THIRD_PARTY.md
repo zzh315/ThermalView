@@ -18,9 +18,10 @@ Everything here is used for personal use only. Revisit these licenses before eve
 | doctest | v2.5.3 (`2d0a935`) | MIT | `native/third_party/doctest` (submodule) | `native/core` unit tests |
 | pyusb | 1.3.1 | BSD-3-Clause | `tools/py/requirements.txt` | Read-only descriptor dump |
 | numpy | 2.5.3 | BSD-3-Clause | `tools/py/requirements.txt` | Analysis tools |
-| Pillow | 12.3.0 | MIT-CMU (HPND) | `tools/py/requirements.txt` | Screenshot analysis |
+| Pillow | 12.3.0 | MIT-CMU (HPND) | `tools/py/requirements.txt` | Screenshot analysis, benchmark crops and contact sheets |
 | ht301_hacklib (github.com/stawel/ht301_hacklib @ `2f1498d`) | GPL-3.0 | `tools/py/vendor/ht301_hacklib.py` (vendored unmodified, with `LICENSE-ht301_hacklib`) | The M2 temperature oracle, `CameraEmulator` only (`tools/py/oracle.py`); golden tables in `native/core/tests/golden` |
-| opencv-python-headless | 5.0.0.93 | Apache-2.0 | `tools/py/requirements.txt` | Imported by the vendored oracle |
+| opencv-python-headless | 5.0.0.93 | Apache-2.0 | `tools/py/requirements.txt` | Imported by the vendored oracle; the Gaussian blur behind `tools/py/bench.py`'s `detail` metric |
+| FFmpeg | 8.1.2 (Homebrew build on the dev Mac) | GPL-3.0-or-later (this build: `--enable-gpl --enable-version3`) | External command, not vendored or linked | `tools/py/bench.py` renders the side-by-side benchmark clips with it |
 
 ## Approaches adapted (ideas, no code copied)
 

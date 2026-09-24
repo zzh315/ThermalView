@@ -5,12 +5,24 @@
 // One CSV row per frame: the unsmoothed low/high/center readouts the app computes (whole frame,
 // per-frame table), the camera's own Block A extremes through the same table, and the mean °C
 // over each --disc (camera pixels within R of X,Y). DUMP is the dump path without .raw.
+//
+//   harness bench [--bench DIR] [--out DIR] [SCENE ...]
+//
+// Renders every benchmark scene (DIR/<scene>/thermalview.raw; default: the repo's bench/) through
+// the display path and writes OUT/<scene>/ (default DIR/out): baseline.f32, the display output
+// (frames × 192 × 256 float32 in [0, 1]); baseline_c.f32, the signal the display path started
+// from in °C, through the table of the dump's middle frame (NaN where it's undefined); and
+// info.json. tools/py/bench.py turns these into metrics, contact sheets and clips.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
+#include "tv/display.h"
 #include "tv/dump.h"
 #include "tv/readouts.h"
 #include "tv/temperature.h"
@@ -23,7 +35,8 @@ struct Disc {
 
 int usage() {
   std::fprintf(stderr,
-               "usage: harness temps DUMP [--range normal|high] [--math ht301|infi] [--disc X,Y,R ...]\n");
+               "usage: harness temps DUMP [--range normal|high] [--math ht301|infi] [--disc X,Y,R ...]\n"
+               "       harness bench [--bench DIR] [--out DIR] [SCENE ...]\n");
   return 2;
 }
 
@@ -101,9 +114,86 @@ int temps(int argc, char** argv) {
   return 0;
 }
 
+bool writeFloats(const std::filesystem::path& path, const std::vector<float>& data) {
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size() * sizeof(float)));
+  return bool(out);
+}
+
+bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::path& outDir) {
+  tv::LoadedDump dump;
+  std::string error;
+  if (!tv::loadDump((sceneDir / "thermalview").string(), &dump, &error) || dump.frameCount == 0) {
+    std::fprintf(stderr, "harness: %s: %s\n", sceneDir.c_str(), error.empty() ? "no frames" : error.c_str());
+    return false;
+  }
+  // One table for the whole dump, so °C noise isn't mixed with the table's frame-to-frame changes.
+  const size_t lutFrame = dump.frameCount / 2;
+  tv::TemperatureLut lut;
+  lut.build(tv::temperatureInputs(tv::FrameView(&dump.frames[lutFrame * tv::kFramePixels])), tv::TempRange::Normal);
+
+  std::vector<float> display(dump.frameCount * tv::kImagePixels), celsius(display.size());
+  for (size_t f = 0; f < dump.frameCount; ++f) {
+    const uint16_t* image = tv::FrameView(&dump.frames[f * tv::kFramePixels]).image();
+    tv::renderBaseline(image, &display[f * tv::kImagePixels]);
+    float* c = &celsius[f * tv::kImagePixels];
+    for (size_t i = 0; i < tv::kImagePixels; ++i) c[i] = lut.valid(image[i]) ? float(lut[image[i]]) : NAN;
+  }
+
+  std::filesystem::create_directories(outDir);
+  std::string info = "{\n  \"scene\": \"" + tv::jsonEscape(sceneDir.filename().string()) + "\",\n";
+  info += "  \"frames\": " + std::to_string(dump.frameCount) + ",\n  \"width\": " +
+          std::to_string(tv::kFrameWidth) + ",\n  \"height\": " + std::to_string(tv::kImageRows) + ",\n";
+  info += "  \"stages\": [\"baseline\"],\n  \"lut_frame\": " + std::to_string(lutFrame) + ",\n  \"t_ms\": [";
+  for (size_t f = 0; f < dump.frameCount; ++f) {
+    const double tMs = dump.timestampsNs.size() == dump.frameCount
+                           ? double(dump.timestampsNs[f] - dump.timestampsNs[0]) / 1e6
+                           : double(f) * 40.0;
+    char b[32];
+    std::snprintf(b, sizeof b, "%s%.1f", f ? ", " : "", tMs);
+    info += b;
+  }
+  info += "]\n}\n";
+  std::ofstream(outDir / "info.json", std::ios::trunc) << info;
+  if (!writeFloats(outDir / "baseline.f32", display) || !writeFloats(outDir / "baseline_c.f32", celsius)) {
+    std::fprintf(stderr, "harness: cannot write %s\n", outDir.c_str());
+    return false;
+  }
+  std::printf("%s: %zu frames\n", sceneDir.filename().c_str(), dump.frameCount);
+  return true;
+}
+
+int bench(int argc, char** argv) {
+  std::filesystem::path benchDir = TV_REPO_DIR "/bench", outDir;
+  std::vector<std::string> scenes;
+  for (int i = 2; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == "--bench" && i + 1 < argc) {
+      benchDir = argv[++i];
+    } else if (a == "--out" && i + 1 < argc) {
+      outDir = argv[++i];
+    } else if (a.starts_with("--")) {
+      return usage();
+    } else {
+      scenes.push_back(a);
+    }
+  }
+  if (outDir.empty()) outDir = benchDir / "out";
+  if (scenes.empty()) {
+    for (const auto& e : std::filesystem::directory_iterator(benchDir))
+      if (e.is_directory() && std::filesystem::exists(e.path() / "thermalview.raw"))
+        scenes.push_back(e.path().filename().string());
+    std::sort(scenes.begin(), scenes.end());
+  }
+  bool ok = !scenes.empty();
+  for (const std::string& scene : scenes) ok = benchScene(benchDir / scene, outDir / scene) && ok;
+  return ok ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "temps") return temps(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "bench") return bench(argc, argv);
   return usage();
 }

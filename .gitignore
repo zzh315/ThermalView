@@ -18,9 +18,14 @@ tools/py/.venv/
 __pycache__/
 *.pyc
 
-# Benchmark data: large, kept locally (docs/PLAN.md M3)
+# Benchmark data: large, kept locally (docs/PLAN.md M3). Full-size screenshots and crops stay
+# local too; the half-size <app>.png copies are committed. bench/out/ is harness output, full-size
+# contact sheets and clips (tools/py/bench.py).
 bench/**/*.raw
 bench/**/*.mp4
+bench/**/*_full.png
+bench/**/*_crop.png
+bench/out/
 
 # macOS
 .DS_Store

@@ -1,0 +1,7 @@
+{
+  "edges": [
+    {"name": "wrist_top", "x": 196, "y": 76, "w": 40, "h": 40, "profile": "y"},
+    {"name": "palm_bottom", "x": 184, "y": 120, "w": 20, "h": 50, "profile": "y"},
+    {"name": "thumb_left", "x": 94, "y": 36, "w": 24, "h": 20, "profile": "x"}
+  ]
+}

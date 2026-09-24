@@ -1,0 +1,8 @@
+{
+  "edges": [
+    {"name": "screen_right", "x": 200, "y": 8, "w": 28, "h": 64, "profile": "x"}
+  ],
+  "detail": [
+    {"name": "keys", "x": 16, "y": 96, "w": 184, "h": 64}
+  ]
+}
