@@ -4,6 +4,47 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 3: drift compensation and stripe cleanup (`7c8f0ba+drift_destripe`)
+
+**What:** the owner approved this approach in place of PLAN's gated stripe tracker, after this evidence.
+- **Between calibrations, every pixel drifts at its own fixed rate as the focal plane warms.**
+- **The pattern repeats across sessions.** Maps from M1's warm-up on a wall (2026-09-24, 7 dumps, 1.1–8.3 °C of drift) and today's desk series (4 dumps, 2.3–5.2 °C) correlate at +0.99. That holds for all three parts: columns +0.91, rows +0.97, per-pixel +0.97.
+- **The pattern is linear in the drift.** The spatial residual is 0.85 counts, ~2 % of the pattern.
+- **The metadata gives the drift.** The shutter temperature (Q+1) keeps its calibration-time value, so dT = (FPA − shutter) − 0.40 °C, per frame, without tracking calibrations.
+
+**Stages:**
+- **3a** subtracts rate × dT × 0.9 before the other stages. The 0.9 fits the per-pixel part on `flat_aged` (0.86–0.91). The map is `native/core/data/drift_KA1213.f32`, built by `tools/py/drift_map.py`.
+- **3b** tracks what's left in rows and columns:
+  - gated medians of each pixel's residual against 8 neighbours;
+  - integrated with τ 4 s;
+  - clamped to ±2 counts, so a faint real line loses at most that much;
+  - restarted at each calibration.
+
+It's the survey's FPA-drift model (PRIOR_ART pass 2 item 8, stage 3 #2), taken per pixel, with the drift read from metadata.
+
+**Metrics** (`bench/results/7c8f0ba+drift_destripe.json`; stages 1–2 on in both columns):
+
+| Metric | Baseline | Stage 3 |
+|---|---|---|
+| `flat_aged` fixed pattern | 188.8 mK | 49.1 mK (a fresh `flat`: 47) |
+| `flat_aged` column / row stripes | 45.9 / 65.9 mK | 12.4 / 23.7 mK |
+| `flat` column / row stripes | 11.6 / 11.3 mK | 8.8 / 9.4 mK |
+| `keyboard` key-gap detail | 81.7 mK | 80.7 mK (−1.2 %) |
+| `keyboard` screen edge | 1.44 px, halo 2.0 % | 1.42 px, 1.5 % |
+| `hand` edges, all flicker | — | unchanged or slightly better |
+| `shutter`: total change at the calibration | 49.1 levels | 36.9 levels (the aged image before it is already mostly corrected) |
+
+Drift alone (3a) gave 54.3 mK of fixed pattern and 21.5 / 28.2 mK of column/row stripes on `flat_aged`.
+
+**Review:** `bench/results/7c8f0ba+drift_destripe/stage3_review.jpg`. On `flat_aged` the aged banding is gone and the desk's real structure shows; `keyboard` looks unchanged.
+
+**Limits:**
+- The map comes from two sessions at FPA 26–37 °C.
+- Cooling (a negative dT), much colder ambients and the 6 % rate difference between sessions are untested. Refining the scale from each calibration's jump is the planned next step.
+- Rows keep ~2× the fresh level.
+
+**Verdict:** pending the owner.
+
 ## 2026-09-25 — Stage 2: software bad-pixel map (`27894b7+badPixels`)
 
 **What:** PLAN M4 stage 2, as a diagnostic plus a guard (PRIOR_ART pass 2 item 8). `tools/py/bad_pixels.py` looks for pixels that are, on uniform dumps:
