@@ -18,18 +18,33 @@
 // pipeline.f32 and pipeline_c.f32 the same way.
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
 //
+//   harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H] [--kernel K]
+//                  [--clamp] [--palette FILE.json] --out FILE.ppm
+//
+// The display path at on-screen size (docs/PLAN.md M5's CPU reference): the pipeline runs over
+// frames 0..N (its filters need the history), then frame N's intensity is upscaled with kernel K
+// (nearest, bilinear, catmullrom, lanczos3, bspline; --clamp: the 2x2 anti-ringing clamp) over the
+// view rectangle (camera pixels; default the whole frame) and mapped through the palette (default
+// grey). Writes a binary PPM.
+//
+//   harness palette FILE.json --out FILE.ppm
+//
+// The palette's 1024-entry table as a 1024 x 64 gradient strip.
+//
 //   harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]
 //
 // Times Pipeline::process on every frame of DUMP (path without .raw), N passes (default 3), and
 // prints the p50, p95 and max per frame in ms. Built with the NDK and run over adb, it measures the
 // stages on the tablet's CPU without installing the app (the performance budget, CLAUDE.md).
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -37,9 +52,11 @@
 #include "tv/display.h"
 #include "tv/drift.h"
 #include "tv/dump.h"
+#include "tv/palette.h"
 #include "tv/pipeline.h"
 #include "tv/readouts.h"
 #include "tv/temperature.h"
+#include "tv/upscale.h"
 
 namespace {
 
@@ -51,6 +68,9 @@ int usage() {
   std::fprintf(stderr,
                "usage: harness temps DUMP [--range normal|high] [--math ht301|infi] [--disc X,Y,R ...]\n"
                "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]\n"
+               "       harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H]\n"
+               "                      [--kernel K] [--clamp] [--palette FILE.json] --out FILE.ppm\n"
+               "       harness palette FILE.json --out FILE.ppm\n"
                "       harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]\n");
   return 2;
 }
@@ -251,6 +271,97 @@ int bench(int argc, char** argv) {
   return ok ? 0 : 1;
 }
 
+bool loadPaletteFile(const std::string& path, tv::PaletteSpec* spec) {
+  std::ifstream in(path);
+  std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  std::string error;
+  if (!in || !tv::parsePalette(text, spec, &error)) {
+    std::fprintf(stderr, "harness: %s: %s\n", path.c_str(), error.empty() ? "cannot read" : error.c_str());
+    return false;
+  }
+  return true;
+}
+
+bool writePpm(const std::string& path, int w, int h, const std::vector<uint8_t>& rgb) {
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << "P6\n" << w << " " << h << "\n255\n";
+  out.write(reinterpret_cast<const char*>(rgb.data()), std::streamsize(rgb.size()));
+  return bool(out);
+}
+
+int render(int argc, char** argv) {
+  if (argc < 3) return usage();
+  const std::string path = argv[2];
+  std::string stages = "default", out, palettePath, kernelText = "bspline";
+  int frameIndex = 0, w = 0, h = 0;
+  bool clamp = false;
+  tv::ViewRect rect;
+  for (int i = 3; i < argc; ++i) {
+    const std::string a = argv[i];
+    auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
+    if (a == "--frame") frameIndex = std::atoi(next().c_str());
+    else if (a == "--size") { if (std::sscanf(next().c_str(), "%dx%d", &w, &h) != 2) return usage(); }
+    else if (a == "--pipeline") stages = next();
+    else if (a == "--rect") { if (std::sscanf(next().c_str(), "%f,%f,%f,%f", &rect.x, &rect.y, &rect.w, &rect.h) != 4) return usage(); }
+    else if (a == "--kernel") kernelText = next();
+    else if (a == "--clamp") clamp = true;
+    else if (a == "--palette") palettePath = next();
+    else if (a == "--out") out = next();
+    else return usage();
+  }
+  tv::PipelineOptions options;
+  tv::Kernel kernel;
+  if (w <= 0 || h <= 0 || out.empty() || !tv::parseStages(stages, &options) || !tv::parseKernel(kernelText, &kernel))
+    return usage();
+  tv::PaletteSpec spec;
+  if (!palettePath.empty() && !loadPaletteFile(palettePath, &spec)) return 1;
+  const auto lut = palettePath.empty() ? std::vector<std::array<uint8_t, 3>>{} : tv::buildPaletteLut(spec);
+  tv::LoadedDump dump;
+  std::string error;
+  if (!tv::loadDump(path, &dump, &error) || dump.frameCount == 0) {
+    std::fprintf(stderr, "harness: %s: %s\n", path.c_str(), error.empty() ? "no frames" : error.c_str());
+    return 1;
+  }
+  tv::Pipeline pipeline(options);
+  pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
+  pipeline.setDriftMap(tv::loadDriftMap(TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32"));
+  std::vector<float> display(tv::kImagePixels);
+  const size_t last = std::min(size_t(std::max(frameIndex, 0)), dump.frameCount - 1);
+  for (size_t f = 0; f <= last; ++f) {
+    const tv::FrameView frame(&dump.frames[f * tv::kFramePixels]);
+    pipeline.process(frame.image(), display.data(), nullptr, {frame.fpaC(), frame.shutterC()});
+  }
+  std::vector<float> up(size_t(w) * size_t(h));
+  tv::upscale(tv::kernelInput(display.data(), kernel), display.data(), kernel, clamp, rect, w, h, up.data());
+  std::vector<uint8_t> rgb(up.size() * 3);
+  for (size_t i = 0; i < up.size(); ++i) {
+    const float v = std::clamp(up[i], 0.0f, 1.0f);
+    if (lut.empty()) {
+      rgb[3 * i] = rgb[3 * i + 1] = rgb[3 * i + 2] = uint8_t(std::lround(255.0f * v));
+    } else {
+      const auto& c = lut[size_t(std::lround(v * float(lut.size() - 1)))];
+      std::copy(c.begin(), c.end(), rgb.begin() + std::ptrdiff_t(3 * i));
+    }
+  }
+  if (!writePpm(out, w, h, rgb)) {
+    std::fprintf(stderr, "harness: cannot write %s\n", out.c_str());
+    return 1;
+  }
+  return 0;
+}
+
+int palette(int argc, char** argv) {
+  if (argc != 5 || std::string(argv[3]) != "--out") return usage();
+  tv::PaletteSpec spec;
+  if (!loadPaletteFile(argv[2], &spec)) return 1;
+  const auto lut = tv::buildPaletteLut(spec);
+  const int w = int(lut.size()), h = 64;
+  std::vector<uint8_t> rgb(size_t(w) * h * 3);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) std::copy(lut[size_t(x)].begin(), lut[size_t(x)].end(), rgb.begin() + 3 * (y * w + x));
+  return writePpm(argv[4], w, h, rgb) ? 0 : 1;
+}
+
 int perf(int argc, char** argv) {
   if (argc < 3) return usage();
   const std::string path = argv[2];
@@ -321,5 +432,7 @@ int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "temps") return temps(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "bench") return bench(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "perf") return perf(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "render") return render(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "palette") return palette(argc, argv);
   return usage();
 }
