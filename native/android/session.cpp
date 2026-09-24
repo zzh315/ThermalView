@@ -3,8 +3,10 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cinttypes>
 #include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 
@@ -109,6 +111,28 @@ std::string constantsText(const FrameView& v) {
   return o;
 }
 
+// The cores of every cluster faster than the slowest (this tablet: cpus 4-7, the A77s, against the
+// A55s at 1.8 GHz), from each core's top frequency; empty if cpufreq can't be read.
+cpu_set_t bigCpuSet(std::string* text) {
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  long freq[32] = {};
+  long lowest = 0;
+  for (int c = 0; c < 32; ++c) {
+    FILE* f = std::fopen(("/sys/devices/system/cpu/cpu" + std::to_string(c) + "/cpufreq/cpuinfo_max_freq").c_str(), "r");
+    if (!f) continue;
+    if (std::fscanf(f, "%ld", &freq[c]) != 1) freq[c] = 0;
+    std::fclose(f);
+    if (freq[c] > 0 && (lowest == 0 || freq[c] < lowest)) lowest = freq[c];
+  }
+  for (int c = 0; c < 32; ++c)
+    if (freq[c] > lowest) {
+      CPU_SET(c, &set);
+      *text += (text->empty() ? "" : ",") + std::to_string(c);
+    }
+  return set;
+}
+
 }  // namespace
 
 const char* stateName(State state) {
@@ -133,6 +157,8 @@ struct Session::Snapshot {
   bool coldStart = false;  // the stream began with repeated frames (camera calibrating)
   std::string startOrderNote;
   double fps = 0, jitterMs = 0, maxIntervalMs = 0, procP95Ms = 0;
+  int cpu = -1;          // the processing thread's core for the last frame
+  double bigShare = 0;   // share of processed frames that ran on a big core
   uint64_t frames = 0, seqGaps = 0, arrivalGaps = 0, rejectedSize = 0, rejectedChecks = 0;
   uint64_t startupDiscarded = 0, overruns = 0, restarts = 0, frozen = 0;
   uint64_t shutterCommanded = 0, shutterDetected = 0, shutterUncommanded = 0;
@@ -383,8 +409,32 @@ void Session::stopProcessing() {
   procThread_.join();
 }
 
+void Session::applyAffinity(bool big) {
+  if (bigCpusText_.empty()) bigCpus_ = bigCpuSet(&bigCpusText_);
+  cpu_set_t set;
+  if (big && CPU_COUNT(&bigCpus_) > 0) {
+    set = bigCpus_;
+  } else {
+    CPU_ZERO(&set);
+    for (int c = 0; c < 32; ++c) CPU_SET(c, &set);
+  }
+  // pid 0: the calling thread only (the processing thread).
+  if (sched_setaffinity(0, sizeof set, &set) != 0)
+    FLOG("processing thread affinity (%s): %s", big ? "big cores" : "any core", std::strerror(errno));
+  else
+    FLOG("processing thread on %s", big && CPU_COUNT(&bigCpus_) > 0 ? ("cpus " + bigCpusText_).c_str() : "any core");
+  affinityBig_ = big;
+  affinitySet_ = true;
+}
+
 void Session::processLoop() {
   while (procRun_) {
+    bool big;
+    {
+      std::lock_guard o(optionsMutex_);
+      big = options_.bigCores;
+    }
+    if (!affinitySet_ || big != affinityBig_) applyAffinity(big);
     if (ring_->waitReadable(std::chrono::milliseconds(50))) {
       while (RawFrame* frame = ring_->beginRead()) {
         handleFrame(*frame);
@@ -482,6 +532,7 @@ void Session::enter(State state, int64_t now) {
     rejectedSize_ = rejectedChecks_ = 0;
     overrunBase_ = ring_->overruns();
     procMs_.clear();
+    cpuFrames_ = cpuFramesBig_ = 0;
     setBanner("");
   }
 }
@@ -993,6 +1044,9 @@ void Session::handleFrame(const RawFrame& frame) {
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
     procMs_.push(double(nowNs() - t0) / 1e6);
+    lastCpu_ = sched_getcpu();
+    ++cpuFrames_;
+    if (lastCpu_ >= 0 && CPU_ISSET(lastCpu_, &bigCpus_)) ++cpuFramesBig_;
   }
 
   // Overlay snapshot.
@@ -1039,6 +1093,8 @@ void Session::handleFrame(const RawFrame& frame) {
   s.camCenterC = lut_.valid(view.centerRaw()) ? lut_[view.centerRaw()] : NAN;
   s.lastCycleMs = lastCycleMs_;
   s.procP95Ms = procMs_.percentile(95);
+  s.cpu = lastCpu_;
+  s.bigShare = cpuFrames_ ? double(cpuFramesBig_) / double(cpuFrames_) : 0.0;
   s.bytes = frame.bytes;
   s.flags = flags;
   s.lastBadFlags = lastFlags_;
@@ -1371,8 +1427,9 @@ std::string Session::overlayText() {
                                              : "  warm start";
   o += format("ThermalView %s  %s  %s order%s%s\n", appVersion_.c_str(), stateName(state),
               s.fallbackOrder ? "fallback" : "stream-first", note.c_str(), start);
-  o += format("fps %.2f  jitter %.2f ms  max %.1f ms  latency p50 %.1f / p95 %.1f ms  proc p95 %.2f ms\n",
-              s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms);
+  o += format("fps %.2f  jitter %.2f ms  max %.1f ms  latency p50 %.1f / p95 %.1f ms  proc p95 %.2f ms  "
+              "cpu %d (big %.0f%%)\n",
+              s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms, s.cpu, 100.0 * s.bigShare);
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
               " (size %" PRIu64 ")  overrun %" PRIu64 "  start-up %" PRIu64 "  restarts %" PRIu64 "\n",
               s.frames, s.seqGaps, s.arrivalGaps, s.rejectedSize + s.rejectedChecks, s.rejectedSize,

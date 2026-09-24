@@ -88,9 +88,10 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setOptions(JNIEnv*, job
                                                                     jboolean statsCsv, jboolean fallbackOrder,
                                                                     jboolean dumpOnLockout, jboolean autoRange,
                                                                     jboolean highMathInfiCam, jboolean lockoutEnabled,
-                                                                    jint rangeSettleMs) {
+                                                                    jint rangeSettleMs, jboolean bigCores) {
   session().setOptions({bool(skipStartupShutter), bool(statsCsv), bool(fallbackOrder), bool(dumpOnLockout),
-                        bool(autoRange), bool(highMathInfiCam), bool(lockoutEnabled), int(rangeSettleMs)});
+                        bool(autoRange), bool(highMathInfiCam), bool(lockoutEnabled), int(rangeSettleMs),
+                        bool(bigCores)});
 }
 
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setRange(JNIEnv* env, jobject, jboolean high) {

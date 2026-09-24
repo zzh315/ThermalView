@@ -29,11 +29,13 @@ data class DebugOptions(
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
     val denoise: Boolean = true,            // M4 stage 4 (approved): motion-adaptive temporal filter
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
+    val detail: Boolean = false,            // M4 stage 6 (awaiting the owner's verdict): detail + sharpening
+    val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
         "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
-        "denoise=" + bit(denoise), "tone=" + bit(tone),
+        "denoise=" + bit(denoise), "tone=" + bit(tone), "detail=" + bit(detail),
     ).joinToString(",")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
@@ -96,7 +98,7 @@ class MainActivity : ComponentActivity() {
         options.value = value
         NativeBridge.setOptions(
             value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout,
-            value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs,
+            value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs, value.bigCores,
         )
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
     }
@@ -105,7 +107,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, denoise, tone (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -127,6 +129,8 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("drift")) o = o.copy(drift = extras.getBoolean("drift"))
         if (extras.containsKey("denoise")) o = o.copy(denoise = extras.getBoolean("denoise"))
         if (extras.containsKey("tone")) o = o.copy(tone = extras.getBoolean("tone"))
+        if (extras.containsKey("detail")) o = o.copy(detail = extras.getBoolean("detail"))
+        if (extras.containsKey("bigCores")) o = o.copy(bigCores = extras.getBoolean("bigCores"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()

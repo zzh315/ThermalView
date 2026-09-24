@@ -150,6 +150,8 @@ private fun DebugPanel(
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
                     Toggle("Stage 4: temporal filter", options.denoise) { onOptions(options.copy(denoise = it)) }
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
+                    Toggle("Stage 6: detail + sharpening", options.detail) { onOptions(options.copy(detail = it)) }
+                    Toggle("Processing on big cores", options.bigCores) { onOptions(options.copy(bigCores = it)) }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }

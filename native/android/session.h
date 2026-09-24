@@ -2,6 +2,8 @@
 // dumper and replay (docs/PLAN.md M1). One instance per process.
 #pragma once
 
+#include <sched.h>
+
 #include <android/native_window.h>
 
 #include <atomic>
@@ -44,6 +46,8 @@ struct Options {
   bool highMathInfiCam = false;     // debug: InfiCam's high-range math instead of ht301_hacklib's
   bool lockoutEnabled = true;       // debug: off only for tests with hot objects the sensor is rated for
   int rangeSettleMs = 500;          // debug: wait between a range command and its 0x8000 (M2 settling)
+  bool bigCores = true;             // keep the processing thread on the big cores (the little ones run
+                                    // the pipeline ~8x slower: M4 stage 6, 28 vs 3.4 ms a frame)
 };
 
 class Session {
@@ -212,6 +216,14 @@ class Session {
   // Statistics.
   ArrivalTracker arrivals_;
   RollingWindow procMs_{250};
+  // Where the processing thread runs (Options::bigCores): the big-core set, whether it's applied,
+  // and how many processed frames ran on a big core.
+  cpu_set_t bigCpus_{};
+  std::string bigCpusText_;
+  bool affinityBig_ = false, affinitySet_ = false;
+  int lastCpu_ = -1;
+  uint64_t cpuFrames_ = 0, cpuFramesBig_ = 0;
+  void applyAffinity(bool big);
   RollingWindow rangeWindow_{125};
   uint64_t rejectedSize_ = 0, rejectedChecks_ = 0, startupDiscarded_ = 0, restarts_ = 0;
   uint64_t frozenFrames_ = 0, shutterCommanded_ = 0, shutterDetected_ = 0, shutterUncommanded_ = 0;
