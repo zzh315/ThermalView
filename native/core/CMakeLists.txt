@@ -10,6 +10,7 @@ add_library(thermalcore STATIC
   src/command_gate.cpp
   src/dump.cpp
   src/frame.cpp
+  src/readouts.cpp
   src/stats.cpp
   src/temperature.cpp
 )
@@ -25,6 +26,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_dump.cpp
     tests/test_frame.cpp
     tests/test_queues.cpp
+    tests/test_readouts.cpp
     tests/test_stats.cpp
     tests/test_temperature.cpp
   )
