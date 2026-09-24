@@ -39,6 +39,7 @@ uniform sampler2D uCoeffs;
 uniform sampler2D uLut;
 uniform sampler2D uClip;   // R8, 1 where a pixel reads over range; filtered, so its edge stays smooth
 uniform vec3 uSaturation;  // the palette's color for those pixels
+uniform vec4 uRect;        // the visible part of the frame, camera pixels: x, y, w, h (zoom and pan)
 uniform int uMode;         // 0 nearest, 1 cardinal B-spline
 uniform int uPalette;      // 0 gray, 1 uLut (and uSaturation)
 in vec2 vUV;
@@ -50,10 +51,11 @@ int mirror(int k, int n) {  // whole-sample symmetric; one reflection covers the
 void main() {
   ivec2 size = textureSize(uImage, 0);
   float g;
+  vec2 cam = uRect.xy + vUV * uRect.zw;  // camera coordinates, pixel p spanning [p, p + 1)
   if (uMode == 0) {
-    g = texelFetch(uImage, clamp(ivec2(vUV * vec2(size)), ivec2(0), size - 1), 0).r;
+    g = texelFetch(uImage, clamp(ivec2(floor(cam)), ivec2(0), size - 1), 0).r;
   } else {
-    vec2 u = vUV * vec2(size) - 0.5;  // camera coordinates, pixel centers at integers
+    vec2 u = cam - 0.5;  // pixel centers at integers
     vec2 fl = floor(u);
     vec2 f = u - fl;
     ivec2 i0 = ivec2(fl);
@@ -79,7 +81,7 @@ void main() {
   g = clamp(g, 0.0, 1.0);
   if (uPalette == 1) {
     vec3 c = texture(uLut, vec2((g * 1023.0 + 0.5) / 1024.0, 0.5)).rgb;
-    outColor = vec4(texture(uClip, vUV).r > 0.5 ? uSaturation : c, 1.0);
+    outColor = vec4(texture(uClip, cam / vec2(size)).r > 0.5 ? uSaturation : c, 1.0);
   } else {
     outColor = vec4(vec3(g), 1.0);
   }
@@ -92,11 +94,13 @@ constexpr const char* kFallbackFragmentShader = R"(#version 300 es
 precision highp float;
 precision highp sampler2D;
 uniform sampler2D uImage;
+uniform vec4 uRect;
 in vec2 vUV;
 out vec4 outColor;
 void main() {
   ivec2 size = textureSize(uImage, 0);
-  float g = clamp(texelFetch(uImage, clamp(ivec2(vUV * vec2(size)), ivec2(0), size - 1), 0).r, 0.0, 1.0);
+  ivec2 p = clamp(ivec2(floor(uRect.xy + vUV * uRect.zw)), ivec2(0), size - 1);
+  float g = clamp(texelFetch(uImage, p, 0).r, 0.0, 1.0);
   outColor = vec4(vec3(g), 1.0);
 }
 )";
@@ -173,6 +177,11 @@ void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut,
   saturation_ = saturation;
 }
 
+void Renderer::setViewRect(float x, float y, float w, float h) {
+  std::lock_guard lock(displayMutex_);
+  rect_ = {x, y, w, h};
+}
+
 void Renderer::requestReadback(std::string prefix, std::string paletteName) {
   std::lock_guard lock(displayMutex_);
   readbackPrefix_ = std::move(prefix);
@@ -193,12 +202,17 @@ void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix
       .write(reinterpret_cast<const char*>(frame.intensity.data()), std::streamsize(sizeof(float) * kImagePixels));
   std::ofstream(prefix + "_clip.u8", std::ios::binary | std::ios::trunc)
       .write(reinterpret_cast<const char*>(frame.clipped.data()), std::streamsize(kImagePixels));
-  char json[256];
+  std::array<float, 4> rect;
+  {
+    std::lock_guard lock(displayMutex_);
+    rect = rect_;
+  }
+  char json[384];
   std::snprintf(json, sizeof json,
                 "{\"width\": %d, \"height\": %d, \"upscaler\": \"%s\", \"palette\": \"%s\", \"mirror_x\": %s, "
-                "\"mirror_y\": %s}\n",
+                "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f]}\n",
                 w, h, upscaler == 1 ? "bspline" : "nearest", palette.c_str(), mirrorX_.load() < 0 ? "true" : "false",
-                mirrorY_.load() < 0 ? "true" : "false");
+                mirrorY_.load() < 0 ? "true" : "false", rect[0], rect[1], rect[2], rect[3]);
   std::ofstream(prefix + ".json", std::ios::trunc) << json;
   LOGI("renderer: readback saved to %s (%dx%d)", prefix.c_str(), w, h);
 }
@@ -359,6 +373,7 @@ bool Renderer::initGl() {
   glUniform1i(glGetUniformLocation(program_, "uLut"), 2);
   glUniform1i(glGetUniformLocation(program_, "uClip"), 3);
   uSaturation_ = glGetUniformLocation(program_, "uSaturation");
+  uRect_ = glGetUniformLocation(program_, "uRect");
 
   for (GLuint* t : {&texture_, &coeffTexture_}) {
     glGenTextures(1, t);
@@ -415,10 +430,12 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   int upscaler;
   bool palette;
   std::array<float, 3> saturation;
+  std::array<float, 4> rect;
   {
     std::lock_guard lock(displayMutex_);
     upscaler = upscaler_;
     saturation = saturation_;
+    rect = rect_;
     if (lutPending_) {
       havePalette_ = pendingLut_.size() == 1024;
       if (havePalette_) {
@@ -454,6 +471,7 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glUseProgram(program_);
   glUniform3f(uSaturation_, saturation[0], saturation[1], saturation[2]);
+  glUniform4f(uRect_, rect[0], rect[1], rect[2], rect[3]);
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
   glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
   glUniform1i(uPalette_, palette ? 1 : 0);

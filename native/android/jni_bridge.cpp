@@ -77,6 +77,11 @@ JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setDisplay(JNIEnv* e
   return toJava(env, session().setDisplay(int(upscaler), toString(env, paletteJson)));
 }
 
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setViewRect(JNIEnv*, jobject, jfloat x, jfloat y, jfloat w,
+                                                                      jfloat h) {
+  session().setViewRect(float(x), float(y), float(w), float(h));
+}
+
 JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setViewWidth(JNIEnv*, jobject, jint px) {
   session().setViewWidth(int(px));
 }

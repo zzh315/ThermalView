@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cinttypes>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -926,6 +927,11 @@ void Session::handleFrame(const RawFrame& frame) {
   }
   // A frame whose only failure is values above 14 bits counts too, in case saturated pixels ever
   // read that way (M2: they clip per pixel at raw ~13835-14192 instead).
+  if (regionPending_.exchange(false)) {
+    std::lock_guard lock(viewMutex_);
+    region_ = pendingRegion_;
+    pipeline_.setRegion(region_);  // stage 5 measures what the view shows
+  }
   const bool usable = !flags || flags == kSanityOver14Bit;
   int hotPixels = 0;      // over range: what the readouts show as "> 120 °C"
   int clippedPixels = 0;  // at the camera's clip: the lockout and the (parked) range switching
@@ -940,7 +946,7 @@ void Session::handleFrame(const RawFrame& frame) {
     // Stage 2 on: readouts also stay off the known bad pixels (PLAN M4).
     const BadPixelMap& bad = pipeline_.badPixels();
     const bool exclude = pipeline_.options().badPixels && !bad.empty();
-    rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, clipRaw_, exclude ? &bad.mask : nullptr);
+    rawReadouts_ = computeReadouts(view.image(), lut_, region_, clipRaw_, exclude ? &bad.mask : nullptr);
     if (stats.max >= std::min(clipRaw_, lockoutRaw_)) {
       const uint16_t* img = view.image();
       for (size_t i = 0; i < kImagePixels; ++i) {
@@ -1056,7 +1062,7 @@ void Session::handleFrame(const RawFrame& frame) {
   if (accepted) {
     const double dt = lastReadoutNs_ ? double(frame.arrivalNs - lastReadoutNs_) / 1e9 : 0.04;
     lastReadoutNs_ = frame.arrivalNs;
-    shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, Region{}, clipRaw_, dt);
+    shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, region_, clipRaw_, dt);
 
     // Camera-hot banner (PLAN M2): the module is rated to ~60 °C ambient and runs ~11-13 °C above it.
     // The FPA word means something else in the high range (M2: it decodes to ~70 °C there).
@@ -1399,6 +1405,21 @@ std::string Session::triggerLockout() {
 void Session::setOptions(const Options& options) {
   std::lock_guard lock(optionsMutex_);
   options_ = options;
+}
+
+void Session::setViewRect(float x, float y, float w, float h) {
+  renderer_.setViewRect(x, y, w, h);
+  // The measurement region: every camera pixel the view shows, at least partly.
+  Region r;
+  r.x0 = std::clamp(int(std::floor(x)), 0, kFrameWidth - 1);
+  r.y0 = std::clamp(int(std::floor(y)), 0, kImageRows - 1);
+  r.x1 = std::clamp(int(std::ceil(x + w)), r.x0 + 1, kFrameWidth);
+  r.y1 = std::clamp(int(std::ceil(y + h)), r.y0 + 1, kImageRows);
+  {
+    std::lock_guard lock(viewMutex_);
+    pendingRegion_ = r;
+  }
+  regionPending_ = true;
 }
 
 std::string Session::setDisplay(int upscaler, const std::string& paletteJson) {

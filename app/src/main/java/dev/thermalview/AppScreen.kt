@@ -5,6 +5,8 @@ import android.view.SurfaceView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
@@ -67,15 +70,55 @@ fun AppScreen(message: String, dumpsDir: String, options: DebugOptions, onOption
         onDispose { view.keepScreenOn = false }
     }
 
+    // Zoom and pan (PLAN M6): pinch zooms 1x-8x around the fingers, a drag pans, a double tap goes
+    // back to 1x. Display-only: the pipeline still processes the whole frame, but the auto range and
+    // the readouts measure what's shown.
+    var zoom by rememberSaveable { mutableStateOf(1f) }
+    var zoomCx by rememberSaveable { mutableStateOf(CamRect.FRAME_W / 2) }
+    var zoomCy by rememberSaveable { mutableStateOf(CamRect.FRAME_H / 2) }
+    val camRect = CamRect.of(zoom, zoomCx, zoomCy)
+    LaunchedEffect(camRect) { NativeBridge.setViewRect(camRect.x, camRect.y, camRect.w, camRect.h) }
+    val viewWidthPx = MainActivity.VIEW_WIDTHS.getOrElse(options.viewSize) { 0 }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx -> SurfaceView(ctx).apply { holder.addCallback(SurfaceCallbacks) } },
             modifier = Modifier.fillMaxSize(),
         )
+        Box(
+            Modifier.fillMaxSize()
+                .pointerInput(viewWidthPx) {
+                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                        val box = viewBox(size.width, size.height, viewWidthPx)
+                        val r = CamRect.of(zoom, zoomCx, zoomCy)
+                            .transformed(box, centroid.x, centroid.y, pan.x, pan.y, gestureZoom)
+                        zoom = r.zoom
+                        zoomCx = r.cx
+                        zoomCy = r.cy
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = {
+                        zoom = 1f
+                        zoomCx = CamRect.FRAME_W / 2
+                        zoomCy = CamRect.FRAME_H / 2
+                    })
+                },
+        )
         ReadoutOverlay(
             active = status.streaming || status.replay.isNotEmpty(),
-            viewWidthPx = MainActivity.VIEW_WIDTHS.getOrElse(options.viewSize) { 0 },
+            viewWidthPx = viewWidthPx,
+            rect = camRect,
         )
+        if (zoom > 1.01f) {
+            Text(
+                "%.1fx".format(zoom),
+                color = Color.White,
+                fontSize = 16.sp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(8.dp).background(Color(0x99000000))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
         // A replay runs without the camera, so the "plug in" prompt doesn't apply then.
         val banner = status.banner.ifEmpty { if (status.replay.isNotEmpty()) "" else message }
         if (banner.isNotEmpty()) {

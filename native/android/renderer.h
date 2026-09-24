@@ -54,6 +54,9 @@ class Renderer {
   // measure (PLAN M4 stage 5; not drawn in gray), from the next frame drawn.
   void setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation);
 
+  // The visible part of the frame in camera pixels (zoom and pan; the whole frame by default).
+  void setViewRect(float x, float y, float w, float h);
+
   // The view's width in panel pixels (4:3; M6's view-size presets, a debug setting until then); 0 or
   // anything larger than the screen allows: the largest 4:3 fit.
   void setViewWidth(int px) { viewWidthPx_ = px; }
@@ -93,7 +96,8 @@ class Renderer {
   EGLSurface surface_ = EGL_NO_SURFACE;
   ANativeWindow* window_ = nullptr;
   GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, clipTexture_ = 0, vao_ = 0;
-  GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1, uSaturation_ = -1;
+  GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1, uSaturation_ = -1, uRect_ = -1;
+  std::array<float, 4> rect_{0.0f, 0.0f, float(kFrameWidth), float(kImageRows)};  // under displayMutex_
   std::array<float, 3> saturation_{0.5f, 0.5f, 0.5f};
   std::string readbackPrefix_, readbackPalette_;  // under displayMutex_
   int viewX_ = 0, viewY_ = 0, viewW_ = 0, viewH_ = 0;  // the last draw's view rectangle

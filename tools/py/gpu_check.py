@@ -52,6 +52,8 @@ def main():
     info = json.loads((OUT / "readback.json").read_text())
     cmd = [HARNESS, "render", OUT / "readback.f32", "--clip", OUT / "readback_clip.u8",
            "--size", f"{info['width']}x{info['height']}", "--kernel", info["upscaler"], "--out", OUT / "cpu.ppm"]
+    if "rect" in info:  # zoom and pan: the camera pixels the view showed
+        cmd += ["--rect", ",".join(f"{v:.4f}" for v in info["rect"])]
     if info["upscaler"] == "bspline":
         cmd.append("--clamp")  # the shader always clamps its B-spline
     if info["palette"] != "gray":

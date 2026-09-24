@@ -47,11 +47,11 @@ private fun parse(a: FloatArray): List<Spot>? =
 
 /**
  * Low / high / center readouts over the image (M2; M6 refines the UI). Marker positions follow
- * the renderer's 4:3 view (renderer.cpp draw()): centered, viewWidthPx wide when that's smaller than
- * the largest fit (the view-size presets), image row 0 at the top, no mirroring.
+ * the renderer's 4:3 view (renderer.cpp draw(); viewBox) and the zoom (rect: the camera pixels
+ * shown): image row 0 at the top, no mirroring. The readouts themselves come from the visible area.
  */
 @Composable
-fun ReadoutOverlay(active: Boolean, viewWidthPx: Int = 0) {
+fun ReadoutOverlay(active: Boolean, viewWidthPx: Int = 0, rect: CamRect = CamRect.of(1f, 128f, 96f)) {
     var spots by remember { mutableStateOf<List<Spot>?>(null) }
     LaunchedEffect(active) {
         while (active) {
@@ -64,21 +64,11 @@ fun ReadoutOverlay(active: Boolean, viewWidthPx: Int = 0) {
     val (high, low, center) = s
     Box(Modifier.fillMaxSize()) {
         Canvas(Modifier.fillMaxSize()) {
-            val w = size.width.toInt()
-            val h = size.height.toInt()
-            var vw = w
-            var vh = h
-            if (w.toLong() * 3 > h.toLong() * 4) vw = h * 4 / 3 else vh = w * 3 / 4
-            if (viewWidthPx in 1 until vw) {
-                vw = viewWidthPx
-                vh = viewWidthPx * 3 / 4
-            }
-            val ox = (w - vw) / 2f
-            val oy = (h - vh) / 2f
-            fun map(x: Float, y: Float) = Offset(ox + (x + 0.5f) * vw / 256f, oy + (y + 0.5f) * vh / 192f)
-            val px = vw / 256f  // one camera pixel on screen
-            if (!high.x.isNaN()) marker(map(high.x, high.y), Color(0xFFFF3B30), up = true, px, high.label())
-            if (!low.x.isNaN()) marker(map(low.x, low.y), Color(0xFF30A0FF), up = false, px, low.label())
+            val box = viewBox(size.width.toInt(), size.height.toInt(), viewWidthPx)
+            fun map(x: Float, y: Float) = rect.toSurface(box, x, y).let { Offset(it.first, it.second) }
+            val px = box.w / rect.w  // one camera pixel on screen
+            if (!high.x.isNaN() && rect.contains(high.x, high.y)) marker(map(high.x, high.y), Color(0xFFFF3B30), up = true, px, high.label())
+            if (!low.x.isNaN() && rect.contains(low.x, low.y)) marker(map(low.x, low.y), Color(0xFF30A0FF), up = false, px, low.label())
             crosshair(map(center.x, center.y), px, center.label())
         }
         Row(

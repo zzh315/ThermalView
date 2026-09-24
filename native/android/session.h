@@ -80,6 +80,10 @@ class Session {
   // The view's width in panel pixels (M6's view-size presets; 0: the largest 4:3 fit).
   void setViewWidth(int px) { renderer_.setViewWidth(px); }
 
+  // Zoom and pan (PLAN M6): the visible part of the frame, camera pixels. The renderer draws it; the
+  // tone mapping and the readouts measure it (the processing thread applies it with the next frame).
+  void setViewRect(float x, float y, float w, float h);
+
   // Debug: the renderer saves its next frame for M5's GPU-vs-CPU check (Renderer::requestReadback).
   void requestReadback(const std::string& prefix, const std::string& paletteName) {
     renderer_.requestReadback(prefix, paletteName);
@@ -231,6 +235,10 @@ class Session {
   // Statistics.
   ArrivalTracker arrivals_;
   RollingWindow procMs_{250};
+  std::mutex viewMutex_;
+  Region pendingRegion_;              // under viewMutex_
+  std::atomic<bool> regionPending_{false};
+  Region region_;                     // processing thread: the measurement region in use
   RollingWindow partMs_[4] = {RollingWindow{250}, RollingWindow{250}, RollingWindow{250}, RollingWindow{250}};
   // Where the processing thread runs (Options::bigCores): the big-core set, whether it's applied,
   // and how many processed frames ran on a big core.
