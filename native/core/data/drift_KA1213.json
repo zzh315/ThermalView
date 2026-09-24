@@ -1,0 +1,56 @@
+{
+  "format": "float32 little-endian, 192 rows x 256 columns, counts per \u00b0C of (FPA - shutter - c0)",
+  "c0_c": 0.4,
+  "std_counts_per_c": 5.2096,
+  "min": -18.182,
+  "max": 17.205,
+  "periods": [
+    {
+      "dumps": [
+        "bench/drift/2026-09-24_pm/dump_20260924_152556.raw",
+        "bench/drift/2026-09-24_pm/dump_20260924_152757.raw",
+        "bench/drift/2026-09-24_pm/dump_20260924_152953.raw",
+        "bench/drift/2026-09-24_pm/dump_20260924_153254.raw",
+        "bench/drift/2026-09-24_pm/dump_20260924_153556.raw",
+        "bench/drift/2026-09-24_pm/dump_20260924_153952.raw",
+        "bench/drift/2026-09-24_pm/dump_20260924_154354.raw"
+      ],
+      "dT_c": [
+        1.104,
+        2.83,
+        4.14,
+        5.669,
+        6.803,
+        7.749,
+        8.332
+      ],
+      "fit_residual_counts": 2.072
+    },
+    {
+      "dumps": [
+        "bench/flat_aged/aged_2min.raw",
+        "bench/flat_aged/aged_4min.raw",
+        "bench/flat_aged/thermalview.raw",
+        "bench/shutter/thermalview.raw:20:59"
+      ],
+      "dT_c": [
+        2.28,
+        3.821,
+        5.032,
+        5.186
+      ],
+      "fit_residual_counts": 1.349
+    }
+  ],
+  "cross_validation": [
+    {
+      "periods": [
+        0,
+        1
+      ],
+      "correlation": 0.9875,
+      "std_ratio": 0.943
+    }
+  ],
+  "tool": "tools/py/drift_map.py"
+}

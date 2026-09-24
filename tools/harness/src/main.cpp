@@ -28,6 +28,7 @@
 
 #include "tv/bad_pixels.h"
 #include "tv/display.h"
+#include "tv/drift.h"
 #include "tv/dump.h"
 #include "tv/pipeline.h"
 #include "tv/readouts.h"
@@ -156,13 +157,15 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   tv::Pipeline pipeline(pipelineOptions ? *pipelineOptions : tv::PipelineOptions{});
   // Stage 2's map is the dump's camera's (its sidecar's serial).
   pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
+  pipeline.setDriftMap(tv::loadDriftMap(TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32"));
   for (size_t f = 0; f < dump.frameCount; ++f) {
-    const uint16_t* image = tv::FrameView(&dump.frames[f * tv::kFramePixels]).image();
+    const tv::FrameView frame(&dump.frames[f * tv::kFramePixels]);
+    const uint16_t* image = frame.image();
     tv::renderBaseline(image, &display[f * tv::kImagePixels]);
     float* c = &celsius[f * tv::kImagePixels];
     for (size_t i = 0; i < tv::kImagePixels; ++i) c[i] = lut.valid(image[i]) ? float(lut[image[i]]) : NAN;
     if (pipelineOptions) {
-      pipeline.process(image, &pipeDisplay[f * tv::kImagePixels], signal.data());
+      pipeline.process(image, &pipeDisplay[f * tv::kImagePixels], signal.data(), {frame.fpaC(), frame.shutterC()});
       float* pc = &pipeCelsius[f * tv::kImagePixels];
       for (size_t i = 0; i < tv::kImagePixels; ++i) pc[i] = toCelsius(signal[i]);
     }

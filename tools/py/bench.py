@@ -16,6 +16,8 @@ Metrics, all on the display path's output unless marked °C:
 - temporal_noise (flat, flat_aged): median per-pixel temporal std, after removing each pixel's quadratic trend
   over the dump (the camera drifts a few counts in 8 s after a NUC); 8-bit display levels and mK.
   Also in mK: the part all pixels share (common_mk) and the noise's lag-1 correlation (rho1).
+- fixed_pattern (flat, flat_aged): the time-averaged frame's std after removing a quadratic
+  surface, levels and mK (stage 3's drift compensation).
 - defects (flat, flat_aged): pixels that stand out from their 5x5 ring in the time-averaged
   frame: the worst in robust sigmas and mK, and how many exceed 6 sigma (stage 2).
 - stripes (flat, flat_aged): std of column means and of row means of the time-averaged frame after removing a
@@ -124,6 +126,19 @@ def remove_poly2d(img, order=3):
 def stripes(mean_frame):
     r = remove_poly2d(mean_frame)
     return float(np.nanstd(np.nanmean(r, axis=0))), float(np.nanstd(np.nanmean(r, axis=1)))
+
+
+def fixed_pattern(mean_levels, mean_c):
+    """Stage 3 (flat, flat_aged): what's left of the time-averaged frame after removing a quadratic
+    surface: the pattern that grows between calibrations, plus the surface's own texture."""
+    def resid(img):
+        yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]
+        u, v = xx / (img.shape[1] - 1) * 2 - 1, yy / (img.shape[0] - 1) * 2 - 1
+        a = np.stack([np.ones_like(u), u, v, u * u, u * v, v * v], -1).reshape(-1, 6)
+        good = np.isfinite(img.ravel())
+        coef, *_ = np.linalg.lstsq(a[good], img.ravel()[good], rcond=None)
+        return float(np.nanstd(img.ravel() - a @ coef))
+    return {"levels": round(resid(mean_levels), 3), "mk": round(1000 * resid(mean_c), 1)}
 
 
 def defects(mean_frame):
@@ -243,6 +258,7 @@ def scene_metrics(scene, disp, temp):
         m["stripes"] = {"col_levels": round(cl, 4), "row_levels": round(rl, 4),
                         "col_mk": round(1000 * cm, 2), "row_mk": round(1000 * rm, 2)}
         m["defects"] = defects(np.mean(temp, axis=0).astype(np.float64))
+        m["fixed_pattern"] = fixed_pattern(disp.mean(axis=0) * 255, np.mean(temp, axis=0).astype(np.float64))
     if scene in STATIC:
         m["flicker_levels"] = round(flicker(disp), 4)
     roi_file = BENCH / scene / "roi.json"

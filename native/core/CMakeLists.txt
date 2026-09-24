@@ -10,6 +10,7 @@ add_library(thermalcore STATIC
   src/bad_pixels.cpp
   src/command_gate.cpp
   src/display.cpp
+  src/drift.cpp
   src/dump.cpp
   src/frame.cpp
   src/pipeline.cpp
@@ -28,6 +29,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_bad_pixels.cpp
     tests/test_command_gate.cpp
     tests/test_display.cpp
+    tests/test_drift.cpp
     tests/test_dump.cpp
     tests/test_frame.cpp
     tests/test_pipeline.cpp
@@ -38,7 +40,8 @@ if(PROJECT_IS_TOP_LEVEL)
   )
   target_include_directories(core_tests PRIVATE ${TV_ROOT}/native/third_party/doctest/doctest)
   target_link_libraries(core_tests PRIVATE thermalcore)
-  target_compile_definitions(core_tests PRIVATE TV_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+  target_compile_definitions(core_tests PRIVATE TV_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
+    TV_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
   target_compile_options(core_tests PRIVATE -Wall -Wextra)
   add_test(NAME core_tests COMMAND core_tests)
   add_test(NAME no_stray_control_writes
