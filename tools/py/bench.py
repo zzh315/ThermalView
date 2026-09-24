@@ -24,7 +24,7 @@ Metrics, all on the display path's output unless marked °C:
 - detail (roi.json "detail"): RMS of the time-averaged frame minus its Gaussian blur (sigma 2 px)
   inside the ROI; levels and mK. Fine structure a stage must keep (key gaps on `keyboard`).
 
-    tools/py/.venv/bin/python tools/py/bench.py [--no-clips] [--rois] [SCENE ...]
+    tools/py/.venv/bin/python tools/py/bench.py [--no-clips] [--rois] [--upscale bicubic|nearest] [SCENE ...]
 """
 
 import argparse
@@ -249,7 +249,13 @@ def tag(im, text, size):
     return im
 
 
-def ours_at(frame, size):
+def ours_at(frame, size, upscale="nearest"):
+    """Our frame at an on-screen size. nearest is what the M1 renderer draws; bicubic (Pillow's is
+    Keys a = -0.5, i.e. Catmull-Rom) previews a smooth upscale until M5's, on the float values."""
+    if upscale == "bicubic":
+        f = np.asarray(Image.fromarray(np.asarray(frame, dtype=np.float32)).resize(size, Image.BICUBIC))
+        g = np.round(np.clip(f, 0, 1) * 255).astype(np.uint8)
+        return Image.fromarray(g).convert("RGB")
     g = np.round(np.clip(frame, 0, 1) * 255).astype(np.uint8)  # the shader's float -> unorm8
     return Image.fromarray(g).resize(size, Image.NEAREST).convert("RGB")
 
@@ -259,7 +265,7 @@ def refs(scene):
     return json.loads(f.read_text()) if f.exists() else {}
 
 
-def contact_sheet(scene, disp, stage_name, results_dir):
+def contact_sheet(scene, disp, stage_name, results_dir, upscale):
     frame = disp[disp.shape[0] // 2]
     rows = []
     for app, info in refs(scene).items():
@@ -267,7 +273,7 @@ def contact_sheet(scene, disp, stage_name, results_dir):
         if not crop.exists():
             continue
         theirs = Image.open(crop).convert("RGB")
-        rows.append((tag(ours_at(frame, theirs.size), f"ThermalView {stage_name}", 40),
+        rows.append((tag(ours_at(frame, theirs.size, upscale), f"ThermalView {stage_name} ({upscale})", 40),
                      tag(theirs, APPS.get(app, app), 40)))
     if not rows:
         return None
@@ -292,7 +298,7 @@ def even(v):
     return int(v) // 2 * 2
 
 
-def clip(scene, disp, stage_name):
+def clip(scene, disp, stage_name, upscale):
     """Rows of [ours | app] at half the app's on-screen size; ours is the dump (8 s at 25 fps), the
     app's is seconds 1-9 of its recording. The two weren't recorded at the same moment."""
     rows = [(app, r) for app, r in refs(scene).items() if (BENCH / scene / f"{app}.mp4").exists()]
@@ -311,7 +317,8 @@ def clip(scene, disp, stage_name):
         sizes.append((w2, h2))
         inputs += ["-ss", "1", "-t", f"{seconds:.2f}", "-i", str(BENCH / scene / f"{app}.mp4")]
         turn = {90: ",transpose=2", -90: ",transpose=1"}.get(r["rotation"], "")
-        graph.append(f"[o{i}]scale={w2}:{h2}:flags=neighbor,format=yuv420p[a{i}]")
+        flags = "bicubic:param0=0:param1=0.5" if upscale == "bicubic" else "neighbor"  # B=0, C=0.5: Catmull-Rom
+        graph.append(f"[o{i}]scale={w2}:{h2}:flags={flags},format=yuv420p[a{i}]")
         graph.append(f"[{i + 1}:v]crop={r['w']}:{r['h']}:{r['x']}:{r['y']}{turn},fps=25,"
                      f"scale={w2}:{h2}:flags=area,format=yuv420p[b{i}]")
     width = max(2 * w + 8 for w, _ in sizes)
@@ -325,7 +332,7 @@ def clip(scene, disp, stage_name):
     d, f = ImageDraw.Draw(labels), font(24)
     y = 0
     for (app, _), (w, h) in zip(rows, sizes):
-        for x, text in ((0, f"ThermalView {stage_name}"), (w + 8, APPS.get(app, app))):
+        for x, text in ((0, f"ThermalView {stage_name} ({upscale})"), (w + 8, APPS.get(app, app))):
             box = d.textbbox((0, 0), text, font=f)
             d.rectangle((x, y, x + box[2] + 16, y + box[3] + 16), fill=(0, 0, 0, 255))
             d.text((x + 8, y + 8), text, fill=(255, 255, 0, 255), font=f)
@@ -383,6 +390,9 @@ def main():
     ap.add_argument("scenes", nargs="*")
     ap.add_argument("--no-clips", action="store_true", help="skip the side-by-side clips")
     ap.add_argument("--rois", action="store_true", help="also draw each scene's ROIs")
+    ap.add_argument("--upscale", choices=("bicubic", "nearest"), default="bicubic",
+                    help="how sheets and clips draw ours: bicubic (default; judge the processing, not "
+                         "the blocks) or nearest (what the M1 renderer shows)")
     args = ap.parse_args()
     scenes = args.scenes or sorted(p.name for p in BENCH.iterdir() if (p / "thermalview.raw").exists())
     run_harness(scenes)
@@ -393,18 +403,18 @@ def main():
     results = json.loads(results_file.read_text()) if results_file.exists() else {"scenes": {}}
     results.update({"label": name, "commit": commit, "dirty": dirty,
                     "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "stages": ["baseline"]})
+                    "stages": ["baseline"], "upscale": args.upscale})
     for scene in scenes:
         info, disp, temp = load(scene)
         # The environment the mK figures were computed with (the camera's user area, as-is).
         results["scenes"][scene] = {"environment": info["environment"]} | scene_metrics(scene, disp, temp)
         if args.rois:
             draw_rois(scene, disp)
-        contact_sheet(scene, disp, "baseline", results_dir)
+        contact_sheet(scene, disp, "baseline", results_dir, args.upscale)
         if not args.no_clips:
-            clip(scene, disp, "baseline")
+            clip(scene, disp, "baseline", args.upscale)
         print(scene, json.dumps(results["scenes"][scene]))
-    results = {k: results[k] for k in ("label", "commit", "dirty", "date", "stages")} | {
+    results = {k: results[k] for k in ("label", "commit", "dirty", "date", "stages", "upscale")} | {
         "scenes": dict(sorted(results["scenes"].items()))}
     results_file.parent.mkdir(parents=True, exist_ok=True)
     results_file.write_text(json.dumps(results, indent=2) + "\n")
