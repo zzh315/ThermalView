@@ -4,6 +4,39 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 5: automatic tone mapping (`903d02a+default`: stages 1–5)
+
+**What:** PLAN M4 stage 5 as FLIR-style plateau equalization (PRIOR_ART pass 2 item 8; `native/core` `tone.h`):
+- **Range:** robust percentiles 0.3 / 99.7 %. The survey's 99.9 % let the small hot spot in `room` jitter the range.
+- **Curve:** a double-plateau histogram equalization, blended 20 % with linear.
+- **Gain cap:** each bin's rise is capped at max gain. What the cap cuts off is redistributed to bins still under it (like CLAHE's clip limit), so a flat scene stays a calm band while separate zones still spread apart.
+- **Damping:** the range expands in 0.1 s and contracts in 1.3 s, with a deadband; the curve eases over 2 s (0.3 s made a moving hand pump).
+- **Offset tracking:** the curve works on the signal minus a tracked global offset (the median frame-to-frame change), so calibration steps and the camera's wander don't show.
+- **Clipped pixels** stay out of the statistics.
+- **Start-up:** the first frame takes its curve directly. Easing in from a neutral curve looked like a second or two of harsh contrast at every start, and it had inflated the first measurements.
+
+**The gain cap was the owner's call** (`bench/results/903d02a+default/stage5_gain_caps.jpg`). At 1 level per count, `room` came out washed out (levels 81–172), like Hti. At 2.0 it has real blacks and whites (35–216), while `flat` stays a band (96–160). The owner chose 2.0.
+
+**Metrics** (stages 1–5 against the baseline; the reference apps from `bench/results/refs.json`):
+
+| Scene | Levels used (baseline → now) | Xtherm | Flicker (baseline → now) | Xtherm |
+|---|---|---|---|---|
+| `flat` | 27–210 → 95–161 (a calm band) | 133–184 | 2.41 → 0.15 | 0.21 |
+| `room` | 25–152 → 34–216 | 41–152 | 0.98 → 0.09 | 0.22 |
+| `keyboard` | 12–239 → 11–244 | 17–204 | 0.54 → 0.13 | 0.13 |
+| `night` | 26–238 → 14–243 | 23–210 | 0.67 → 0.17 | 0.11 |
+| `hand` | 3–246 → 9–244 | 9–242 | 0.19 → 0.13 | 0.09 |
+
+- **`flat` display noise:** 6.2 → 1.4 levels (Xtherm 0.82 at its lower gain).
+- **`keyboard` key detail:** 4.09 → 4.66 levels (Xtherm 3.49, InfiCamPlus 10.3).
+- **`shutter`:** the biggest frame-to-frame step at the calibration is 2.0 levels (43.7 at baseline), and the total visible change 9.5 (49.1).
+- **`motion`:** step response unchanged.
+- **Caveat:** the `keyboard` screen edge's half-slope width reads 1.42 → 2.10 px. The signal's edge is identical; equalization gives the dense screen and background more output and the sparse in-between values less, which flattens the transition's middle in display space. On tone-mapped output, edge metrics partly measure the curve's shape.
+
+**Cost on the tablet** (a replay of `shutter`): processing p95 8.9 ms with stages 1–5, latency p95 11.2 ms.
+
+**Verdict:** approved by the owner (2026-09-25) at gain cap 2.0, and on by default.
+
 ## 2026-09-25 — Stage 4: motion-adaptive temporal filter (`fb23aa7+denoise`, `fb23aa7+denoise_denoiseK-0.1`)
 
 **What:** PLAN M4 stage 4, as the survey's top pick (PRIOR_ART pass 2 item 8): a per-pixel recursive filter, y += K (x − y).
