@@ -38,6 +38,7 @@ struct Options {
   bool dumpOnLockout = false;       // debug: save the frames that trigger an over-range lockout
   bool autoRange = false;           // automatic range switching (off until the M2 iron session)
   bool highMathInfiCam = false;     // debug: InfiCam's high-range math instead of ht301_hacklib's
+  bool lockoutEnabled = true;       // debug: off only for tests with hot objects the sensor is rated for
 };
 
 class Session {
@@ -169,6 +170,7 @@ class Session {
   int holdNoFreezeMs_ = 1000;
   bool rangeLogPending_ = false;
   bool autoRange_ = false;
+  bool lockoutEnabled_ = true;
   std::vector<uint16_t> lastMeta_;  // the latest usable frame, for logging constants at a switch
 
   // Over-range lockout (processing thread).

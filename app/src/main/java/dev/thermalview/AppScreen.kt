@@ -142,6 +142,7 @@ private fun DebugPanel(
                         onOptions(options.copy(rangePairOnReady = it))
                     }
                     Toggle("Auto range switching", options.autoRange) { onOptions(options.copy(autoRange = it)) }
+                    Toggle("Over-range lockout", options.lockoutEnabled) { onOptions(options.copy(lockoutEnabled = it)) }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }

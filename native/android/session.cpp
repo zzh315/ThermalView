@@ -782,6 +782,9 @@ void Session::handleFrame(const RawFrame& frame) {
   {
     std::lock_guard o(optionsMutex_);
     autoRange_ = options_.autoRange;
+    if (lockoutEnabled_ != options_.lockoutEnabled)
+      FLOG("over-range lockout %s (debug option)", options_.lockoutEnabled ? "enabled" : "DISABLED");
+    lockoutEnabled_ = options_.lockoutEnabled;
     highMath_ = options_.highMathInfiCam ? HighRangeMath::InfiCam : HighRangeMath::Ht301;
   }
   if (usable) {
@@ -804,7 +807,7 @@ void Session::handleFrame(const RawFrame& frame) {
   if (state == State::Running) {
     hotStreak_ = hotPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
     const int lockoutFrames = range_ == TempRange::High ? kLockoutFramesHigh : kLockoutFrames;
-    if (hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, hotPixels, stats.max, false);
+    if (lockoutEnabled_ && hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, hotPixels, stats.max, false);
     if (autoRange_ && usable && state_.load() == State::Running) {
       if (range_ == TempRange::Normal) {
         clipStreak_ = hotPixels >= kLockoutPixels ? clipStreak_ + 1 : 0;
