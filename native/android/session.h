@@ -73,6 +73,11 @@ class Session {
   // The display's upscaler (0 nearest, 1 cardinal B-spline) and palette (a palettes/*.json file's
   // text; empty: gray). Returns an error, or "".
   std::string setDisplay(int upscaler, const std::string& paletteJson);
+
+  // Debug: the renderer saves its next frame for M5's GPU-vs-CPU check (Renderer::requestReadback).
+  void requestReadback(const std::string& prefix, const std::string& paletteName) {
+    renderer_.requestReadback(prefix, paletteName);
+  }
   // Stage 3's drift maps, bundled with the app (native/core/data), by camera serial. Call before
   // opening the camera or starting a replay.
   void registerDriftMap(const std::string& serial, DriftMap map);

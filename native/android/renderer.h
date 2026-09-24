@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -53,6 +54,11 @@ class Renderer {
   // measure (PLAN M4 stage 5; not drawn in gray), from the next frame drawn.
   void setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation);
 
+  // Debug (M5's GPU-vs-CPU check): after the next frame drawn, save what the GPU drew in the view
+  // (<prefix>.ppm), the intensity and over-range mask it drew from (<prefix>.f32, <prefix>_clip.u8)
+  // and how (<prefix>.json: size, upscaler, palette, mirroring).
+  void requestReadback(std::string prefix, std::string paletteName);
+
   double latencyP50Ms() const;
   double latencyP95Ms() const;
   uint64_t framesDrawn() const { return drawn_.load(); }
@@ -85,6 +91,9 @@ class Renderer {
   GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, clipTexture_ = 0, vao_ = 0;
   GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1, uSaturation_ = -1;
   std::array<float, 3> saturation_{0.5f, 0.5f, 0.5f};
+  std::string readbackPrefix_, readbackPalette_;  // under displayMutex_
+  int viewX_ = 0, viewY_ = 0, viewW_ = 0, viewH_ = 0;  // the last draw's view rectangle
+  void saveReadback(const DisplayFrame& frame, const std::string& prefix, const std::string& palette, int upscaler);
   std::vector<float> coeffs_;  // the B-spline's coefficients of the frame being drawn
   std::mutex displayMutex_;
   int upscaler_ = 1;

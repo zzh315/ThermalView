@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans), upscaler, palette (ints; applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores (booleans), upscaler, palette (ints; applied first); reconnect, shutter, lockout, stopReplay, readback (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -150,6 +150,12 @@ class MainActivity : ComponentActivity() {
         if (extras.getBoolean("lockout")) Log.i(TAG, "adb: " + NativeBridge.triggerLockout())
         extras.getString("range")?.let { Log.i(TAG, "adb: " + NativeBridge.setRange(it == "high")) }
         if (extras.getBoolean("stopReplay")) NativeBridge.stopReplay()
+        if (extras.getBoolean("readback")) {
+            val dir = java.io.File(storageDir(), "readback").apply { mkdirs() }
+            val prefix = java.io.File(dir, "rb_" + System.currentTimeMillis()).absolutePath
+            NativeBridge.requestReadback(prefix, PALETTES.getOrNull(options.value.palette - 1) ?: "gray")
+            Log.i(TAG, "adb: readback $prefix")
+        }
         extras.getString("replay")?.let { Log.i(TAG, "adb: replay " + NativeBridge.startReplay(it).ifEmpty { "started" }) }
         // Experiments: any stage text, until the next toggle change re-applies the toggles.
         extras.getString("pipeline")?.let { Log.i(TAG, "adb: pipeline " + NativeBridge.setPipeline(it).ifEmpty { it }) }

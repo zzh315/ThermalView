@@ -26,7 +26,9 @@
 // frames 0..N (its filters need the history), then frame N's intensity is upscaled with kernel K
 // (nearest, bilinear, catmullrom, lanczos3, bspline; --clamp: the 2x2 anti-ringing clamp) over the
 // view rectangle (camera pixels; default the whole frame) and mapped through the palette (default
-// grey), with pixels over range in the palette's saturation color. Writes a binary PPM.
+// grey), with pixels over range in the palette's saturation color. Writes a binary PPM. With
+// FILE.f32 in place of DUMP (one frame's intensity, as the app's GPU readback saves it) the pipeline
+// is skipped; --clip FILE.u8 gives its over-range mask and --mirror-x / --mirror-y its mirroring.
 //
 //   harness palette FILE.json --out FILE.ppm
 //
@@ -71,6 +73,7 @@ int usage() {
                "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [--box X,Y,W,H] [SCENE ...]\n"
                "       harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H]\n"
                "                      [--kernel K] [--clamp] [--palette FILE.json] [--box X,Y,W,H] --out FILE.ppm\n"
+               "       harness render FILE.f32 [--clip FILE.u8] [--mirror-x] [--mirror-y] --size WxH ... --out FILE.ppm\n"
                "       harness palette FILE.json --out FILE.ppm\n"
                "       harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]\n");
   return 2;
@@ -299,9 +302,10 @@ bool writePpm(const std::string& path, int w, int h, const std::vector<uint8_t>&
 int render(int argc, char** argv) {
   if (argc < 3) return usage();
   const std::string path = argv[2];
-  std::string stages = "default", out, palettePath, kernelText = "bspline";
+  std::string stages = "default", out, palettePath, kernelText = "bspline", clipPath;
   int frameIndex = 0, w = 0, h = 0;
-  bool clamp = false;
+  bool clamp = false, mirrorX = false, mirrorY = false;
+  const bool fromIntensity = path.size() > 4 && path.compare(path.size() - 4, 4, ".f32") == 0;
   tv::ViewRect rect;
   tv::Region box;
   for (int i = 3; i < argc; ++i) {
@@ -314,6 +318,9 @@ int render(int argc, char** argv) {
     else if (a == "--kernel") kernelText = next();
     else if (a == "--clamp") clamp = true;
     else if (a == "--palette") palettePath = next();
+    else if (a == "--clip") clipPath = next();
+    else if (a == "--mirror-x") mirrorX = true;
+    else if (a == "--mirror-y") mirrorY = true;
     else if (a == "--box") {
       int x, y, bw, bh;
       if (std::sscanf(next().c_str(), "%d,%d,%d,%d", &x, &y, &bw, &bh) != 4 || bw <= 0 || bh <= 0) return usage();
@@ -329,33 +336,58 @@ int render(int argc, char** argv) {
   tv::PaletteSpec spec;
   if (!palettePath.empty() && !loadPaletteFile(palettePath, &spec)) return 1;
   const auto lut = palettePath.empty() ? std::vector<std::array<uint8_t, 3>>{} : tv::buildPaletteLut(spec);
-  tv::LoadedDump dump;
-  std::string error;
-  if (!tv::loadDump(path, &dump, &error) || dump.frameCount == 0) {
-    std::fprintf(stderr, "harness: %s: %s\n", path.c_str(), error.empty() ? "no frames" : error.c_str());
-    return 1;
-  }
-  tv::Pipeline pipeline(options);
-  pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
-  pipeline.setDriftMap(tv::loadDriftMap(TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32"));
-  pipeline.setRegion(box);
-  std::vector<float> display(tv::kImagePixels);
-  const size_t last = std::min(size_t(std::max(frameIndex, 0)), dump.frameCount - 1);
-  for (size_t f = 0; f <= last; ++f) {
-    const tv::FrameView frame(&dump.frames[f * tv::kFramePixels]);
-    pipeline.process(frame.image(), display.data(), nullptr, {frame.fpaC(), frame.shutterC()});
+  std::vector<float> display(tv::kImagePixels), mask(tv::kImagePixels, 0.0f);
+  if (fromIntensity) {
+    std::ifstream in(path, std::ios::binary);
+    in.read(reinterpret_cast<char*>(display.data()), std::streamsize(sizeof(float) * tv::kImagePixels));
+    if (!in) {
+      std::fprintf(stderr, "harness: %s: not one frame of intensity\n", path.c_str());
+      return 1;
+    }
+    if (!clipPath.empty()) {
+      std::vector<uint8_t> clip(tv::kImagePixels);
+      std::ifstream c(clipPath, std::ios::binary);
+      c.read(reinterpret_cast<char*>(clip.data()), std::streamsize(clip.size()));
+      for (size_t i = 0; i < tv::kImagePixels; ++i) mask[i] = float(clip[i]) / 255.0f;
+    }
+  } else {
+    tv::LoadedDump dump;
+    std::string error;
+    if (!tv::loadDump(path, &dump, &error) || dump.frameCount == 0) {
+      std::fprintf(stderr, "harness: %s: %s\n", path.c_str(), error.empty() ? "no frames" : error.c_str());
+      return 1;
+    }
+    tv::Pipeline pipeline(options);
+    pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
+    pipeline.setDriftMap(tv::loadDriftMap(TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32"));
+    pipeline.setRegion(box);
+    const size_t last = std::min(size_t(std::max(frameIndex, 0)), dump.frameCount - 1);
+    for (size_t f = 0; f <= last; ++f) {
+      const tv::FrameView frame(&dump.frames[f * tv::kFramePixels]);
+      pipeline.process(frame.image(), display.data(), nullptr, {frame.fpaC(), frame.shutterC()});
+    }
+    // Pixels that read over range (> 120 °C through the frame's own table, the readouts' threshold).
+    const tv::FrameView shown(&dump.frames[last * tv::kFramePixels]);
+    tv::TemperatureLut table;
+    table.build(tv::temperatureInputs(shown), tv::TempRange::Normal);
+    const uint16_t clipRaw = tv::overRangeRaw(table);
+    for (size_t i = 0; i < tv::kImagePixels; ++i) mask[i] = shown.image()[i] >= clipRaw ? 1.0f : 0.0f;
   }
   std::vector<float> up(size_t(w) * size_t(h));
   tv::upscale(tv::kernelInput(display.data(), kernel), display.data(), kernel, clamp, rect, w, h, up.data());
-  // Pixels that read over range (> 120 °C through the frame's own table) take the palette's
-  // saturation color where their bilinear mask passes 0.5, as the GPU does with a filtered R8 mask.
-  const tv::FrameView shown(&dump.frames[last * tv::kFramePixels]);
-  tv::TemperatureLut table;
-  table.build(tv::temperatureInputs(shown), tv::TempRange::Normal);
-  const uint16_t clipRaw = tv::overRangeRaw(table);
-  std::vector<float> mask(tv::kImagePixels), maskUp(up.size());
-  for (size_t i = 0; i < tv::kImagePixels; ++i) mask[i] = shown.image()[i] >= clipRaw ? 1.0f : 0.0f;
+  // Over-range pixels take the palette's saturation color where their bilinear mask passes 0.5, as
+  // the GPU does with a filtered R8 mask.
+  std::vector<float> maskUp(up.size());
   tv::upscale(mask, mask.data(), tv::Kernel::Bilinear, false, rect, w, h, maskUp.data());
+  if (mirrorX || mirrorY) {
+    std::vector<float> a = up, b = maskUp;
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        const size_t from = size_t(mirrorY ? h - 1 - y : y) * size_t(w) + size_t(mirrorX ? w - 1 - x : x);
+        up[size_t(y) * size_t(w) + size_t(x)] = a[from];
+        maskUp[size_t(y) * size_t(w) + size_t(x)] = b[from];
+      }
+  }
   std::vector<uint8_t> rgb(up.size() * 3);
   for (size_t i = 0; i < up.size(); ++i) {
     const float v = std::clamp(up[i], 0.0f, 1.0f);

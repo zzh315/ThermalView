@@ -1,6 +1,8 @@
 #include "renderer.h"
 
+#include <cstdio>
 #include <ctime>
+#include <fstream>
 
 #include "log.h"
 #include "tv/upscale.h"
@@ -171,6 +173,36 @@ void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut,
   saturation_ = saturation;
 }
 
+void Renderer::requestReadback(std::string prefix, std::string paletteName) {
+  std::lock_guard lock(displayMutex_);
+  readbackPrefix_ = std::move(prefix);
+  readbackPalette_ = std::move(paletteName);
+}
+
+void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix, const std::string& palette,
+                            int upscaler) {
+  const int w = viewW_, h = viewH_;
+  std::vector<uint8_t> rgba(size_t(w) * size_t(h) * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(viewX_, viewY_, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+  std::ofstream ppm(prefix + ".ppm", std::ios::binary | std::ios::trunc);
+  ppm << "P6\n" << w << " " << h << "\n255\n";
+  for (int y = h - 1; y >= 0; --y)  // GL rows run bottom-up
+    for (int x = 0; x < w; ++x) ppm.write(reinterpret_cast<const char*>(&rgba[(size_t(y) * w + x) * 4]), 3);
+  std::ofstream(prefix + ".f32", std::ios::binary | std::ios::trunc)
+      .write(reinterpret_cast<const char*>(frame.intensity.data()), std::streamsize(sizeof(float) * kImagePixels));
+  std::ofstream(prefix + "_clip.u8", std::ios::binary | std::ios::trunc)
+      .write(reinterpret_cast<const char*>(frame.clipped.data()), std::streamsize(kImagePixels));
+  char json[256];
+  std::snprintf(json, sizeof json,
+                "{\"width\": %d, \"height\": %d, \"upscaler\": \"%s\", \"palette\": \"%s\", \"mirror_x\": %s, "
+                "\"mirror_y\": %s}\n",
+                w, h, upscaler == 1 ? "bspline" : "nearest", palette.c_str(), mirrorX_.load() < 0 ? "true" : "false",
+                mirrorY_.load() < 0 ? "true" : "false");
+  std::ofstream(prefix + ".json", std::ios::trunc) << json;
+  LOGI("renderer: readback saved to %s (%dx%d)", prefix.c_str(), w, h);
+}
+
 void Renderer::setMirror(bool x, bool y) {
   mirrorX_ = x ? -1.0f : 1.0f;
   mirrorY_ = y ? -1.0f : 1.0f;
@@ -222,6 +254,15 @@ void Renderer::loop() {
     if (surface_ == EGL_NO_SURFACE || !(doSwitch || doClear || haveNew)) continue;
 
     draw(frames_.readSlot(), haveFrame_);
+    std::string readback, readbackPalette;
+    int upscaler = 0;
+    if (haveFrame_ && program_) {
+      std::lock_guard lock(displayMutex_);
+      readback.swap(readbackPrefix_);
+      readbackPalette = readbackPalette_;
+      upscaler = upscaler_;
+    }
+    if (!readback.empty()) saveReadback(frames_.readSlot(), readback, readbackPalette, upscaler);
     eglSwapBuffers(display_, surface_);
     if (haveNew) {
       const double ms = double(nowNs() - frames_.readSlot().arrivalNs) / 1e6;
@@ -360,7 +401,11 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   // Letterbox the 4:3 image into the surface.
   int vw = w, vh = h;
   if (int64_t(w) * 3 > int64_t(h) * 4) vw = h * 4 / 3; else vh = w * 3 / 4;
-  glViewport((w - vw) / 2, (h - vh) / 2, vw, vh);
+  viewX_ = (w - vw) / 2;
+  viewY_ = (h - vh) / 2;
+  viewW_ = vw;
+  viewH_ = vh;
+  glViewport(viewX_, viewY_, vw, vh);
 
   int upscaler;
   bool palette;
