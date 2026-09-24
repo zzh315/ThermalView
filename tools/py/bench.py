@@ -3,8 +3,8 @@
 
 Builds and runs `harness bench` (native/core's display path on every bench/<scene>/ dump), then:
 
-- bench/results/<commit>[-dirty].json: the metrics below ("-dirty" when native/, tools/harness/,
-  palettes/ or this file have uncommitted changes).
+- bench/results/<commit>[-dirty].json: the metrics below. <commit> is the last one that touched
+  native/, tools/harness/, palettes/ or this file; "-dirty" while they have uncommitted changes.
 - bench/results/<label>/<scene>.jpg: half-size contact sheets (committed).
 - bench/out/sheets/<scene>.png: full-size contact sheets; bench/out/clips/<scene>.mp4: side-by-side
   clips; bench/out/review.html shows both per scene (all local). Each row puts ours, rendered at
@@ -66,11 +66,12 @@ def load(scene, stage="baseline"):
 
 
 def label():
-    commit = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True,
-                            text=True, check=True).stdout.strip()
+    """The last commit that changed the display path or the metrics (docs-only commits don't fork
+    results), suffixed -dirty while those paths have uncommitted changes."""
     paths = ["native", "tools/harness", "palettes", "tools/py/bench.py"]
-    dirty = subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "--", *paths], capture_output=True,
-                           text=True, check=True).stdout.strip() != ""
+    git = lambda *a: subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True, check=True).stdout.strip()
+    commit = git("log", "-1", "--format=%h", "--", *paths)
+    dirty = git("status", "--porcelain", "--", *paths) != ""
     return commit, dirty, commit + ("-dirty" if dirty else "")
 
 
@@ -395,7 +396,8 @@ def main():
                     "stages": ["baseline"]})
     for scene in scenes:
         info, disp, temp = load(scene)
-        results["scenes"][scene] = scene_metrics(scene, disp, temp)
+        # The environment the mK figures were computed with (the camera's user area, as-is).
+        results["scenes"][scene] = {"environment": info["environment"]} | scene_metrics(scene, disp, temp)
         if args.rois:
             draw_rois(scene, disp)
         contact_sheet(scene, disp, "baseline", results_dir)

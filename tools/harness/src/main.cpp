@@ -12,7 +12,8 @@
 // the display path and writes OUT/<scene>/ (default DIR/out): baseline.f32, the display output
 // (frames × 192 × 256 float32 in [0, 1]); baseline_c.f32, the signal the display path started
 // from in °C, through the table of the dump's middle frame (NaN where it's undefined); and
-// info.json. tools/py/bench.py turns these into metrics, contact sheets and clips.
+// info.json, with that frame's environment inputs (the camera's user area, used as-is) and FPA.
+// tools/py/bench.py turns these into metrics, contact sheets and clips.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -129,8 +130,9 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   }
   // One table for the whole dump, so °C noise isn't mixed with the table's frame-to-frame changes.
   const size_t lutFrame = dump.frameCount / 2;
+  const tv::TemperatureInputs in = tv::temperatureInputs(tv::FrameView(&dump.frames[lutFrame * tv::kFramePixels]));
   tv::TemperatureLut lut;
-  lut.build(tv::temperatureInputs(tv::FrameView(&dump.frames[lutFrame * tv::kFramePixels])), tv::TempRange::Normal);
+  lut.build(in, tv::TempRange::Normal);
 
   std::vector<float> display(dump.frameCount * tv::kImagePixels), celsius(display.size());
   for (size_t f = 0; f < dump.frameCount; ++f) {
@@ -144,7 +146,14 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   std::string info = "{\n  \"scene\": \"" + tv::jsonEscape(sceneDir.filename().string()) + "\",\n";
   info += "  \"frames\": " + std::to_string(dump.frameCount) + ",\n  \"width\": " +
           std::to_string(tv::kFrameWidth) + ",\n  \"height\": " + std::to_string(tv::kImageRows) + ",\n";
-  info += "  \"stages\": [\"baseline\"],\n  \"lut_frame\": " + std::to_string(lutFrame) + ",\n  \"t_ms\": [";
+  char env[256];
+  std::snprintf(env, sizeof env,
+                "  \"environment\": {\"emissivity\": %.3f, \"reflected_c\": %.2f, \"air_c\": %.2f, "
+                "\"humidity\": %.3f, \"distance\": %u, \"fpa_c\": %.2f},\n",
+                in.emissivity, in.reflectedC, in.airC, in.humidity, unsigned(in.distance), in.fpaC);
+  info += "  \"stages\": [\"baseline\"],\n  \"lut_frame\": " + std::to_string(lutFrame) + ",\n";
+  info += env;
+  info += "  \"t_ms\": [";
   for (size_t f = 0; f < dump.frameCount; ++f) {
     const double tMs = dump.timestampsNs.size() == dump.frameCount
                            ? double(dump.timestampsNs[f] - dump.timestampsNs[0]) / 1e6
