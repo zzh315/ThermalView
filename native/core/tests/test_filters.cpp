@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <vector>
 
 #include "doctest.h"
@@ -233,5 +234,59 @@ TEST_CASE("stage 6 stays finite on degenerate frames: constant, all clipped, a l
       p.process(img.data(), d.data());
       CHECK(finite());
     }
+  }
+}
+
+TEST_CASE("non-local means matches a brute-force evaluation") {
+  std::vector<float> a(tv::kImagePixels), fast(tv::kImagePixels), scratch;
+  uint32_t s = 23;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x)  // a ramp with a step and some texture, plus noise
+      a[size_t(y) * W + x] = 0.05f * float(x) + (x > 128 ? 6.0f : 0.0f) + ((x / 4 + y / 4) % 2 ? 1.5f : 0.0f) + 2.0f * noise(s);
+  auto reflect = [](int k, int n) {
+    while (k < 0 || k >= n) k = k < 0 ? -k : 2 * (n - 1) - k;
+    return k;
+  };
+  auto at = [&](int x, int y) { return a[size_t(reflect(y, H)) * W + size_t(reflect(x, W))]; };
+  for (auto [sr, pr, h] : {std::tuple{2, 2, 1.2f}, std::tuple{3, 2, 0.9f}, std::tuple{2, 1, 1.5f}}) {
+    CAPTURE(sr);
+    CAPTURE(pr);
+    tv::nonLocalMeans(a.data(), fast.data(), sr, pr, h, scratch);
+    const int probes[][2] = {{0, 0}, {1, 1}, {128, 96}, {129, 96}, {W - 1, H - 1}, {W - 2, 5}, {3, H - 3}, {200, 40}};
+    for (const auto& pt : probes) {
+      double num = 0, den = 0;
+      for (int dy = -sr; dy <= sr; ++dy)
+        for (int dx = -sr; dx <= sr; ++dx) {
+          double dist = 0;
+          for (int ky = -pr; ky <= pr; ++ky)
+            for (int kx = -pr; kx <= pr; ++kx)
+              dist += std::fabs(at(pt[0] + kx, pt[1] + ky) - at(pt[0] + dx + kx, pt[1] + dy + ky));
+          dist /= double((2 * pr + 1) * (2 * pr + 1));
+          const double wt = (dx == 0 && dy == 0) ? 1.0 : std::exp(-(dist / h) * (dist / h));
+          num += wt * at(pt[0] + dx, pt[1] + dy);
+          den += wt;
+        }
+      CHECK(fast[size_t(pt[1]) * W + pt[0]] == doctest::Approx(num / den).epsilon(2e-3));
+    }
+  }
+}
+
+TEST_CASE("the fast non-local means, in bands, matches the reference") {
+  std::vector<float> a(tv::kImagePixels), ref(tv::kImagePixels), fast(tv::kImagePixels, -1.0f), scratch;
+  uint32_t s = 29;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x)
+      a[size_t(y) * W + x] = 0.05f * float(x) + (x > 128 ? 6.0f : 0.0f) + ((x / 4 + y / 4) % 2 ? 1.5f : 0.0f) + 2.0f * noise(s);
+  for (auto [sr, pr, h] : {std::tuple{2, 2, 1.2f}, std::tuple{3, 2, 0.9f}, std::tuple{2, 1, 1.5f}, std::tuple{5, 2, 1.2f}}) {
+    CAPTURE(sr);
+    CAPTURE(pr);
+    tv::nonLocalMeans(a.data(), ref.data(), sr, pr, h, scratch);
+    tv::NlmPadded padded;
+    tv::nlmPad(a.data(), sr, pr, &padded);
+    for (auto [y0, y1] : {std::pair{0, 50}, std::pair{50, 51}, std::pair{51, 140}, std::pair{140, H}})
+      tv::nlmBand(padded, fast.data(), y0, y1, sr, pr, h, scratch);
+    float worst = 0;
+    for (size_t i = 0; i < tv::kImagePixels; ++i) worst = std::max(worst, std::fabs(fast[i] - ref[i]));
+    CHECK(worst < 1e-3f);  // (the reference interpolates a 1024-entry table: its own error is ~1e-4 of the range)
   }
 }

@@ -15,7 +15,7 @@
 // info.json, with that frame's environment inputs (the camera's user area, used as-is) and FPA.
 // --pipeline also runs native/core's Pipeline, starting from its defaults (the approved stages) and
 // changed by a comma-separated list ("default", "shutter=0", "shutterBlend=N", ...), and writes
-// pipeline.f32 and pipeline_c.f32 the same way. --box sets the pipeline's measurement region
+// pipeline.f32 and pipeline_c.f32 the same way, plus pipeline_s.f32: that signal in raw counts. --box sets the pipeline's measurement region
 // (camera pixels): stage 5's statistics come from it alone (docs/PLAN.md M4 stage 5).
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
 //
@@ -181,10 +181,11 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
     return float(lut[uint16_t(i)] + (r - float(i)) * (lut[uint16_t(i + 1)] - lut[uint16_t(i)]));
   };
   std::vector<float> display(dump.frameCount * tv::kImagePixels), celsius(display.size());
-  std::vector<float> pipeDisplay, pipeCelsius, signal(tv::kImagePixels);
+  std::vector<float> pipeDisplay, pipeCelsius, pipeSignal, signal(tv::kImagePixels);
   if (pipelineOptions) {
     pipeDisplay.resize(display.size());
     pipeCelsius.resize(display.size());
+    pipeSignal.resize(display.size());
   }
   tv::Pipeline pipeline(pipelineOptions ? *pipelineOptions : tv::PipelineOptions{});
   // Stage 2's map is the dump's camera's (its sidecar's serial).
@@ -201,6 +202,7 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
       pipeline.process(image, &pipeDisplay[f * tv::kImagePixels], signal.data(), {frame.fpaC(), frame.shutterC()});
       float* pc = &pipeCelsius[f * tv::kImagePixels];
       for (size_t i = 0; i < tv::kImagePixels; ++i) pc[i] = toCelsius(signal[i]);
+      std::copy(signal.begin(), signal.end(), pipeSignal.begin() + std::ptrdiff_t(f * tv::kImagePixels));
     }
   }
 
@@ -230,7 +232,8 @@ bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::pa
   std::ofstream(outDir / "info.json", std::ios::trunc) << info;
   if (!writeFloats(outDir / "baseline.f32", display) || !writeFloats(outDir / "baseline_c.f32", celsius) ||
       (pipelineOptions && (!writeFloats(outDir / "pipeline.f32", pipeDisplay) ||
-                           !writeFloats(outDir / "pipeline_c.f32", pipeCelsius)))) {
+                           !writeFloats(outDir / "pipeline_c.f32", pipeCelsius) ||
+                           !writeFloats(outDir / "pipeline_s.f32", pipeSignal)))) {
     std::fprintf(stderr, "harness: cannot write %s\n", outDir.c_str());
     return false;
   }

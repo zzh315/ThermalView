@@ -4,6 +4,73 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 4b: spatial noise reduction, a study, then non-local means (preview; awaiting the owner)
+
+**Why:** with stage 4 removed, the owner found tone mapping showed more noise. They asked for noise reduction within each frame, so nothing can ghost, but only after the best method was found (`tools/py/nr_study.py`).
+
+**The noise:** the pipeline's signal after stages 1–3, from the still scenes.
+- **Level:** 1.06–1.10 counts per pixel on `flat`, `flat_aged` and `room`. It doesn't depend on the scene level (1.04–1.08 counts in every level band).
+- **Spatially:** nearly white once the frame's shared wander is removed (neighbours +0.07 horizontally, +0.11 vertically). The earlier +0.27 / +0.30 included the shared part.
+- **A per-frame stripe part:**
+  - column offsets 0.25 counts and row offsets 0.20, which change every frame;
+  - 3.5× what random noise would give, and ~10% of the noise energy;
+  - an isotropic filter can't remove them.
+- **Excluded as references:** `keyboard` and `night` aren't truly still.
+
+**Method:** each candidate runs per frame on the stages 1–3 signal, over a sweep of strengths.
+- **Noise:** each pixel's temporal std, its trend and the frame's shared offset removed.
+- **Bias:** time-mean of the output minus time-mean of the input, on `keyboard` and `room`.
+- **Key texture:** the benchmark's `detail` on `keyboard`'s keys.
+- **Edges:** 10–90% rise of `keyboard`'s screen edge and `hand`'s palm, per frame.
+
+The methods scale by the camera's temporal noise. A single frame's own noise estimate reads 1.5–1.8× too high, since fixed pattern and texture inflate it.
+
+**Results** (noise relative to the input; texture relative too):
+
+| Method | Near 97% texture kept: `flat` / `room` noise | Notes |
+|---|---|---|
+| Guided-filter detail attenuation (the first idea) | ×0.71 / ×0.77 (97.4%) | Weakest of the adaptive ones |
+| Guided filter as denoiser (eps = kσ²) | ×0.65 / ×0.81 (97.2%) | |
+| Lee local Wiener (7×7) | ×0.67 / ×0.81 (97.0%) | |
+| Bilateral (5×5) | ×0.65 / ×0.71 (96.9%) | Some blotches |
+| Starlet wavelet shrinkage | hard: ×0.68 at 90%; soft: ×0.39 at 70% | Loses texture, softens edges (screen 2.8 → 3.4–3.9 px) |
+| Non-local means, 5×5 patches, 5×5 search | ×0.45 / ×0.59 (98.4%) | |
+| NLM, 7×7 search | ×0.36 / ×0.53 (98.2%) | |
+| NLM, 11×11 search | ×0.29 / ×0.48 (97.9%) | |
+
+- **Settings used in the table:** the NLM rows use strength 1.2; the 11×11 search has more at the same texture.
+- **NLM's form:**
+  - OpenCV's 16-bit form (mean |patch difference|, Gaussian weight, the pixel itself at weight 1) keeps ~2% more texture than squared differences with Buades' noise correction.
+  - 5×5 patches beat 3×3.
+  - A sparse 12-pair search pattern did no better than the dense 5×5.
+- **Edges and halos:** strong edges are unchanged by every NLM variant.
+
+**Stripes after noise reduction:** removing the grain leaves the per-frame column and row noise, 30–39% of what's left after NLM on `flat`, and stripes stand out more than grain. A per-frame, edge-gated column/row removal halves them, but its estimate took in real scene lines (`bench/results/nr_study/per_frame_destripe_removed_keyboard.png`: the screen edge, the keyboard's rows). So it's rejected; the stripes stay parked (owner, 2026-09-25) and need a frame-to-frame estimate.
+
+**Built (stage 4b, off):** NLM with 5×5 patches in `native/core`.
+- **Implementation:** `nonLocalMeans` is the reference; `nlmPad` / `nlmBand` are the fast version, in bands, with a polynomial exp. Tests: brute force, band equality, noise halved with texture and the step kept.
+- **Strength:** h = strength × σ, where σ is the noise measured from consecutive raw frames: 1.31 × the trimmed RMS of their difference, since the camera's filter correlates frames at ~0.72.
+  - Calibrated on the still scenes to read 1.06–1.10.
+  - A frame's reading counts only within 0.5–2× of the current one, so pans and steps don't; it's smoothed over ~2 s. Frames themselves are never mixed.
+
+**Full display path** (stages 1–3, 5, 6):
+
+| | Now | NLM 5×5 search, strength 1.4 | NLM 11×11, strength 1.1 |
+|---|---|---|---|
+| `flat` noise | 2.09 levels | 0.82 | 0.68 |
+| Key texture | 5.03 levels | 4.88 | 4.95 |
+| Screen-edge halo | 2.9% | 2.0% | 1.9% |
+
+- Edges and flicker are unchanged or better. Xtherm's `flat` measured 0.82 levels, a lower bound from its H.264 video.
+- **Review:** `bench/results/nr_study/`: `methods_single_frame.png` (every method, one frame) and `pipeline_*_crop0.jpg` (now against both NLM settings).
+
+**Cost:** NLM is ~40 M operations a frame at 5×5 search, near the CPU's arithmetic limit even when fused or banded (the Mac: 0.8–1.0 ms).
+- **On the tablet's gold cluster, full clock:** +3.7 ms (5×5 search), +7–8 ms (7×7), +17 ms (11×11).
+- **Live, at the cores' low clock:** latency p50 22.8 / p95 27.9 ms at 5×5 search (budget 20), still 25 fps.
+- **Plan:** a GPU compute version (the Adreno 650 needs well under 1 ms even for 11×11), with this CPU code as its reference and fallback.
+
+**Verdict:** pending. The owner is previewing it live (debug panel "Stage 4b: noise reduction", strength 1.0–1.8).
+
 ## 2026-09-25 — Stage 5: the measurement region (`039b6d7+default`, `keyboard_box`)
 
 **What:** PLAN M4 stage 5's region, `Pipeline::setRegion` (M6 will pass the visible area, intersected with the box).

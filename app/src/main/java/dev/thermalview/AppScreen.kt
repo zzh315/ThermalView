@@ -203,6 +203,13 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
+                    Toggle("Stage 4b: noise reduction (NLM preview, CPU: slow)", options.nr) { onOptions(options.copy(nr = it)) }
+                    Button(onClick = {
+                        val s = MainActivity.NR_STRENGTHS
+                        onOptions(options.copy(nrStrength = s[(s.indexOf(options.nrStrength) + 1).mod(s.size)]))
+                    }) {
+                        Text("Noise reduction strength: " + options.nrStrength)
+                    }
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
                     Toggle("Stage 6: texture (mid-scale contrast)", options.detail) { onOptions(options.copy(detail = it)) }
                     Button(onClick = {

@@ -38,6 +38,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_dump.cpp
     tests/test_filters.cpp
     tests/test_frame.cpp
+    tests/test_nr.cpp
     tests/test_palette.cpp
     tests/test_pipeline.cpp
     tests/test_queues.cpp

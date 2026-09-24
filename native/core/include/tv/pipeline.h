@@ -10,6 +10,7 @@
 
 #include "tv/bad_pixels.h"
 #include "tv/drift.h"
+#include "tv/filters.h"
 #include "tv/frame.h"
 #include "tv/readouts.h"
 #include "tv/tone.h"
@@ -57,6 +58,19 @@ struct PipelineOptions {
   bool denoise = false;
   float denoiseKMin = 0.25f;
   float denoiseMotionLo = 2.0f, denoiseMotionHi = 4.0f;  // in sigmas of the pooled difference
+
+  // Stage 4b, spatial noise reduction (owner request, 2026-09-25: less of the noise tone mapping
+  // shows, within each frame so nothing can ghost; PIPELINE_LOG, tools/py/nr_study.py): non-local
+  // means (filters.h), search radius nrSearch, patch radius nrPatch, strength h = nrStrength x the
+  // noise sigma. Sigma (counts) is measured from consecutive raw frames, 1.31 x the trimmed RMS of
+  // their difference (the camera's own temporal filter correlates them at ~0.72), a frame's reading
+  // accepted only within 0.5-2x of the current one (so motion doesn't count) and smoothed over ~2 s;
+  // nrSigma > 0 fixes it instead. The frames themselves are never mixed.
+  bool nr = false;
+  int nrSearch = 3, nrPatch = 2;
+  float nrStrength = 1.2f;
+  float nrSigma = 0.0f;
+  float nrNominalSigma = 1.07f;  // the start value (M4: 1.06-1.10 counts on the still benchmark scenes)
 
   // Stage 5 (approved 2026-09-25, gain cap 2.0): automatic tone mapping (tone.h) in place of the
   // baseline's per-frame min/max stretch. Pixels at the camera's clip stay out of its statistics.
@@ -108,7 +122,8 @@ struct FrameMeta {
 // switches stage 2; "drift" / "drift=0" switches stage 3's compensation, "driftScale=X" and
 // "driftC0=X" tune it; "destripe" / "destripe=0" switches stage 3b, "destripeTau=X",
 // "destripeGate=X" and "destripeClamp=X" tune it; "denoise" / "denoise=0" switches stage 4,
-// "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it; "tone" / "tone=0" switches stage 5,
+// "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it; "nr" / "nr=0" switches stage 4b,
+// "nrSearch=N", "nrPatch=N", "nrStrength=X" and "nrSigma=X" tune it; "tone" / "tone=0" switches stage 5,
 // "toneGain=X" (max gain), "toneLinear=X", "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
 // "toneContract=X" and "toneCurve=X" (time constants) tune it; "detail" / "detail=0" switches stage
 // 6, "detailRadius=N", "detailEps=X", "detailGain=X", "detailLimit=X", "detailNoiseLo=X",
@@ -133,6 +148,7 @@ class Pipeline {
   void setDriftMap(DriftMap map) { drift_ = std::move(map); }
   const DriftMap& driftMap() const { return drift_; }
   double lastDriftC() const { return lastDriftC_; }  // the drift the last frame was compensated for
+  float noiseSigma() const { return nrSigma_ > 0.0f ? nrSigma_ : options_.nrNominalSigma; }  // stage 4b's, counts
 
   // A new stream, replay start or range switch: forget every frame seen so far.
   void reset();
@@ -170,6 +186,11 @@ class Pipeline {
   std::vector<float> base_, detailLayer_, energy_, gate_, range_, gfScratch_, detailScratch_, midBase_, mid_;  // stage 6
   void enhance(const float* sig, float* display, const uint8_t* exclude);
   bool haveFiltered_ = false;
+  float nrSigma_ = 0.0f;                     // stage 4b's measured noise sigma (0: none yet)
+  std::vector<float> nrScratch_, nrSample_;
+  NlmPadded nrPadded_;
+  void updateNoiseSigma(const uint16_t* image);  // before previous_ is overwritten
+  void reduceNoise(float* sig);
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
   void denoise(float* sig);
   int destripeFrames_ = 0;                    // frames since stage 3b last started over

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 namespace tv {
 namespace {
@@ -260,6 +262,237 @@ void localRangeHalf(const float* src, float* dst, int r, std::vector<float>& scr
     float* out = dst + size_t(y) * W;
     for (int x = 0; x < W; ++x) out[x] = ox[x / 2] - on[x / 2];
   }
+}
+
+void nonLocalMeans(const float* src, float* dst, int searchRadius, int patchRadius, float h, std::vector<float>& scratch) {
+  const int sr = std::clamp(searchRadius, 1, 7), pr = std::clamp(patchRadius, 0, 3);
+  // The source, reflected into a margin wide enough for every offset and patch.
+  const int m = sr + pr + sr;       // a pair's weight is also needed at p - d for p inside
+  const int pw = W + 2 * m, ph = H + 2 * m;
+  // The grid the weights are computed on: every p with p or p + d inside, so (W + 2sr) x (H + 2sr).
+  const int gw = W + 2 * sr, gh = H + 2 * sr;
+  const int dw = gw + 2 * pr, dh = gh + 2 * pr;  // the grid plus the patch margin
+  const size_t pn = size_t(pw) * ph, gn = size_t(gw) * gh, dn = size_t(dw) * dh;
+  scratch.resize(pn + dn + size_t(gw) * dh + gn + 2 * kImagePixels + size_t(gw));
+  float* xp = scratch.data();
+  float* dist = xp + pn;               // |x(p) - x(p + d)| over the grid plus the patch margin
+  float* rows = dist + dn;             // its row sums, dh rows of gw
+  float* w = rows + size_t(gw) * dh;   // the pair weights on the grid
+  float* num = w + gn;
+  float* den = num + kImagePixels;
+  float* colSum = den + kImagePixels;
+  auto reflect = [](int k, int n) {
+    while (k < 0 || k >= n) k = k < 0 ? -k : 2 * (n - 1) - k;
+    return k;
+  };
+  for (int y = 0; y < ph; ++y) {
+    const float* in = src + size_t(reflect(y - m, H)) * W;
+    float* out = xp + size_t(y) * pw;
+    for (int x = 0; x < pw; ++x) out[x] = in[reflect(x - m, W)];
+  }
+  // exp(-t^2) on [0, 4] (beyond: 0), linear between entries.
+  constexpr int kLut = 1024;
+  constexpr float kLutMax = 4.0f;
+  static const std::vector<float> lut = [] {
+    std::vector<float> v(kLut + 2);
+    for (int i = 0; i <= kLut + 1; ++i) {
+      const float t = kLutMax * float(i) / float(kLut);
+      v[size_t(i)] = std::exp(-t * t);
+    }
+    v[kLut + 1] = v[kLut] = 0.0f;
+    return v;
+  }();
+  const float patchArea = float((2 * pr + 1) * (2 * pr + 1));
+  const float toLut = float(kLut) / (kLutMax * std::max(h, 1e-6f) * patchArea);  // patch sum -> LUT position
+  for (size_t i = 0; i < kImagePixels; ++i) {
+    num[i] = src[i];  // the pixel itself, at weight 1
+    den[i] = 1.0f;
+  }
+  // Grid point (0, 0) is image pixel (-sr, -sr); the distance grid starts pr further out, at padded
+  // coordinate o0 = m - sr - pr.
+  const int o0 = m - sr - pr;
+  for (int dy = 0; dy <= sr; ++dy)
+    for (int dx = -sr; dx <= sr; ++dx) {
+      if (dy == 0 && dx <= 0) continue;  // one of each +- pair
+      // |x(p) - x(p + d)| on the distance grid
+      for (int y = 0; y < dh; ++y) {
+        const float* a = xp + size_t(o0 + y) * pw + o0;
+        const float* b = xp + size_t(o0 + y + dy) * pw + o0 + dx;
+        float* out = dist + size_t(y) * dw;
+        for (int x = 0; x < dw; ++x) out[x] = std::fabs(a[x] - b[x]);
+      }
+      // patch sums: rows (a sliding window of 2pr + 1), then columns
+      for (int y = 0; y < dh; ++y) {
+        const float* in = dist + size_t(y) * dw;
+        float* out = rows + size_t(y) * gw;
+        float s = 0;
+        for (int k = 0; k < 2 * pr + 1; ++k) s += in[k];
+        out[0] = s;
+        for (int x = 1; x < gw; ++x) {
+          s += in[x + 2 * pr] - in[x - 1];
+          out[x] = s;
+        }
+      }
+      std::fill(colSum, colSum + gw, 0.0f);
+      for (int k = 0; k < 2 * pr + 1; ++k) {
+        const float* r = rows + size_t(k) * gw;
+        for (int x = 0; x < gw; ++x) colSum[x] += r[x];
+      }
+      for (int y = 0; y < gh; ++y) {
+        if (y > 0) {
+          const float* add = rows + size_t(y + 2 * pr) * gw;
+          const float* sub = rows + size_t(y - 1) * gw;
+          for (int x = 0; x < gw; ++x) colSum[x] += add[x] - sub[x];
+        }
+        float* wr = w + size_t(y) * gw;
+        for (int x = 0; x < gw; ++x) {
+          const float t = std::min(colSum[x] * toLut, float(kLut));
+          const int i = int(t);
+          const float f = t - float(i);
+          wr[x] = lut[size_t(i)] + f * (lut[size_t(i) + 1] - lut[size_t(i)]);
+        }
+      }
+      // Pixel p gets x(p + d) at w(p); pixel q gets x(q - d) at w(q - d).
+      for (int y = 0; y < H; ++y) {
+        const float* wp = w + size_t(y + sr) * gw + sr;             // w(p), p = (x, y)
+        const float* wq = w + size_t(y + sr - dy) * gw + sr - dx;   // w(q - d)
+        const float* xf = xp + size_t(y + m + dy) * pw + m + dx;    // x(p + d)
+        const float* xb = xp + size_t(y + m - dy) * pw + m - dx;    // x(q - d)
+        float* nr = num + size_t(y) * W;
+        float* dr = den + size_t(y) * W;
+        for (int x = 0; x < W; ++x) {
+          nr[x] += wp[x] * xf[x] + wq[x] * xb[x];
+          dr[x] += wp[x] + wq[x];
+        }
+      }
+    }
+  for (size_t i = 0; i < kImagePixels; ++i) dst[i] = num[i] / den[i];
+}
+
+namespace {
+
+// exp(-v) for v >= 0 (v clamped at 80): 2^-a with a = v log2(e), split into 2^-i (the exponent bits)
+// and 2^-f (a degree-6 polynomial on [0, 1)). Plain arithmetic, so loops over it vectorize.
+inline float expNeg(float v) {
+  const float a = std::min(v, 80.0f) * 1.44269504f;
+  const int i = int(a);
+  const float f = a - float(i);
+  // 2^-f = e^(-f ln 2), Taylor to degree 6 (error < 2e-6 on [0, 1))
+  const float g = f * 0.693147181f;
+  const float p = 1.0f - g * (1.0f - g * (0.5f - g * (0.166666667f - g * (0.0416666667f - g * (0.00833333333f - g * 0.00138888889f)))));
+  uint32_t bits = uint32_t(127 - i) << 23;  // 2^-i, i < 127
+  float scale;
+  std::memcpy(&scale, &bits, sizeof scale);
+  return p * scale;
+}
+
+}  // namespace
+
+void nlmPad(const float* src, int searchRadius, int patchRadius, NlmPadded* padded) {
+  const int sr = std::clamp(searchRadius, 1, 7), pr = std::clamp(patchRadius, 0, 3);
+  const int m = 2 * sr + pr;
+  padded->margin = m;
+  padded->width = W + 2 * m;
+  padded->height = H + 2 * m;
+  padded->data.resize(size_t(padded->width) * size_t(padded->height));
+  auto reflect = [](int k, int n) {
+    while (k < 0 || k >= n) k = k < 0 ? -k : 2 * (n - 1) - k;
+    return k;
+  };
+  for (int y = 0; y < padded->height; ++y) {
+    const float* in = src + size_t(reflect(y - m, H)) * W;
+    float* out = padded->data.data() + size_t(y) * size_t(padded->width);
+    for (int x = 0; x < padded->width; ++x) out[x] = in[reflect(x - m, W)];
+  }
+}
+
+void nlmBand(const NlmPadded& padded, float* dst, int y0, int y1, int searchRadius, int patchRadius, float h,
+             std::vector<float>& scratch) {
+  const int sr = std::clamp(searchRadius, 1, 7), pr = std::clamp(patchRadius, 0, 3);
+  const int m = padded.margin, pw = padded.width;
+  const float* xp = padded.data.data();
+  y0 = std::clamp(y0, 0, H);
+  y1 = std::clamp(y1, y0, H);
+  const int rows = y1 - y0;
+  if (rows == 0) return;
+  // Grid column g covers image column g - sr (so p and p + d are both reachable); a patch row is the
+  // distance row's horizontal sum over 2pr + 1 columns.
+  const int gw = W + 2 * sr, dw = gw + 2 * pr, taps = 2 * pr + 1;
+  scratch.resize(2 * size_t(rows) * W + size_t(taps) * gw + 3 * size_t(dw));
+  float* num = scratch.data();
+  float* den = num + size_t(rows) * W;
+  float* ring = den + size_t(rows) * W;  // the last 2pr + 1 patch rows
+  float* dist = ring + size_t(taps) * gw;
+  float* colSum = dist + dw;
+  float* wrow = colSum + dw;
+  for (int y = 0; y < rows; ++y) {
+    const float* in = xp + size_t(y0 + y + m) * pw + m;
+    std::copy(in, in + W, num + size_t(y) * W);  // the pixel itself, at weight 1
+    std::fill(den + size_t(y) * W, den + size_t(y + 1) * W, 1.0f);
+  }
+  const float patchArea = float(taps * taps);
+  const float invH = 1.0f / (std::max(h, 1e-6f) * patchArea);  // patch sum -> mean |difference| / h
+  const int o0 = m - sr - pr;  // padded coordinate of distance-grid (0, 0), image pixel (-sr - pr, -sr - pr)
+  // Distance-grid row r's horizontal patch sums, into out (gw entries).
+  auto patchRow = [&](int r, int dx, int dy, float* out) {
+    const float* a = xp + size_t(o0 + r) * pw + o0;
+    const float* b = xp + size_t(o0 + r + dy) * pw + o0 + dx;
+    for (int x = 0; x < dw; ++x) dist[x] = std::fabs(a[x] - b[x]);
+    std::copy(dist, dist + gw, out);
+    for (int k = 1; k < taps; ++k) {  // shifted whole-row adds: these vectorize, a per-pixel tap loop doesn't
+      const float* d = dist + k;
+      for (int x = 0; x < gw; ++x) out[x] += d[x];
+    }
+  };
+  for (int dy = 0; dy <= sr; ++dy)
+    for (int dx = -sr; dx <= sr; ++dx) {
+      if (dy == 0 && dx <= 0) continue;  // one of each +- pair
+      // Grid rows (image row + sr) whose weights the band needs: its own rows (p) and those d above
+      // them (p = q - d for its q).
+      const int g0 = y0 + sr - dy, g1 = y1 + sr;
+      for (int k = 0; k < taps; ++k) patchRow(g0 + k, dx, dy, ring + size_t(k) * gw);
+      std::fill(colSum, colSum + gw, 0.0f);
+      for (int k = 0; k < taps; ++k) {
+        const float* r = ring + size_t(k) * gw;
+        for (int x = 0; x < gw; ++x) colSum[x] += r[x];
+      }
+      for (int g = g0; g < g1; ++g) {
+        if (g > g0) {  // slide: the row leaving goes out, the next one comes in (it takes its slot)
+          float* slot = ring + size_t((g - g0 - 1) % taps) * gw;
+          for (int x = 0; x < gw; ++x) colSum[x] -= slot[x];
+          patchRow(g + 2 * pr, dx, dy, slot);
+          for (int x = 0; x < gw; ++x) colSum[x] += slot[x];
+        }
+        for (int x = 0; x < gw; ++x) {
+          const float u = colSum[x] * invH;
+          wrow[x] = expNeg(u * u);
+        }
+        // p in image row yp = g - sr gets x(p + d); q in row yq = yp + dy gets x(q - d) = x(p).
+        const int yp = g - sr, yq = yp + dy;
+        if (yp >= y0 && yp < y1) {
+          const float* wp = wrow + sr;
+          const float* xf = xp + size_t(yp + m + dy) * pw + m + dx;
+          float* nr = num + size_t(yp - y0) * W;
+          float* dr = den + size_t(yp - y0) * W;
+          for (int x = 0; x < W; ++x) {
+            nr[x] += wp[x] * xf[x];
+            dr[x] += wp[x];
+          }
+        }
+        if (yq >= y0 && yq < y1) {
+          const float* wq = wrow + sr - dx;  // w at q - d
+          const float* xb = xp + size_t(yp + m) * pw + m - dx;
+          float* nr = num + size_t(yq - y0) * W;
+          float* dr = den + size_t(yq - y0) * W;
+          for (int x = 0; x < W; ++x) {
+            nr[x] += wq[x] * xb[x];
+            dr[x] += wq[x];
+          }
+        }
+      }
+    }
+  for (int y = 0; y < rows; ++y)
+    for (int x = 0; x < W; ++x) dst[size_t(y0 + y) * W + x] = num[size_t(y) * W + x] / den[size_t(y) * W + x];
 }
 
 void gaussianBlur(const float* src, float* dst, float sigma, std::vector<float>& scratch) {

@@ -49,6 +49,16 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->denoiseMotionLo = float(std::atof(value.c_str()));
     } else if (key == "denoiseHi" && !value.empty()) {
       o->denoiseMotionHi = float(std::atof(value.c_str()));
+    } else if (key == "nr") {
+      o->nr = on;
+    } else if (key == "nrSearch" && !value.empty()) {
+      o->nrSearch = std::clamp(std::atoi(value.c_str()), 1, 7);
+    } else if (key == "nrPatch" && !value.empty()) {
+      o->nrPatch = std::clamp(std::atoi(value.c_str()), 0, 3);
+    } else if (key == "nrStrength" && !value.empty()) {
+      o->nrStrength = float(std::atof(value.c_str()));
+    } else if (key == "nrSigma" && !value.empty()) {
+      o->nrSigma = float(std::atof(value.c_str()));
     } else if (key == "tone") {
       o->tone = on;
     } else if (key == "toneGain" && !value.empty()) {
@@ -125,6 +135,7 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.badPixels) add("badPixels");
   if (o.destripe) add("destripe");
   if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
+  if (o.nr) add("nr(h" + std::to_string(o.nrStrength).substr(0, 4) + ")");
   if (o.tone) add("tone(g" + std::to_string(o.toneOptions.maxGain).substr(0, 4) + ")");
   if (o.detail && o.tone) {
     if (o.detailMidGain > 1.0f) add("texture(x" + std::to_string(o.detailMidGain).substr(0, 4) + ")");
@@ -156,8 +167,42 @@ void Pipeline::setOptions(const PipelineOptions& options) {
   tone_.setOptions(options.toneOptions);
 }
 
+void Pipeline::updateNoiseSigma(const uint16_t* image) {
+  // The trimmed RMS of the difference from the previous frame, over a subsample: still texture
+  // cancels, and the few pixels that moved are trimmed.
+  nrSample_.resize(kImagePixels / 7 + 1);
+  size_t n = 0;
+  double sumAbs = 0;
+  for (size_t i = 3; i < kImagePixels; i += 7) {
+    const float d = float(image[i]) - float(previous_[i]);
+    nrSample_[n++] = d;
+    sumAbs += std::fabs(d);
+  }
+  if (n == 0 || sumAbs == 0.0) return;  // a repeat: nothing to measure
+  const float cut = 5.0f * std::max(float(sumAbs / double(n)), 0.5f);
+  double sum2 = 0;
+  size_t kept = 0;
+  for (size_t k = 0; k < n; ++k)
+    if (std::fabs(nrSample_[k]) < cut) {
+      sum2 += double(nrSample_[k]) * nrSample_[k];
+      ++kept;
+    }
+  if (kept < n / 2) return;
+  const float reading = 1.31f * float(std::sqrt(sum2 / double(kept)));
+  const float current = nrSigma_ > 0.0f ? nrSigma_ : options_.nrNominalSigma;
+  if (reading < 0.5f * current || reading > 2.0f * current) return;  // motion, a step: not the noise
+  nrSigma_ = current + 0.02f * (reading - current);  // ~2 s at 25 fps
+}
+
+void Pipeline::reduceNoise(float* sig) {
+  const float sigma = options_.nrSigma > 0.0f ? options_.nrSigma : noiseSigma();
+  nlmPad(sig, options_.nrSearch, options_.nrPatch, &nrPadded_);
+  nlmBand(nrPadded_, sig, 0, kImageRows, options_.nrSearch, options_.nrPatch, options_.nrStrength * sigma, nrScratch_);
+}
+
 void Pipeline::reset() {
   havePrevious_ = false;
+  nrSigma_ = 0.0f;
   frozen_ = false;
   blendLeft_ = blendTotal_ = 0;
   restartDestripe();
@@ -446,6 +491,7 @@ void Pipeline::hold() {
 void Pipeline::process(const uint16_t* image, float* display, float* signal, FrameMeta meta) {
   const size_t bytes = kImagePixels * sizeof(uint16_t);
   const bool repeat = havePrevious_ && std::memcmp(image, previous_.data(), bytes) == 0;
+  if (options_.nr && havePrevious_ && !repeat && !frozen_) updateNoiseSigma(image);  // stage 4b's sigma
   std::memcpy(previous_.data(), image, bytes);
   havePrevious_ = true;
 
@@ -479,7 +525,8 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   }
   if (options_.badPixels) replaceBadPixels(badPixels_, sig);  // stage 2
   if (options_.destripe) destripe(sig);                       // stage 3b
-  if (options_.denoise) denoise(sig);                         // stage 4
+  if (options_.denoise) denoise(sig);                         // stage 4 (removed: off)
+  if (options_.nr) reduceNoise(sig);                          // stage 4b
   if (options_.tone) {
     // Stage 5. Pixels at the camera's clip (too hot to measure) stay out of the statistics.
     // So do pixels outside the measurement region.

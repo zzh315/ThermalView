@@ -1,0 +1,474 @@
+{
+ "sigma": 1.0652533769607544,
+ "results": [
+  {
+   "method": "none",
+   "params": {},
+   "noise_flat": 1.0653,
+   "noise_flat_aged": 1.0939,
+   "noise_room": 1.0569,
+   "bias_keyboard": 0.0,
+   "bias_room": 0.0,
+   "keys": 3.9295,
+   "ms_python": 0,
+   "edge_screen": 2.769,
+   "edge_palm": 10.145
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 3,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 2.16,
+   "noise_flat": 0.7734,
+   "noise_flat_aged": 0.9119,
+   "noise_room": 0.8618,
+   "bias_keyboard": 0.2821,
+   "bias_room": 0.3337,
+   "keys": 3.8982,
+   "edge_screen": 2.762,
+   "edge_palm": 10.144
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 3,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 2.12,
+   "noise_flat": 0.5517,
+   "noise_flat_aged": 0.6835,
+   "noise_room": 0.6696,
+   "bias_keyboard": 0.5379,
+   "bias_room": 0.6211,
+   "keys": 3.8417,
+   "edge_screen": 2.762,
+   "edge_palm": 10.141
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 3,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 2.14,
+   "noise_flat": 0.4373,
+   "noise_flat_aged": 0.5232,
+   "noise_room": 0.5465,
+   "bias_keyboard": 0.7244,
+   "bias_room": 0.8046,
+   "keys": 3.7753,
+   "edge_screen": 2.758,
+   "edge_palm": 10.138
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 3,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 2.17,
+   "noise_flat": 0.5968,
+   "noise_flat_aged": 0.7032,
+   "noise_room": 0.6861,
+   "bias_keyboard": 0.7257,
+   "bias_room": 0.7057,
+   "keys": 3.759,
+   "edge_screen": 2.761,
+   "edge_palm": 10.141
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 3,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 2.13,
+   "noise_flat": 0.4731,
+   "noise_flat_aged": 0.556,
+   "noise_room": 0.5699,
+   "bias_keyboard": 0.8489,
+   "bias_room": 0.8466,
+   "keys": 3.7203,
+   "edge_screen": 2.762,
+   "edge_palm": 10.145
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 3,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 2.19,
+   "noise_flat": 0.4062,
+   "noise_flat_aged": 0.4636,
+   "noise_room": 0.4966,
+   "bias_keyboard": 0.9367,
+   "bias_room": 0.9449,
+   "keys": 3.6754,
+   "edge_screen": 2.758,
+   "edge_palm": 10.145
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 5,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 2.19,
+   "noise_flat": 0.7495,
+   "noise_flat_aged": 0.9237,
+   "noise_room": 0.865,
+   "bias_keyboard": 0.2673,
+   "bias_room": 0.3181,
+   "keys": 3.9136,
+   "edge_screen": 2.761,
+   "edge_palm": 10.143
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 5,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 2.23,
+   "noise_flat": 0.4779,
+   "noise_flat_aged": 0.6207,
+   "noise_room": 0.6225,
+   "bias_keyboard": 0.5674,
+   "bias_room": 0.6825,
+   "keys": 3.8663,
+   "edge_screen": 2.759,
+   "edge_palm": 10.141
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 5,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 2.18,
+   "noise_flat": 0.3803,
+   "noise_flat_aged": 0.4469,
+   "noise_room": 0.4931,
+   "bias_keyboard": 0.766,
+   "bias_room": 0.8867,
+   "keys": 3.8038,
+   "edge_screen": 2.759,
+   "edge_palm": 10.139
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 5,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 2.21,
+   "noise_flat": 0.477,
+   "noise_flat_aged": 0.571,
+   "noise_room": 0.5744,
+   "bias_keyboard": 0.9008,
+   "bias_room": 0.907,
+   "keys": 3.7742,
+   "edge_screen": 2.758,
+   "edge_palm": 10.151
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 5,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 2.18,
+   "noise_flat": 0.389,
+   "noise_flat_aged": 0.444,
+   "noise_room": 0.4789,
+   "bias_keyboard": 0.9907,
+   "bias_room": 1.0167,
+   "keys": 3.7305,
+   "edge_screen": 2.758,
+   "edge_palm": 10.152
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 5,
+    "offsets": "w5",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 2.23,
+   "noise_flat": 0.3531,
+   "noise_flat_aged": 0.3844,
+   "noise_room": 0.4286,
+   "bias_keyboard": 1.0494,
+   "bias_room": 1.0865,
+   "keys": 3.6816,
+   "edge_screen": 2.759,
+   "edge_palm": 10.152
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 5,
+    "offsets": "w7",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 4.46,
+   "noise_flat": 0.6285,
+   "noise_flat_aged": 0.8364,
+   "noise_room": 0.8086,
+   "bias_keyboard": 0.3421,
+   "bias_room": 0.4082,
+   "keys": 3.9112,
+   "edge_screen": 2.762,
+   "edge_palm": 10.143
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 5,
+    "offsets": "w7",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 4.31,
+   "noise_flat": 0.3781,
+   "noise_flat_aged": 0.4954,
+   "noise_room": 0.5599,
+   "bias_keyboard": 0.6456,
+   "bias_room": 0.7789,
+   "keys": 3.8574,
+   "edge_screen": 2.757,
+   "edge_palm": 10.142
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 5,
+    "offsets": "w7",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 4.33,
+   "noise_flat": 0.3105,
+   "noise_flat_aged": 0.3563,
+   "noise_room": 0.4453,
+   "bias_keyboard": 0.8357,
+   "bias_room": 0.963,
+   "keys": 3.7864,
+   "edge_screen": 2.757,
+   "edge_palm": 10.14
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 5,
+    "offsets": "w7",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 4.38,
+   "noise_flat": 0.4044,
+   "noise_flat_aged": 0.4916,
+   "noise_room": 0.5333,
+   "bias_keyboard": 0.9166,
+   "bias_room": 0.9232,
+   "keys": 3.7681,
+   "edge_screen": 2.76,
+   "edge_palm": 10.149
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 5,
+    "offsets": "w7",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 4.33,
+   "noise_flat": 0.3269,
+   "noise_flat_aged": 0.3722,
+   "noise_room": 0.4397,
+   "bias_keyboard": 1.0162,
+   "bias_room": 1.0437,
+   "keys": 3.7197,
+   "edge_screen": 2.758,
+   "edge_palm": 10.152
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 5,
+    "offsets": "w7",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 4.4,
+   "noise_flat": 0.2969,
+   "noise_flat_aged": 0.3219,
+   "noise_room": 0.3921,
+   "bias_keyboard": 1.0842,
+   "bias_room": 1.1198,
+   "keys": 3.6626,
+   "edge_screen": 2.757,
+   "edge_palm": 10.153
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 5,
+    "offsets": "w11",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 10.9,
+   "noise_flat": 0.4875,
+   "noise_flat_aged": 0.7062,
+   "noise_room": 0.7419,
+   "bias_keyboard": 0.4311,
+   "bias_room": 0.5186,
+   "keys": 3.909,
+   "edge_screen": 2.759,
+   "edge_palm": 10.143
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 5,
+    "offsets": "w11",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 10.89,
+   "noise_flat": 0.3043,
+   "noise_flat_aged": 0.3828,
+   "noise_room": 0.5084,
+   "bias_keyboard": 0.7207,
+   "bias_room": 0.872,
+   "keys": 3.8474,
+   "edge_screen": 2.752,
+   "edge_palm": 10.142
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 5,
+    "offsets": "w11",
+    "norm": "l1",
+    "centre": "one"
+   },
+   "ms_python": 10.84,
+   "noise_flat": 0.2603,
+   "noise_flat_aged": 0.2919,
+   "noise_room": 0.4131,
+   "bias_keyboard": 0.9039,
+   "bias_room": 1.0351,
+   "keys": 3.7592,
+   "edge_screen": 2.75,
+   "edge_palm": 10.143
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 0.9,
+    "tw": 5,
+    "offsets": "w11",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 11.01,
+   "noise_flat": 0.3483,
+   "noise_flat_aged": 0.4229,
+   "noise_room": 0.5004,
+   "bias_keyboard": 0.9371,
+   "bias_room": 0.9501,
+   "keys": 3.756,
+   "edge_screen": 2.757,
+   "edge_palm": 10.154
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.2,
+    "tw": 5,
+    "offsets": "w11",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 11.04,
+   "noise_flat": 0.2827,
+   "noise_flat_aged": 0.3202,
+   "noise_room": 0.4144,
+   "bias_keyboard": 1.0506,
+   "bias_room": 1.0769,
+   "keys": 3.6957,
+   "edge_screen": 2.754,
+   "edge_palm": 10.164
+  },
+  {
+   "method": "nlml1",
+   "params": {
+    "h": 1.5,
+    "tw": 5,
+    "offsets": "w11",
+    "norm": "l1",
+    "centre": "max"
+   },
+   "ms_python": 10.94,
+   "noise_flat": 0.2549,
+   "noise_flat_aged": 0.2775,
+   "noise_room": 0.3716,
+   "bias_keyboard": 1.1383,
+   "bias_room": 1.1592,
+   "keys": 3.6163,
+   "edge_screen": 2.752,
+   "edge_palm": 10.183
+  }
+ ]
+}
