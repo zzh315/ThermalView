@@ -53,7 +53,7 @@ Work through the milestones in order. Each one ends with evidence shown to the o
   - Answer PROTOCOL.md's VERIFY list on the device first: a shutter cycle after the switch, the frame's constants, the clip, the low end, and noise.
   - Implement both candidate maths: ht301_hacklib's `1.17 × T − 40.9` table scaling, and InfiCam's (no `cal_00` correction).
   - Golden-test them against the oracle's high-range mode.
-  - Keep whichever matches known references, and stop and discuss with the owner if neither does. For references, use the iron at its setpoints for behaviour, and a matte black spot (paint or high-temperature tape) on a heated pan, measured with the owner's probe thermometer, for accuracy.
+  - Keep whichever matches, and stop and discuss with the owner if neither does. The check needs no external reference: capture the iron in its stand in both ranges, one right after the other. The shaft cools steadily from the tip, so every pixel that reads below ~115 °C in the verified normal range must read the same in the high range. Also watch the iron at its setpoints for behaviour.
   - Automatic switching:
     - Up to the high range when ≥ 4 pixels clip in the normal range for 2 s (owner, 2026-09-24), so brief glimpses don't cost a switch's freeze.
     - Back down when the region's hottest pixel stays below ~110 °C for 5 s (owner, 2026-09-24).
