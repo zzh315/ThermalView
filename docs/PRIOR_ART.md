@@ -167,7 +167,10 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 - **Sharpness:** `keyboard` is the fair test: the camera and laptop stayed still, and every app lines up with our frame within 0.12 px. All three apps draw the screen edge at 1.26–1.30 px FWHM after averaging back to camera pixels. Ours, drawn bicubic and averaged back the same way, is 1.81 px, and 1.44 px at camera resolution. So they all sharpen.
 - **Halo:** Hti's rim comes from detail enhancement over a heavily compressed base. It shrinks the screen edge's step to 25 levels (ours 73, Xtherm 45), and the halo on it is 14 %. Xtherm's is 1.4 %, InfiCamPlus's 2.2 %, ours 2.5 % (the scene's own dip beside the bezel).
 - **Detail:** key-gap detail on `keyboard` is 10.3 levels for InfiCamPlus, 4.1 for ours, 3.5 for Xtherm and 2.6 for Hti. InfiCamPlus sharpens hard without adding halo, which fits the owner's night pick.
-- **Shutter hiccups:** none of the 10 s recordings caught a cycle, so this needs a longer recording.
+- **Shutter hiccups:** none of the 10 s bench recordings caught a cycle. Recordings from app launch (2026-09-25, scratchpad `m4/*_connect.mp4`) caught each app's connect-time calibration:
+  - **Hti** freezes its image for 1.2 s, about 1.3 s after the image first appears, with no indication. Its mean level then eases by ~5 levels over the next few seconds.
+  - **Xtherm** covers its start-up with a dimmed image and a "Loading…" spinner for ~3 s, then goes live.
+  - Their periodic recalibrations later on (Xtherm's every 380 s) weren't recorded.
 - **Hand edges:** each app's hand sat at a different distance, which changes its edge widths (1.0–1.4 px for the apps, ~1.9 px for ours), so they don't compare cleanly.
 - **Verdict:** the bar is:
   - Xtherm's auto range: steady, and gain-capped on flat scenes;
@@ -254,7 +257,21 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
     - Auto's HE blend and Manual's linear mapping differ, so locking changes the look. Fade the blend out over ~0.3 s, or accept it.
     - Manual's out-of-range marking could be a static hatch (not moving stripes, not grey); that's the owner's call.
 
-**7. Box and zoom UX, code side.** Hti Image's and Xtherm's boxes, observed on the tablet, are still to add.
+**7. Box and zoom UX.** Observed on the tablet on 2026-09-25, driven over adb (screenshots in the session scratchpad).
+- **Hti Image:**
+  - The box is a tool in its right-hand measurement panel, next to point, line and the range toggle.
+  - A drag draws it corner to corner, and every later drag, inside or outside, replaces it. There's no move, no resize and no handles.
+  - A thin yellow 1 px outline, no dimming.
+  - The hottest and coldest markers, with values, stay inside the box. The centre crosshair stays at the image centre. The colours still come from the whole frame.
+  - Labels can overlap each other.
+- **Xtherm:**
+  - The box is in the measurement strip that its thermometer button opens.
+  - A drag draws one ("R1"). A drag from inside moves it, keeping the finger's offset. A drag on a corner resizes it with the opposite corner fixed, and a drag on an edge moves just that edge. A drag outside adds another box (R2); after that, R1's outline was drawn with gaps.
+  - A white 2 px outline, no visible handles, no dimming.
+  - Unlabelled min and max dots sit inside, with per-box max, average and min in a panel at the top-left. The centre crosshair stays at the image centre, and the colours don't follow the box.
+- **So Xtherm's interaction is the model to follow,** and Hti's redraw-only box is rejected. Neither shows handles, dims the outside, or drives the colour range from the box, and our design does all three (PLAN M6).
+
+**7b. Box hit-testing, code side.**
 - **Compose-Cropper:**
   - Corner zones only (20 dp in its demo), with priority corners → inside.
   - It keeps the finger's offset for corners, but moves the inside by per-event deltas.

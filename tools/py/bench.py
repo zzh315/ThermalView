@@ -12,10 +12,10 @@ Builds and runs `harness bench` (native/core's display path on every bench/<scen
   renderer), next to that app's screenshot or recording.
 
 Metrics, all on the display path's output unless marked °C:
-- temporal_noise (flat): median per-pixel temporal std, after removing each pixel's quadratic trend
+- temporal_noise (flat, flat_aged): median per-pixel temporal std, after removing each pixel's quadratic trend
   over the dump (the camera drifts a few counts in 8 s after a NUC); 8-bit display levels and mK.
   Also in mK: the part all pixels share (common_mk) and the noise's lag-1 correlation (rho1).
-- stripes (flat): std of column means and of row means of the time-averaged frame after removing a
+- stripes (flat, flat_aged): std of column means and of row means of the time-averaged frame after removing a
   cubic 2D polynomial; levels and mK.
 - flicker (static scenes): std of the frame's mean display level over time, quadratic trend removed.
 - edges (bench/<scene>/roi.json "edges"): slanted-edge profile per frame (edge_frame): its width
@@ -43,7 +43,7 @@ OUT = BENCH / "out"
 HARNESS_BUILD = ROOT / "build" / "harness"
 W, H = 256, 192
 APPS = {"hti": "Hti Image", "xtherm": "Xtherm", "inficamplus": "InfiCamPlus"}
-STATIC = ("flat", "room", "keyboard", "night")  # nothing moving (night was handheld but held steady)
+STATIC = ("flat", "flat_aged", "room", "keyboard", "night")  # nothing moving (night was handheld but held steady)
 ESF_HALF, PLATEAU, BIN = 9.0, 6.0, 0.25  # edge window, plateau start, bin width (pixels)
 
 
@@ -207,7 +207,7 @@ def detail(mean_frame, roi):
 
 def scene_metrics(scene, disp, temp):
     m = {}
-    if scene == "flat":
+    if scene.startswith("flat"):  # flat: right after a NUC; flat_aged: 6 min and ~5 °C of FPA drift later
         levels, _, _ = temporal_noise(disp * 255.0)
         c, common, rho1 = temporal_noise(temp)
         m["temporal_noise"] = {"display_levels": round(levels, 4), "mk": round(1000 * c, 2),
