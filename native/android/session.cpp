@@ -1041,6 +1041,7 @@ void Session::handleFrame(const RawFrame& frame) {
 
     DisplayFrame& out = renderer_.frameSlot();
     pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()});
+    for (size_t i = 0; i < kImagePixels; ++i) out.clipped[i] = view.image()[i] >= clipRaw_ ? 255 : 0;
     pipelineFed_ = true;
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
@@ -1347,13 +1348,13 @@ void Session::setOptions(const Options& options) {
 
 std::string Session::setDisplay(int upscaler, const std::string& paletteJson) {
   std::vector<std::array<uint8_t, 3>> lut;
+  PaletteSpec spec;
   if (!paletteJson.empty()) {
-    PaletteSpec spec;
     std::string error;
     if (!parsePalette(paletteJson, &spec, &error)) return "palette: " + error;
     lut = buildPaletteLut(spec);
   }
-  renderer_.setDisplay(upscaler, std::move(lut));
+  renderer_.setDisplay(upscaler, std::move(lut), spec.saturation);
   return "";
 }
 

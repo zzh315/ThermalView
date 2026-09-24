@@ -26,7 +26,7 @@
 // frames 0..N (its filters need the history), then frame N's intensity is upscaled with kernel K
 // (nearest, bilinear, catmullrom, lanczos3, bspline; --clamp: the 2x2 anti-ringing clamp) over the
 // view rectangle (camera pixels; default the whole frame) and mapped through the palette (default
-// grey). Writes a binary PPM.
+// grey), with pixels over range in the palette's saturation color. Writes a binary PPM.
 //
 //   harness palette FILE.json --out FILE.ppm
 //
@@ -347,11 +347,22 @@ int render(int argc, char** argv) {
   }
   std::vector<float> up(size_t(w) * size_t(h));
   tv::upscale(tv::kernelInput(display.data(), kernel), display.data(), kernel, clamp, rect, w, h, up.data());
+  // Pixels that read over range (> 120 °C through the frame's own table) take the palette's
+  // saturation color where their bilinear mask passes 0.5, as the GPU does with a filtered R8 mask.
+  const tv::FrameView shown(&dump.frames[last * tv::kFramePixels]);
+  tv::TemperatureLut table;
+  table.build(tv::temperatureInputs(shown), tv::TempRange::Normal);
+  const uint16_t clipRaw = tv::overRangeRaw(table);
+  std::vector<float> mask(tv::kImagePixels), maskUp(up.size());
+  for (size_t i = 0; i < tv::kImagePixels; ++i) mask[i] = shown.image()[i] >= clipRaw ? 1.0f : 0.0f;
+  tv::upscale(mask, mask.data(), tv::Kernel::Bilinear, false, rect, w, h, maskUp.data());
   std::vector<uint8_t> rgb(up.size() * 3);
   for (size_t i = 0; i < up.size(); ++i) {
     const float v = std::clamp(up[i], 0.0f, 1.0f);
     if (lut.empty()) {
       rgb[3 * i] = rgb[3 * i + 1] = rgb[3 * i + 2] = uint8_t(std::lround(255.0f * v));
+    } else if (maskUp[i] > 0.5f) {
+      for (size_t k = 0; k < 3; ++k) rgb[3 * i + k] = uint8_t(std::lround(255.0f * spec.saturation[k]));
     } else {
       const auto& c = lut[size_t(std::lround(v * float(lut.size() - 1)))];
       std::copy(c.begin(), c.end(), rgb.begin() + std::ptrdiff_t(3 * i));

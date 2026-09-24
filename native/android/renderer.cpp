@@ -35,8 +35,10 @@ precision highp sampler2D;
 uniform sampler2D uImage;
 uniform sampler2D uCoeffs;
 uniform sampler2D uLut;
-uniform int uMode;     // 0 nearest, 1 cardinal B-spline
-uniform int uPalette;  // 0 gray, 1 uLut
+uniform sampler2D uClip;   // R8, 1 where a pixel reads over range; filtered, so its edge stays smooth
+uniform vec3 uSaturation;  // the palette's color for those pixels
+uniform int uMode;         // 0 nearest, 1 cardinal B-spline
+uniform int uPalette;      // 0 gray, 1 uLut (and uSaturation)
 in vec2 vUV;
 out vec4 outColor;
 int mirror(int k, int n) {  // whole-sample symmetric; one reflection covers the taps' reach
@@ -73,8 +75,12 @@ void main() {
     g = clamp(sum, min(min(p00, p10), min(p01, p11)), max(max(p00, p10), max(p01, p11)));
   }
   g = clamp(g, 0.0, 1.0);
-  outColor = uPalette == 1 ? vec4(texture(uLut, vec2((g * 1023.0 + 0.5) / 1024.0, 0.5)).rgb, 1.0)
-                           : vec4(vec3(g), 1.0);
+  if (uPalette == 1) {
+    vec3 c = texture(uLut, vec2((g * 1023.0 + 0.5) / 1024.0, 0.5)).rgb;
+    outColor = vec4(texture(uClip, vUV).r > 0.5 ? uSaturation : c, 1.0);
+  } else {
+    outColor = vec4(vec3(g), 1.0);
+  }
 }
 )";
 
@@ -157,11 +163,12 @@ void Renderer::clear() {
   wake_.notify_one();
 }
 
-void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut) {
+void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation) {
   std::lock_guard lock(displayMutex_);
   upscaler_ = upscaler;
   pendingLut_ = std::move(lut);
   lutPending_ = true;
+  saturation_ = saturation;
 }
 
 void Renderer::setMirror(bool x, bool y) {
@@ -309,6 +316,8 @@ bool Renderer::initGl() {
   glUniform1i(glGetUniformLocation(program_, "uImage"), 0);
   glUniform1i(glGetUniformLocation(program_, "uCoeffs"), 1);
   glUniform1i(glGetUniformLocation(program_, "uLut"), 2);
+  glUniform1i(glGetUniformLocation(program_, "uClip"), 3);
+  uSaturation_ = glGetUniformLocation(program_, "uSaturation");
 
   for (GLuint* t : {&texture_, &coeffTexture_}) {
     glGenTextures(1, t);
@@ -323,6 +332,13 @@ bool Renderer::initGl() {
   glGenTextures(1, &lutTexture_);
   glBindTexture(GL_TEXTURE_2D, lutTexture_);
   glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1024, 1);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glGenTextures(1, &clipTexture_);
+  glBindTexture(GL_TEXTURE_2D, clipTexture_);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, kFrameWidth, kImageRows);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -348,9 +364,11 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
 
   int upscaler;
   bool palette;
+  std::array<float, 3> saturation;
   {
     std::lock_guard lock(displayMutex_);
     upscaler = upscaler_;
+    saturation = saturation_;
     if (lutPending_) {
       havePalette_ = pendingLut_.size() == 1024;
       if (havePalette_) {
@@ -379,7 +397,13 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   }
   glActiveTexture(GL_TEXTURE2);
   glBindTexture(GL_TEXTURE_2D, lutTexture_);
+  glActiveTexture(GL_TEXTURE3);
+  glBindTexture(GL_TEXTURE_2D, clipTexture_);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_UNSIGNED_BYTE, frame.clipped.data());
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glUseProgram(program_);
+  glUniform3f(uSaturation_, saturation[0], saturation[1], saturation[2]);
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
   glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
   glUniform1i(uPalette_, palette ? 1 : 0);
