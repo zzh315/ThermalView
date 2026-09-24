@@ -43,7 +43,7 @@ OUT = BENCH / "out"
 HARNESS_BUILD = ROOT / "build" / "harness"
 W, H = 256, 192
 APPS = {"hti": "Hti Image", "xtherm": "Xtherm", "inficamplus": "InfiCamPlus"}
-STATIC = ("flat", "room", "keyboard")  # fixed camera, nothing moving
+STATIC = ("flat", "room", "keyboard", "night")  # nothing moving (night was handheld but held steady)
 ESF_HALF, PLATEAU, BIN = 9.0, 6.0, 0.25  # edge window, plateau start, bin width (pixels)
 
 
