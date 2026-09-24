@@ -4,6 +4,38 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 2: software bad-pixel map (`27894b7+badPixels`)
+
+**What:** PLAN M4 stage 2, as a diagnostic plus a guard (PRIOR_ART pass 2 item 8). `tools/py/bad_pixels.py` looks for pixels that are, on uniform dumps:
+- stuck;
+- noisy;
+- blinking;
+- offset from their 5×5 ring.
+
+A pixel counts only if it's flagged in at least two dumps. Pixels on the list are replaced for display with the median of their good neighbours, and readouts skip them. Nothing is written to the camera.
+
+**Finding:** KA1213 has no stuck, noisy or blinking pixels; the camera corrects its own. Two neighbours at the left edge, (2, 115) and (3, 115), drift as the FPA warms after a NUC:
+
+| Pixel | Drift per °C of FPA change | After 6 min (~5 °C) | Right after a NUC |
+|---|---|---|---|
+| (2, 115) | −17.6 counts | −86 counts, a cold dot ~1.7 °C deep | within ~3 counts |
+| (3, 115) | −8.7 counts | −43 counts | within ~3 counts |
+
+Replacing them for display all the time costs nothing, because their neighbours carry the same scene.
+
+**Metrics** (`bench/results/27894b7+badPixels.json`; stage 1 is on in both runs):
+
+| `flat_aged` | Baseline | Stage 2 |
+|---|---|---|
+| Worst pixel against its 5×5 ring | 12.5σ, 1.74 °C | 5.5σ, 0.77 °C (just the aged pattern) |
+| Pixels beyond 6σ | 2 | 0 |
+
+`flat` (right after a NUC) and every other metric are unchanged.
+
+**Zoom:** `bench/results/27894b7+badPixels/flat_aged_zoom.png`.
+
+**Verdict:** pending the owner.
+
 ## 2026-09-25 — Stage 1: shutter-cycle hold and crossfade (`f3d169c+shutter`)
 
 **What:** PLAN M4 stage 1, as refined in pass 2 (PRIOR_ART item 8). An exact repeat of the image rows means a shutter cycle. The pipeline holds the last output without advancing any stage, and when fresh frames return it crossfades from the held output over 8 frames (0.3 s).
