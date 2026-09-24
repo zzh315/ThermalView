@@ -44,7 +44,7 @@ Work through the milestones in order. Each one ends with evidence shown to the o
 - Absolute check: the apps all share the same vendor-derived math, so they can agree with each other and still be wrong. And the seller claims −20 to 120 °C, while the only S0H listing found specifies measurement over 30–45 °C only (CLAUDE.md). So compare against a contact thermometer (a kitchen probe is fine) across the use-case range: ice water, warm (~40 °C) and hot (~80 °C) water in a mug. Note the camera's emissivity setting: water is ~0.96, and a 0.02 mismatch is worth roughly 1 °C at 80 °C and 0.5 °C at 0 °C. Record the errors per temperature. If they're large outside 30–45 °C, stop and discuss with the owner — rule 2 leaves no room for a quiet correction.
 
 - Hot-object test, with the owner's temperature-controlled soldering station (TC22 with a C245 cartridge), after M1's lockout test:
-  - Setpoints 150, 200, 300 and 400 °C. The tip is shiny tinned metal with low emissivity, so it reads far below its setpoint; the oxidised shaft reads truer.
+  - Setpoints 150, 200 and 300 °C; no higher, to spare the tip (owner, 2026-09-24). The tip is shiny tinned metal with low emissivity, so it reads far below its setpoint; aim at the dull shaft just behind it, which reads truer.
   - Record what saturated pixels read (the raw ceiling: 16383, lower, or per-pixel), and confirm frames with saturated pixels pass the sanity checks. If they don't, fix the check before anything else, because a hot object in view must never stop the stream.
   - Re-derive the lockout trigger (140 °C) from our LUT instead of M1's oracle-derived raw 15835.
   - Check that the lockout triggers with the iron in view and releases within ~3 frames once it leaves.

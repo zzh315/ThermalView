@@ -5,6 +5,7 @@
 
 #include <string>
 
+#include "field_log.h"
 #include "session.h"
 
 namespace {
@@ -74,6 +75,12 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setOptions(JNIEnv*, job
                                                                     jboolean statsCsv, jboolean fallbackOrder,
                                                                     jboolean dumpOnLockout) {
   session().setOptions({bool(skipStartupShutter), bool(statsCsv), bool(fallbackOrder), bool(dumpOnLockout)});
+}
+
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_mark(JNIEnv* env, jobject, jstring label) {
+  const char* s = env->GetStringUTFChars(label, nullptr);
+  FLOG("owner mark: %s", s);
+  env->ReleaseStringUTFChars(label, s);
 }
 
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {

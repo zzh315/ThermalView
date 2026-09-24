@@ -148,8 +148,17 @@ private fun DebugPanel(
                 }
             }
         }
-        TextButton(onClick = { expanded = !expanded }) {
-            Text(if (expanded) "Close debug" else "Debug", color = Color.White)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Lets the owner signal a test step from the tablet; test scripts wait for this log line.
+            var marks by rememberSaveable { mutableStateOf(0) }
+            Button(onClick = {
+                marks += 1
+                NativeBridge.mark("ready #$marks")
+                toast("Ready #$marks sent")
+            }) { Text("Ready") }
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Close debug" else "Debug", color = Color.White)
+            }
         }
     }
 
