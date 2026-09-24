@@ -140,7 +140,7 @@ struct Session::Snapshot {
   uint32_t lastHotPixels = 0;
   uint16_t lastHotMax = 0;
   Readouts raw, shown;  // this frame's readouts, unsmoothed and as displayed
-  uint16_t vertex = 0, clipRaw = 0;
+  uint16_t vertex = 0, clipRaw = 0, lockoutRaw = 0;
   bool rangeHigh = false, autoRange = false, highMathInfiCam = false;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
@@ -417,11 +417,11 @@ void Session::beginLockout(int64_t now, int hotPixels, uint16_t maxRaw, bool man
   if (dump && !manual) startDump(kLockoutDumpFrames);  // before leaving Running
   enter(State::Lockout, now);
   if (command(kCmdShutter, CommandPurpose::Lockout) == CommandResult::Sent) lockoutLastCmdNs_ = nowNs();
-  setBanner("Too hot to measure (above ~120 °C) for 10 s: shutter closed to protect the sensor");
+  setBanner("Too hot to measure for 10 s: shutter closed to protect the sensor");
   if (manual)
     FLOG("lockout #%" PRIu64 " (manual)", lockouts_);
   else
-    FLOG("lockout #%" PRIu64 ": %d pixels >= %u (max %u)", lockouts_, hotPixels, clipRaw_, maxRaw);
+    FLOG("lockout #%" PRIu64 ": %d pixels >= %u (max %u)", lockouts_, hotPixels, lockoutRaw_, maxRaw);
 }
 
 void Session::endLockout(int64_t now) {
@@ -831,16 +831,23 @@ void Session::handleFrame(const RawFrame& frame) {
   // A frame whose only failure is values above 14 bits counts too, in case saturated pixels ever
   // read that way (M2: they clip per pixel at raw ~13835-14192 instead).
   const bool usable = !flags || flags == kSanityOver14Bit;
-  int hotPixels = 0;
+  int hotPixels = 0;      // over range: what the readouts show as "> 120 °C"
+  int clippedPixels = 0;  // at the camera's clip: the lockout and the (parked) range switching
   if (usable) {
     lastMeta_.assign(frame.data.begin(), frame.data.end());
     lut_.build(temperatureInputs(view), range_, highMath_);
     clipRaw_ = overRangeRaw(lut_);
+    // Owner decision, 2026-09-24: lock out only at the real clip, so hot parts the camera can still
+    // measure (up to ~131-134 °C when it's warm) don't freeze the view. The parked high range keeps
+    // its own threshold.
+    lockoutRaw_ = range_ == TempRange::Normal ? kClipFloorRaw : clipRaw_;
     rawReadouts_ = computeReadouts(view.image(), lut_, Region{}, clipRaw_);
-    // Pixels too hot to measure, for the lockout and the (parked) range switching.
-    if (stats.max >= clipRaw_) {
+    if (stats.max >= std::min(clipRaw_, lockoutRaw_)) {
       const uint16_t* img = view.image();
-      for (size_t i = 0; i < kImagePixels; ++i) hotPixels += img[i] >= clipRaw_;
+      for (size_t i = 0; i < kImagePixels; ++i) {
+        hotPixels += img[i] >= clipRaw_;
+        clippedPixels += img[i] >= lockoutRaw_;
+      }
     }
   }
   if (hotPixels) {
@@ -860,12 +867,12 @@ void Session::handleFrame(const RawFrame& frame) {
   }
 
   if (state == State::Running) {
-    hotStreak_ = hotPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
+    hotStreak_ = clippedPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
     const int lockoutFrames = range_ == TempRange::High ? kLockoutFramesHigh : kLockoutFrames;
-    if (lockoutEnabled_ && hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, hotPixels, stats.max, false);
+    if (lockoutEnabled_ && hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, clippedPixels, stats.max, false);
     if (autoRange_ && usable && state_.load() == State::Running) {
       if (range_ == TempRange::Normal) {
-        clipStreak_ = hotPixels >= kLockoutPixels ? clipStreak_ + 1 : 0;
+        clipStreak_ = clippedPixels >= kLockoutPixels ? clipStreak_ + 1 : 0;
         if (clipStreak_ >= kRangeUpFrames) autoRangeRequest_ = 1;
       } else {
         const bool cool = std::isfinite(rawReadouts_.high.tempC) && !rawReadouts_.high.overRange &&
@@ -880,7 +887,7 @@ void Session::handleFrame(const RawFrame& frame) {
     }
   } else if (state == State::Lockout && !lockoutHoldStartNs_ && usable && !frozen) {
     // Peeking: judge fresh frames only (repeated ones still show the scene before the shutter).
-    if (hotPixels >= kLockoutPixels)
+    if (clippedPixels >= kLockoutPixels)
       lockoutPeekHot_ = true;
     else if (!lockoutPeekHot_ && ++lockoutClear_ >= kLockoutClearFrames)
       endLockout(frame.arrivalNs);
@@ -995,6 +1002,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.shown = shownReadouts_;
   s.vertex = lut_.vertex();
   s.clipRaw = clipRaw_;
+  s.lockoutRaw = lockoutRaw_;
   s.rangeHigh = range_ == TempRange::High;
   s.autoRange = autoRange_;
   s.highMathInfiCam = highMath_ == HighRangeMath::InfiCam;
@@ -1331,7 +1339,7 @@ std::string Session::overlayText() {
               ")  last %.0f ms  frozen frames %" PRIu64 "\n",
               s.shutterCommanded, s.shutterDetected, s.shutterUncommanded, s.lastCycleMs, s.frozen);
   o += format("lockout: %" PRIu64 " (%" PRIu64 " commands)  trigger %d px >= raw %u  last hot: %u px, max %u\n",
-              s.lockouts, s.lockoutCommands, kLockoutPixels, s.clipRaw, s.lastHotPixels, s.lastHotMax);
+              s.lockouts, s.lockoutCommands, kLockoutPixels, s.lockoutRaw, s.lastHotPixels, s.lastHotMax);
   auto t = [](const Spot& sp) {
     if (sp.overRange) return std::string("> 120");
     return std::isfinite(sp.tempC) ? format("%.2f", sp.tempC) : std::string("--");

@@ -149,6 +149,7 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
   - The first trigger (140 °C) could never fire, because the normal range clips at ~120–123 °C.
   - A trigger at that clip would also freeze the view on harmless hot parts: the camera can't tell 130 °C from 1000 °C there.
   - Hence the owner's choice: automatic switching to the high range, with the lockout only at the high range's ceiling. Until M2, an interim trigger applies: the clip held for 10 s.
+- **After M2** (high range parked): the trigger is the normal range's clip held for 10 s. It counts only pixels at the clip itself (raw ≥ 13700), not everything the readouts show as "> 120 °C", so measurable hot parts don't freeze the view (owner decision, 2026-09-24).
 - **High-range maths.** The sources disagree:
   - ht301_hacklib scales the table by `1.17 × T − 40.9`.
   - InfiCam drops the `cal_00` correction and notes the vendor library does something else it didn't decode.

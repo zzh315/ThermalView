@@ -40,7 +40,7 @@ Ranges (owner decisions, 2026-09-24): the normal range clips at ~120–123 °C (
 The app runs in the normal range. The start sequence always selects it.
 
 Over-range lockout (owner decision, 2026-09-24): protects the sensor from very hot scenes and the sun.
-- **Trigger:** at least 4 pixels at the normal range's clip (raw ≥ 14000) continuously for 10 s, so brief looks at a hot part or the iron don't freeze the view. If the high range ever returns, the trigger moves to its ceiling, in 2 consecutive frames.
+- **Trigger:** at least 4 pixels at the normal range's clip continuously for 10 s, so brief looks at a hot part or the iron don't freeze the view. The clip is raw ≥ 13700, just under the lowest per-pixel clip seen (~13835). Only the real clip counts (owner decision, 2026-09-24): hot parts the camera can still measure (up to ~131–134 °C when it's warm) show as "> 120 °C" without freezing the view. If the high range ever returns, the trigger moves to its ceiling, in 2 consecutive frames.
 - **Hold:** `0x8000` repeated at least 250 ms apart for at most 5 s. Verified in M1: the shutter stays closed through the whole hold, with one click to close and one to open (docs/DEVICE.md).
 - **Peek:** at least 1.5 s with no command, so the shutter reopens and the view is checked again.
 - **Enforcement:** the gate enforces all of these limits (`CommandPurpose::Lockout`), not just the app's logic.

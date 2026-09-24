@@ -165,6 +165,7 @@ class Session {
   int64_t lastReadoutNs_ = 0;
   TempRange range_ = TempRange::Normal;
   uint16_t clipRaw_ = kClipFloorRaw;  // this frame's over-range threshold (readouts.h overRangeRaw)
+  uint16_t lockoutRaw_ = kClipFloorRaw;  // this frame's lockout threshold: the camera's clip (CLAUDE.md rule 1)
   HighRangeMath highMath_ = HighRangeMath::Ht301;
   std::string cameraHotText_;  // the camera-hot banner while it shows
 
