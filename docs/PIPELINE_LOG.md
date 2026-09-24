@@ -28,7 +28,7 @@ The 2.0 gain cap is why the keys don't fill the whole output: their ~45 counts c
 
 **Tests:** statistics from the region only, retarget within 0.3 s, and an all-clipped region holds its mapping.
 
-## 2026-09-25 — Stage 6: detail enhancement (`b848b57+detail`: stages 1–6; awaiting the owner's verdict)
+## 2026-09-25 — Stage 6: detail enhancement (`b848b57+detail`, then `1ffd29c+default`: approved as the mid-scale texture layer)
 
 **What:** PLAN M4 stage 6, as the approved plan change (PRIOR_ART pass 2 item 8): a guided-filter base/detail split before tone mapping (`native/core` `filters.h`, `Pipeline::enhance`).
 - **Split:** He et al.'s guided filter with the signal as its own guide (radius 2, eps 50 counts²) gives the base; detail = signal − base.
@@ -77,7 +77,37 @@ The 2.0 gain cap is why the keys don't fill the whole output: their ~45 counts c
 - **Cost:** +3.1 ms a frame on the tablet's big cores (stages 1–6: 7.8 ms), mostly a 33-tap range filter that could be made ~10× cheaper.
 - **Review:** `stage6_review/mid_*.jpg` show stages 1–5, stage 6 as proposed, and with the mid layer.
 
-**Verdict:** pending the owner's review: proposed, crisp, with the mid layer, or off. Stage 6 stays off by default until then (debug toggle "Stage 6: detail + sharpening"; the variants are adb `pipeline` texts).
+**Owner's review (2026-09-25):**
+- **Crisp:** jagged.
+- **Proposed:** less jagged, but still more than stages 1–5.
+- **Mid-scale layer:** better contrast, less washed out.
+- **The car:** little difference between any of them.
+- **The keyboard:** with the mid layer added after the curve, the warm middle blew out and its key lines vanished.
+
+**What changed after it:**
+- **The mid layer goes into stage 5's input** (base + boosted mid), so the curve's range and histogram make room for it (commit `6f0da19`). The keys' share at the top of the output is 3.3% for stages 1–5, 4.6% at ×1.5 and 3.7% at ×2.5.
+- **Only the enabled parts compute** (`21212af`, `1ffd29c`). The fine layer's gate and guard run only when its gain is above 1, the mid guard's 16 px range runs at half resolution (tested to contain the full one), and the energy box runs on one image.
+
+**Final** (`1ffd29c+default`: stages 1–6, texture ×1.5, against stages 1–5 at `903d02a+default`):
+
+| Metric | Stages 1–5 | Stage 6 (texture ×1.5) |
+|---|---|---|
+| `keyboard` key detail | 4.66 levels | 5.04 |
+| `keyboard` screen edge: width / halo | 2.10 px / 2.66% | 2.08 px / 2.77% |
+| `hand` edges | 2.73 / 2.10 / 2.59 px | 2.72 / 2.09 / 2.62 (unchanged: no sharpening, no stair-steps) |
+| `flat` / `flat_aged` noise | 1.40 / 1.42 levels | 1.43 / 1.43 |
+| `flat` / `flat_aged` fixed pattern | 4.26 / 4.62 levels | 4.46 / 4.69 |
+| Flicker `flat` / `room` / `night` / `keyboard` | 0.15 / 0.09 / 0.13 / 0.24 | 0.23 / 0.23 / 0.11 / 0.22 (Xtherm 0.21 / 0.22 / 0.11 / 0.13) |
+| `keyboard_box` detail inside the box | 7.43 | 7.93 |
+| `motion`, `shutter` | — | unchanged |
+
+- **Why flicker rose:** the curve now sees the noise-gated boost. It is still at Xtherm's level and far below visible.
+- **Cost:** 1.64 ms a frame on the gold cluster. On the tablet (replay, the cores at their lowest clock) latency is p50 16.4 / p95 19.3 ms, the same at ×1.5 and ×3, against 12.6 / 13.4 with stage 6 off. That is inside the 20 ms budget but with little margin.
+
+**Verdict:** approved (owner, 2026-09-25) as the mid-scale texture layer only.
+- On by default at ×1.5 ("1.5× is enough").
+- A setting turns it off if performance suffers, and sets the strength up to ×3. Today that's the debug panel's "Stage 6: texture" and "Texture strength" (×1.5, 2, 2.5, 3; adb extra `textureStrength`). M6 moves them into the settings.
+- The fine-scale gain and the unsharp pass stay in the code, off; stage text still reaches them for experiments.
 
 ## 2026-09-25 — Stage 5: automatic tone mapping (`903d02a+default`: stages 1–5)
 
