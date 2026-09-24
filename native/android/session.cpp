@@ -158,6 +158,7 @@ struct Session::Snapshot {
   bool coldStart = false;  // the stream began with repeated frames (camera calibrating)
   std::string startOrderNote;
   double fps = 0, jitterMs = 0, maxIntervalMs = 0, procP95Ms = 0;
+  double partP50Ms[4] = {};  // proc's parts: checks, table + lockout, pipeline, the rest
   int cpu = -1;          // the processing thread's core for the last frame
   std::string perfHint;  // "ADPF 8 ms" or "no ADPF"
   double bigShare = 0;   // share of processed frames that ran on a big core
@@ -555,6 +556,7 @@ void Session::enter(State state, int64_t now) {
     rejectedSize_ = rejectedChecks_ = 0;
     overrunBase_ = ring_->overruns();
     procMs_.clear();
+    for (auto& p : partMs_) p.clear();
     cpuFrames_ = cpuFramesBig_ = 0;
     recal_.reset();
     recalDue_ = 0;
@@ -901,6 +903,7 @@ void Session::handleFrame(const RawFrame& frame) {
   if (!flags) lastHash_ = hash;
   if (flags) lastFlags_ = flags;
   trackFreezes(frame, view, flags, frozen, state);
+  const int64_t tChecks = nowNs();  // (the overlay's breakdown of proc: checks, table, pipeline, rest)
 
 
   // Temperatures: a fresh table from this frame's own metadata (PROTOCOL.md "Temperature math"),
@@ -989,6 +992,7 @@ void Session::handleFrame(const RawFrame& frame) {
       endLockout(frame.arrivalNs);
   }
   captureForDump(frame);  // every full frame, so a dump also shows cycles and lockouts
+  const int64_t tTable = nowNs();
 
   bool accepted = false;
   switch (state) {
@@ -1078,13 +1082,19 @@ void Session::handleFrame(const RawFrame& frame) {
     }
 
     DisplayFrame& out = renderer_.frameSlot();
+    const int64_t tPipe0 = nowNs();
     pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()});
+    const int64_t tPipe1 = nowNs();
     for (size_t i = 0; i < kImagePixels; ++i) out.clipped[i] = view.image()[i] >= clipRaw_ ? 255 : 0;
     pipelineFed_ = true;
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
     const int64_t workNs = nowNs() - t0;
     procMs_.push(double(workNs) / 1e6);
+    partMs_[0].push(double(tChecks - t0) / 1e6);
+    partMs_[1].push(double(tTable - tChecks) / 1e6);
+    partMs_[2].push(double(tPipe1 - tPipe0) / 1e6);
+    partMs_[3].push(double(workNs - (tPipe1 - tPipe0) - (tTable - t0)) / 1e6);
     perfHint_.report(workNs);
     lastCpu_ = sched_getcpu();
     ++cpuFrames_;
@@ -1138,6 +1148,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.recalAgoS = recalDueNs_ ? double(frame.arrivalNs - recalDueNs_) / 1e9 : -1.0;
   s.recalReason = recalReason_;
   s.procP95Ms = procMs_.percentile(95);
+  for (int k = 0; k < 4; ++k) s.partP50Ms[k] = partMs_[k].percentile(50);
   s.cpu = lastCpu_;
   s.perfHint = perfHint_.active() ? "ADPF " + std::to_string(perfHint_.targetNs() / 1000000) + " ms" : "no ADPF";
   s.bigShare = cpuFrames_ ? double(cpuFramesBig_) / double(cpuFrames_) : 0.0;
@@ -1489,6 +1500,8 @@ std::string Session::overlayText() {
               "cpu %d (big %.0f%%)  %s\n",
               s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms, s.cpu, 100.0 * s.bigShare,
               s.perfHint.c_str());
+  o += format("proc p50 by part: checks %.2f  table + readouts %.2f  pipeline %.2f  rest %.2f ms\n",
+              s.partP50Ms[0], s.partP50Ms[1], s.partP50Ms[2], s.partP50Ms[3]);
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
               " (size %" PRIu64 ")  overrun %" PRIu64 "  start-up %" PRIu64 "  restarts %" PRIu64 "\n",
               s.frames, s.seqGaps, s.arrivalGaps, s.rejectedSize + s.rejectedChecks, s.rejectedSize,

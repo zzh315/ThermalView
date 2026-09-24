@@ -231,6 +231,7 @@ class Session {
   // Statistics.
   ArrivalTracker arrivals_;
   RollingWindow procMs_{250};
+  RollingWindow partMs_[4] = {RollingWindow{250}, RollingWindow{250}, RollingWindow{250}, RollingWindow{250}};
   // Where the processing thread runs (Options::bigCores): the big-core set, whether it's applied,
   // and how many processed frames ran on a big core.
   cpu_set_t bigCpus_{};
