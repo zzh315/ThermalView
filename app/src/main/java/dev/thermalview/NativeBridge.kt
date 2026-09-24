@@ -22,6 +22,9 @@ object NativeBridge {
 
     external fun startDump(frames: Int): String
 
+    /** Debug: pipeline stages as text, e.g. "shutter=0" (native/core parseStages). "" or the error. */
+    external fun setPipeline(stages: String): String
+
     /** Returns "" on success, otherwise the reason. [base] is the dump path without extension. */
     external fun startReplay(base: String): String
     external fun stopReplay()

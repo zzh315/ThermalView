@@ -24,7 +24,11 @@ data class DebugOptions(
     val rangePairOnReady: Boolean = false,  // Ready captures the scene in both ranges (M2 iron session)
     val lockoutEnabled: Boolean = true,     // off only for tests with hot objects within the sensor's rating
     val rangeSettleMs: Int = 500,           // wait between a range command and its 0x8000 (M2 settling test)
-)
+    val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
+) {
+    /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
+    fun stages(): String = "shutter=" + (if (shutterHold) "1" else "0")
+}
 
 class MainActivity : ComponentActivity() {
     private lateinit var camera: UsbCamera
@@ -84,14 +88,16 @@ class MainActivity : ComponentActivity() {
             value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout,
             value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs,
         )
+        NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
     }
 
     /**
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
-     * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi
-     * (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans); dump (frames);
-     * replay (dump path without extension); range ("high" or "normal").
+     * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
+     * shutterHold (booleans, applied first); reconnect, shutter, lockout, stopReplay (booleans);
+     * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
+     * (stage text, e.g. "shutter=0").
      */
     private fun applyDebugExtras(intent: Intent?) {
         val extras = intent?.extras ?: return
@@ -106,6 +112,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("rangePair")) o = o.copy(rangePairOnReady = extras.getBoolean("rangePair"))
         if (extras.containsKey("lockoutEnabled")) o = o.copy(lockoutEnabled = extras.getBoolean("lockoutEnabled"))
         if (extras.containsKey("rangeSettleMs")) o = o.copy(rangeSettleMs = extras.getInt("rangeSettleMs"))
+        if (extras.containsKey("shutterHold")) o = o.copy(shutterHold = extras.getBoolean("shutterHold"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -118,6 +125,8 @@ class MainActivity : ComponentActivity() {
         extras.getString("range")?.let { Log.i(TAG, "adb: " + NativeBridge.setRange(it == "high")) }
         if (extras.getBoolean("stopReplay")) NativeBridge.stopReplay()
         extras.getString("replay")?.let { Log.i(TAG, "adb: replay " + NativeBridge.startReplay(it).ifEmpty { "started" }) }
+        // Experiments: any stage text, until the next toggle change re-applies the toggles.
+        extras.getString("pipeline")?.let { Log.i(TAG, "adb: pipeline " + NativeBridge.setPipeline(it).ifEmpty { it }) }
         intent.replaceExtras(Bundle())  // don't re-apply on configuration changes
     }
 

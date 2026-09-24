@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "renderer.h"
+#include "tv/pipeline.h"
 #include "tv/command_gate.h"
 #include "tv/dump.h"
 #include "tv/frame.h"
@@ -61,6 +62,8 @@ class Session {
   std::string overlayText();
   std::string statusLine();  // "key=value;..." for the UI
   std::string startDump(int frames);
+  // Debug: pipeline stages as text (tv::parseStages); "" when accepted, else what's wrong.
+  std::string setPipeline(const std::string& stages);
   std::string startReplay(const std::string& base);  // "" on success, else the reason
   void stopReplay();
   std::string sendShutter();  // debug / Recalibrate
@@ -130,6 +133,10 @@ class Session {
   Renderer renderer_;
   Options options_;
   std::mutex optionsMutex_;
+  std::string pendingStages_;  // guarded by optionsMutex_
+  bool stagesPending_ = false;
+  Pipeline pipeline_;          // processing thread
+  bool pipelineFed_ = false;   // the last frame went through the pipeline
 
   // Start sequence and state (processing thread, except where atomic).
   std::atomic<State> state_{State::Idle};

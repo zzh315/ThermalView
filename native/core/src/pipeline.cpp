@@ -1,11 +1,40 @@
 #include "tv/pipeline.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "tv/display.h"
 
 namespace tv {
+
+bool parseStages(const std::string& text, PipelineOptions* o) {
+  size_t start = 0;
+  while (start <= text.size()) {
+    const size_t end = std::min(text.find(',', start), text.size());
+    const std::string item = text.substr(start, end - start);
+    const size_t eq = item.find('=');
+    const std::string key = item.substr(0, eq);
+    const std::string value = eq == std::string::npos ? "" : item.substr(eq + 1);
+    const bool on = value != "0";
+    if (key == "default" || key.empty()) {
+    } else if (key == "shutter") {
+      o->shutterHold = on;
+    } else if (key == "shutterBlend" && !value.empty()) {
+      o->shutterBlendFrames = std::atoi(value.c_str());
+    } else {
+      return false;
+    }
+    start = end + 1;
+  }
+  return true;
+}
+
+std::string describeStages(const PipelineOptions& o) {
+  std::string s;
+  if (o.shutterHold) s += "shutter(" + std::to_string(o.shutterBlendFrames) + ")";
+  return s.empty() ? "none" : s;
+}
 
 Pipeline::Pipeline(const PipelineOptions& options)
     : options_(options), previous_(kImagePixels), held_(kImagePixels), heldSignal_(kImagePixels) {}
@@ -16,6 +45,10 @@ void Pipeline::reset() {
   havePrevious_ = false;
   frozen_ = false;
   blendLeft_ = blendTotal_ = 0;
+}
+
+void Pipeline::hold() {
+  if (options_.shutterHold && havePrevious_) frozen_ = true;
 }
 
 void Pipeline::process(const uint16_t* image, float* display, float* signal) {

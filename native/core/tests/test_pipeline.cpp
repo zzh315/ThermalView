@@ -92,3 +92,31 @@ TEST_CASE("reset forgets the previous frame, so a repeat right after it isn't a 
   p.process(img.data(), out.data());
   CHECK_FALSE(p.frozen());
 }
+
+TEST_CASE("hold(): the next frame crossfades from the last output, as after a cycle in the frames") {
+  tv::PipelineOptions o;
+  o.shutterBlendFrames = 2;
+  tv::Pipeline p(o);
+  std::vector<float> out(tv::kImagePixels), held(tv::kImagePixels), live(tv::kImagePixels);
+  const auto a = image(5000, 20), b = image(4900, 21);
+  p.process(a.data(), out.data());
+  held = out;
+  p.hold();  // the app discarded the frames of its own 0x8000
+  CHECK(p.frozen());
+  p.process(b.data(), out.data());
+  tv::renderBaseline(b.data(), live.data());
+  CHECK(out[99] == doctest::Approx(live[99] + (2.0f / 3.0f) * (held[99] - live[99])).epsilon(1e-5));
+  CHECK(p.blending());
+}
+
+TEST_CASE("stage settings as text") {
+  tv::PipelineOptions o;
+  CHECK(tv::parseStages("default", &o));
+  CHECK(o.shutterHold);
+  CHECK(tv::parseStages("shutter=0", &o));
+  CHECK_FALSE(o.shutterHold);
+  CHECK(tv::describeStages(o) == "none");
+  CHECK(tv::parseStages("shutter,shutterBlend=12", &o));
+  CHECK(tv::describeStages(o) == "shutter(12)");
+  CHECK_FALSE(tv::parseStages("bogus", &o));
+}

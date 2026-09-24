@@ -125,30 +125,6 @@ bool writeFloats(const std::filesystem::path& path, const std::vector<float>& da
   return bool(out);
 }
 
-// Starts from the defaults (the approved stages). "default" changes nothing; "shutter" or
-// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade. False on an unknown item.
-bool parseStages(const std::string& text, tv::PipelineOptions* o) {
-  size_t start = 0;
-  while (start <= text.size()) {
-    const size_t end = std::min(text.find(',', start), text.size());
-    const std::string item = text.substr(start, end - start);
-    const size_t eq = item.find('=');
-    const std::string key = item.substr(0, eq);
-    const std::string value = eq == std::string::npos ? "" : item.substr(eq + 1);
-    const bool on = value != "0";
-    if (key == "default") {
-    } else if (key == "shutter") {
-      o->shutterHold = on;
-    } else if (key == "shutterBlend" && !value.empty()) {
-      o->shutterBlendFrames = std::atoi(value.c_str());
-    } else if (!key.empty()) {
-      return false;
-    }
-    start = end + 1;
-  }
-  return true;
-}
-
 bool benchScene(const std::filesystem::path& sceneDir, const std::filesystem::path& outDir,
                 const tv::PipelineOptions* pipelineOptions, const std::string& stages) {
   tv::LoadedDump dump;
@@ -237,7 +213,7 @@ int bench(int argc, char** argv) {
       outDir = argv[++i];
     } else if (a == "--pipeline" && i + 1 < argc) {
       stages = argv[++i];
-      if (!parseStages(stages, &pipelineOptions)) {
+      if (!tv::parseStages(stages, &pipelineOptions)) {
         std::fprintf(stderr, "harness: unknown stage in \"%s\"\n", stages.c_str());
         return 2;
       }

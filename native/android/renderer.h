@@ -1,5 +1,5 @@
-// GLES render thread. M1 draws the baseline preview (docs/PLAN.md): a per-frame min/max linear
-// stretch of the 14-bit image to grayscale, nearest-neighbor, letterboxed to 4:3.
+// GLES render thread: draws the pipeline's display intensity (native/core Pipeline, docs/PLAN.md M4)
+// as grayscale, nearest-neighbor for now (M5 brings the upscalers), letterboxed to 4:3.
 #pragma once
 
 #include <EGL/egl.h>
@@ -19,10 +19,8 @@
 namespace tv {
 
 struct DisplayFrame {
-  std::array<uint16_t, kImagePixels> image;
-  uint16_t min = 0;
-  uint16_t max = 0;
-  int64_t arrivalNs = 0;  // when the frame reached the capture callback
+  std::array<float, kImagePixels> intensity;  // [0, 1], from Pipeline::process
+  int64_t arrivalNs = 0;                      // when the frame reached the capture callback
 };
 
 class Renderer {
@@ -76,7 +74,7 @@ class Renderer {
   EGLSurface surface_ = EGL_NO_SURFACE;
   ANativeWindow* window_ = nullptr;
   GLuint program_ = 0, texture_ = 0, vao_ = 0;
-  GLint uMin_ = -1, uScale_ = -1, uMirror_ = -1;
+  GLint uMirror_ = -1;
   std::atomic<float> mirrorX_{1.0f}, mirrorY_{1.0f};
 
   RollingWindow latencyMs_{250};

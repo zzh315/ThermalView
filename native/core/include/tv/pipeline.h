@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "tv/frame.h"
@@ -21,6 +22,12 @@ struct PipelineOptions {
   int shutterBlendFrames = 8;  // ~0.3 s at 25 fps
 };
 
+// Stage settings as text, shared by the harness (--pipeline) and the app's debug options: a
+// comma-separated list applied on top of the defaults. "default" changes nothing; "shutter" or
+// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade. False on an unknown item.
+bool parseStages(const std::string& text, PipelineOptions* options);
+std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"
+
 class Pipeline {
  public:
   explicit Pipeline(const PipelineOptions& options = {});
@@ -35,8 +42,14 @@ class Pipeline {
   // given, receives the value tone mapping started from, in raw counts (for the harness's °C metrics).
   void process(const uint16_t* image, float* display, float* signal = nullptr);
 
-  // True while the camera repeats one frame (stage 1 on).
+  // The caller has stopped feeding frames through a shutter cycle it knows about (the app discards
+  // frames while its own 0x8000 or a lockout runs): the next frame crossfades from the last output,
+  // as after a cycle seen in the frames themselves (stage 1 on).
+  void hold();
+
+  // True while the camera repeats one frame, or after hold() until the next frame (stage 1 on).
   bool frozen() const { return frozen_; }
+  bool blending() const { return blendLeft_ > 0; }
 
  private:
   PipelineOptions options_;

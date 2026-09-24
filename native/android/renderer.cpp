@@ -23,19 +23,18 @@ void main() {
 }
 )";
 
-// Baseline: nearest-neighbor fetch of the raw 14-bit value, linear min/max stretch to gray.
+// Nearest-neighbor fetch of the pipeline's intensity (R32F: GLES can't filter it, texelFetch doesn't
+// need to), drawn as gray.
 constexpr const char* kFragmentShader = R"(#version 300 es
 precision highp float;
-precision highp usampler2D;
-uniform usampler2D uImage;
-uniform float uMin;
-uniform float uScale;
+precision highp sampler2D;
+uniform sampler2D uImage;
 in vec2 vUV;
 out vec4 outColor;
 void main() {
   ivec2 size = textureSize(uImage, 0);
   ivec2 p = clamp(ivec2(vUV * vec2(size)), ivec2(0), size - 1);
-  float g = clamp((float(texelFetch(uImage, p, 0).r) - uMin) * uScale, 0.0, 1.0);
+  float g = clamp(texelFetch(uImage, p, 0).r, 0.0, 1.0);
   outColor = vec4(vec3(g), 1.0);
 }
 )";
@@ -226,16 +225,14 @@ bool Renderer::initGl() {
     LOGE("renderer: program link failed");
     return false;
   }
-  uMin_ = glGetUniformLocation(program_, "uMin");
-  uScale_ = glGetUniformLocation(program_, "uScale");
   uMirror_ = glGetUniformLocation(program_, "uMirror");
   glUseProgram(program_);
   glUniform1i(glGetUniformLocation(program_, "uImage"), 0);
 
   glGenTextures(1, &texture_);
   glBindTexture(GL_TEXTURE_2D, texture_);
-  glTexStorage2D(GL_TEXTURE_2D, 1, GL_R16UI, kFrameWidth, kImageRows);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // integer textures: nearest
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, kFrameWidth, kImageRows);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // R32F isn't filterable in GLES
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -259,12 +256,9 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
 
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture_);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED_INTEGER, GL_UNSIGNED_SHORT,
-                  frame.image.data());
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_FLOAT, frame.intensity.data());
   glUseProgram(program_);
-  glUniform1f(uMin_, float(frame.min));
-  glUniform1f(uScale_, frame.max > frame.min ? 1.0f / float(frame.max - frame.min) : 0.0f);
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

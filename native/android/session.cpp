@@ -142,6 +142,8 @@ struct Session::Snapshot {
   Readouts raw, shown;  // this frame's readouts, unsmoothed and as displayed
   uint16_t vertex = 0, clipRaw = 0, lockoutRaw = 0;
   bool rangeHigh = false, autoRange = false, highMathInfiCam = false;
+  std::string pipeline;
+  bool pipelineFrozen = false, pipelineBlending = false;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
   double lastCycleMs = 0;
   uint32_t bytes = 0, flags = 0, lastBadFlags = 0;
@@ -296,6 +298,8 @@ bool Session::startStreaming() {
   readoutFilter_.reset();
   rawReadouts_ = shownReadouts_ = Readouts{};
   lastReadoutNs_ = 0;
+  pipeline_.reset();
+  pipelineFed_ = false;
   range_ = TempRange::Normal;  // the start sequence always selects the normal range
   recoveryNucRequested_ = recoveryNucSent_ = false;
   blockAZeroStreak_ = 0;
@@ -827,6 +831,13 @@ void Session::handleFrame(const RawFrame& frame) {
       FLOG("over-range lockout %s (debug option)", options_.lockoutEnabled ? "enabled" : "DISABLED");
     lockoutEnabled_ = options_.lockoutEnabled;
     highMath_ = options_.highMathInfiCam ? HighRangeMath::InfiCam : HighRangeMath::Ht301;
+    if (stagesPending_) {
+      PipelineOptions p;
+      parseStages(pendingStages_, &p);  // checked in setPipeline()
+      pipeline_.setOptions(p);
+      stagesPending_ = false;
+      FLOG("pipeline: %s (debug option \"%s\")", describeStages(p).c_str(), pendingStages_.c_str());
+    }
   }
   // A frame whose only failure is values above 14 bits counts too, in case saturated pixels ever
   // read that way (M2: they clip per pixel at raw ~13835-14192 instead).
@@ -946,6 +957,13 @@ void Session::handleFrame(const RawFrame& frame) {
       break;
   }
 
+  // Frames stop reaching the display (our own 0x8000, a range switch, a lockout, a rejected frame):
+  // stage 1 holds and crossfades back from what was last shown.
+  if (!accepted && pipelineFed_) {
+    pipeline_.hold();
+    pipelineFed_ = false;
+  }
+
   if (accepted) {
     const double dt = lastReadoutNs_ ? double(frame.arrivalNs - lastReadoutNs_) / 1e9 : 0.04;
     lastReadoutNs_ = frame.arrivalNs;
@@ -964,9 +982,8 @@ void Session::handleFrame(const RawFrame& frame) {
     }
 
     DisplayFrame& out = renderer_.frameSlot();
-    std::memcpy(out.image.data(), view.image(), kImagePixels * sizeof(uint16_t));
-    out.min = stats.min;
-    out.max = stats.max;
+    pipeline_.process(view.image(), out.intensity.data());
+    pipelineFed_ = true;
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
     procMs_.push(double(nowNs() - t0) / 1e6);
@@ -1005,6 +1022,9 @@ void Session::handleFrame(const RawFrame& frame) {
   s.lockoutRaw = lockoutRaw_;
   s.rangeHigh = range_ == TempRange::High;
   s.autoRange = autoRange_;
+  s.pipeline = describeStages(pipeline_.options());
+  s.pipelineFrozen = pipeline_.frozen();
+  s.pipelineBlending = pipeline_.blending();
   s.highMathInfiCam = highMath_ == HighRangeMath::InfiCam;
   s.camMaxC = lut_.valid(view.maxRaw()) ? lut_[view.maxRaw()] : NAN;
   s.camMinC = lut_.valid(view.minRaw()) ? lut_[view.minRaw()] : NAN;
@@ -1174,6 +1194,8 @@ std::string Session::startReplay(const std::string& base) {
   readoutFilter_.reset();
   rawReadouts_ = shownReadouts_ = Readouts{};
   lastReadoutNs_ = 0;
+  pipeline_.reset();
+  pipelineFed_ = false;
   enter(State::Replay, nowNs());
   startProcessing();
   replayRun_ = true;
@@ -1254,6 +1276,15 @@ std::string Session::triggerLockout() {
 void Session::setOptions(const Options& options) {
   std::lock_guard lock(optionsMutex_);
   options_ = options;
+}
+
+std::string Session::setPipeline(const std::string& stages) {
+  PipelineOptions p;
+  if (!parseStages(stages, &p)) return "unknown stage in \"" + stages + "\"";
+  std::lock_guard lock(optionsMutex_);
+  pendingStages_ = stages;
+  stagesPending_ = true;
+  return "";
 }
 
 void Session::captureSetBanner(const std::string& text) {
@@ -1347,6 +1378,8 @@ std::string Session::overlayText() {
   auto c = [](double v) { return std::isfinite(v) ? format("%.2f", v) : std::string("--"); };
   o += format("range: %s, auto %s, high-range math %s\n", s.rangeHigh ? "HIGH" : "normal",
               s.autoRange ? "on" : "off", s.highMathInfiCam ? "InfiCam" : "ht301");
+  o += format("pipeline: %s%s\n", s.pipeline.c_str(),
+              s.pipelineFrozen ? "  (holding)" : s.pipelineBlending ? "  (blending back)" : "");
   o += format("temps (%s range, per-frame table, vertex raw %u): high %s @(%.0f,%.0f)  low %s @(%.0f,%.0f)  "
               "center %s   camera's own: max %s min %s center %s\n",
               s.rangeHigh ? "high" : "normal", s.vertex, t(s.raw.high).c_str(), s.raw.high.x, s.raw.high.y,

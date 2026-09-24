@@ -143,6 +143,9 @@ private fun DebugPanel(
                     }
                     Toggle("Auto range switching", options.autoRange) { onOptions(options.copy(autoRange = it)) }
                     Toggle("Over-range lockout", options.lockoutEnabled) { onOptions(options.copy(lockoutEnabled = it)) }
+                    Toggle("Stage 1: shutter hold + crossfade", options.shutterHold) {
+                        onOptions(options.copy(shutterHold = it))
+                    }
                     Toggle("High-range math: InfiCam (off: ht301)", options.highMathInfiCam) {
                         onOptions(options.copy(highMathInfiCam = it))
                     }
