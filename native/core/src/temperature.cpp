@@ -77,8 +77,11 @@ void TemperatureLut::build(const TemperatureInputs& in, TempRange range, HighRan
   for (size_t i = 0; i < kSize; ++i) {
     double n = std::sqrt(std::abs(((double(i) - tableOffset) * calD + calC) / cal01 + calB));
     if (std::isnan(n)) n = 0.0;
-    const double wtot = std::pow(n - calA + kZeroC, 4);
-    const double ttot = std::pow((wtot - numeratorSub) / denominator, 0.25) - kZeroC;
+    // pow(x, 4) and pow(x, 0.25) as multiplies and square roots: the same values (the golden
+    // test holds), several times faster on the tablet, which rebuilds the table every frame.
+    const double k = n - calA + kZeroC, k2 = k * k;
+    const double wtot = k2 * k2;
+    const double ttot = std::sqrt(std::sqrt((wtot - numeratorSub) / denominator)) - kZeroC;
     const double t = ttot + (distanceAdjusted * 0.85 - 1.125) * (ttot - air) / 100.0 + in.correction;
     table_[i] = m * t + b;
     if (table_[i] < lowest) {  // NaN never compares less, so it can't become the vertex
