@@ -4,7 +4,7 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
-## 2026-09-25 — Stage 4b: spatial noise reduction, a study, then non-local means (preview; awaiting the owner)
+## 2026-09-25 — Stage 4b: spatial noise reduction, a study, then non-local means (approved; on the GPU, `d25e430+default`)
 
 **Why:** with stage 4 removed, the owner found tone mapping showed more noise. They asked for noise reduction within each frame, so nothing can ghost, but only after the best method was found (`tools/py/nr_study.py`).
 
@@ -69,7 +69,40 @@ The methods scale by the camera's temporal noise. A single frame's own noise est
 - **Live, at the cores' low clock:** latency p50 22.8 / p95 27.9 ms at 5×5 search (budget 20), still 25 fps.
 - **Plan:** a GPU compute version (the Adreno 650 needs well under 1 ms even for 11×11), with this CPU code as its reference and fallback.
 
-**Verdict:** pending. The owner is previewing it live (debug panel "Stage 4b: noise reduction", strength 1.0–1.8).
+**Verdict:** approved (owner, 2026-09-25, after the review images and the live preview at a 5×5 search: "Sure they look ok, the stage 4b on tablet looks good as well"). It ships at the better setting the table shows: an 11×11 search at strength 1.1, on the GPU.
+
+**The GPU version** (`native/android/gpu_nlm*`): a GLES 3.1 compute shader in its own EGL context on the processing thread, one dispatch a frame and a synchronous read-back. The CPU code is its reference and its fallback: on any GPU failure, the CPU runs at a 5×5 search with h scaled ×1.27, which is strength 1.4 there, the setting the owner previewed.
+- **First version:** each pixel read both 5×5 patches from shared memory for all 121 offsets, ~300 M loads a frame. It took 22 ms live (the result matched the CPU reference to 7e-3 counts).
+- **Now:** the shader source is generated for the radii, so every window index is a constant and the windows sit in registers.
+  - Each thread keeps its own patches' pixels. For each dy, it slides the partner window along dx, loading one new column per step, about 25× fewer loads.
+  - Adjacent pixels of a thread share the columns' difference sums.
+  - Offset (0, 0) has distance 0, so the pixel itself gets weight 1, as on the CPU.
+- **Checks:**
+  - `tools/py/gpu_nlm_emulate.py` runs the generated shader on the Mac as C++ against the CPU reference: max 7e-3 counts at 1, 2 and 4 pixels a thread, search radius 1–7, patch radius 0–3. glslc validates the GLSL.
+  - On the tablet, the debug extra `nrCheck` compares the GPU to the CPU reference on a live frame and times each variant (field log).
+- **Timing of the generated shader on the tablet:** pending; wireless adb dropped before it could be installed.
+
+**Final results** (`d25e430+default` against `d25e430+default_nr-0`, the same code with stage 4b off; stage 4 is gone from both):
+
+| | Stage 4b off | On (11×11, strength 1.1) |
+|---|---|---|
+| `flat` noise | 2.09 levels (24.7 mK) | 0.68 (13.1 mK) |
+| `flat_aged` noise | 2.11 levels | 0.80 |
+| `flat` fixed pattern | 4.43 levels | 3.87 |
+| `keyboard` key texture | 5.03 levels | 4.95 (98%) |
+| `keyboard` screen-edge halo | 2.9% | 1.9% |
+| Edge widths (`keyboard`, `hand`) | 2.09–2.72 px | 2.10–2.71 px |
+| Flicker: `flat` / `flat_aged` / `night` / `keyboard` / `room` / keyboard box | 0.30 / 0.064 / 0.096 / 0.21 / 0.135 / 0.18 | 0.21 / 0.047 / 0.090 / 0.21 / 0.193 / 0.14 |
+| `motion` step response (1 / 2 / 4 frames) | 0.79 / 0.94 / 0.98 | the same |
+
+- **`room`'s flicker (+0.06 levels):** the auto range's own wander, not the filter.
+  - The frame's mean signal wanders 0.440 counts with stage 4b on or off, and frame-to-frame changes are the same or smaller with it.
+  - How the mapping settles over 8 s differs in detail, and it goes the other way on four of the six static cases. All of it is far below a visible level.
+- **The `defects` metric** reads 0 → 33 pixels over 6σ on `flat` (0 → 42 on `flat_aged`), while the worst defect drops from 99 to 58 mK (140 → 88).
+  - **Why it rises:** its σ is the frame's spread around each pixel's 5×5 ring, which non-local means cuts from 23 to 3.9 mK.
+  - **What the pixels are:** small clusters that were already there (e.g. `flat` at x 251–255, rows 10–11; `flat_aged` around (201–209, 16–22) and on row 0). Each one is smaller than before: the 50 worst are at 0.6–0.7× their stage-4b-off size.
+  - **Mechanism:** a rare patch has no good matches, so it's filtered less than its surroundings. Only 3 (`flat`) and 10 (`flat_aged`) pixels grew by more than 5 mK, all beside those clusters, where the ring median shifted.
+  - **In display terms:** one frame's largest ring residual falls from 16 to 4.3 levels.
 
 ## 2026-09-25 — Stage 5: the measurement region (`039b6d7+default`, `keyboard_box`)
 
