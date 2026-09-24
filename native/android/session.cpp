@@ -55,7 +55,12 @@ constexpr int kLockoutFramesHigh = 2;       // in the high range the lockout act
 // dropped adb link can't lose it. Recalibrations stay >= 60 s apart: the shutter warms with use
 // and back-to-back cycles read low (docs/DEVICE.md).
 constexpr int kCaptureGapMs = 60000;
-constexpr int kPairHighGapMs = 10000;  // the high leg of a range test only waits out the gate's limit
+// A range test is short enough to hold the iron by hand (~20 s): only the gate's 10 s between
+// its two recalibrations, a 1 s settle and 2 s per capture. The shutter's self-heating bias
+// (~0.2-0.8 C, docs/DEVICE.md) is small next to the difference between the high-range maths.
+constexpr int kPairGapMs = 10000;
+constexpr int kPairSettleMs = 1000;
+constexpr int kPairFrames = 50;
 constexpr int kCaptureSettleMs = 3000;
 constexpr int kCaptureFrames = 200;
 
@@ -483,7 +488,7 @@ void Session::tickCapture(int64_t now) {
     }
     capturePhase_ = CapturePhase::WaitGap;
     capturePair_ = capturePairRequested_.load();
-    captureGapMs_ = kCaptureGapMs;
+    captureGapMs_ = capturePair_ ? kPairGapMs : kCaptureGapMs;
     FLOG("capture: requested%s", capturePair_ ? " (range test: normal, then high)" : "");
   }
   const char* leg = !capturePair_ ? "Capture" : range_ == TempRange::High ? "Range test 2/2 (high)"
@@ -518,8 +523,8 @@ void Session::tickCapture(int64_t now) {
       }
       break;
     case CapturePhase::Settle:
-      if (since(capturePhaseNs_) >= kCaptureSettleMs) {
-        FLOG("capture: recording %s", startDump(kCaptureFrames).c_str());
+      if (since(capturePhaseNs_) >= (capturePair_ ? kPairSettleMs : kCaptureSettleMs)) {
+        FLOG("capture: recording %s", startDump(capturePair_ ? kPairFrames : kCaptureFrames).c_str());
         capturePhase_ = CapturePhase::Recording;
       }
       break;
@@ -548,7 +553,7 @@ void Session::tickCapture(int64_t now) {
         if (state == State::Running) switchRange(TempRange::High, now, "range test");
         break;
       }
-      captureGapMs_ = kPairHighGapMs;
+      captureGapMs_ = kPairGapMs;
       capturePhase_ = CapturePhase::WaitGap;
       break;
     case CapturePhase::SwitchBack:
