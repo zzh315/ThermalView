@@ -173,3 +173,33 @@ TEST_CASE("stage 6 draws no rim beside a strong step") {
   CHECK(bareDip > 1.0f);
   CHECK(bareBump > 1.0f);
 }
+
+TEST_CASE("stage 6 stays finite on degenerate frames: constant, all clipped, a lone hot pixel") {
+  for (float mid : {1.0f, 2.0f}) {
+    CAPTURE(mid);
+    tv::PipelineOptions o;
+    o.detail = true;
+    o.detailMidGain = mid;
+    tv::Pipeline p(o);
+    std::vector<uint16_t> img(tv::kImagePixels);
+    std::vector<float> d(tv::kImagePixels);
+    auto finite = [&] { return std::all_of(d.begin(), d.end(), [](float v) { return v >= 0.0f && v <= 1.0f; }); };
+    uint32_t s = 17;
+    for (int k = 0; k < 6; ++k) {  // constant (with a count of noise so stage 1 doesn't hold)
+      for (auto& v : img) v = uint16_t(6000 + (k & 1));
+      p.process(img.data(), d.data());
+      CHECK(finite());
+    }
+    for (int k = 0; k < 6; ++k) {  // all at the clip
+      for (auto& v : img) v = uint16_t(14100 + (k & 1));
+      p.process(img.data(), d.data());
+      CHECK(finite());
+    }
+    for (int k = 0; k < 6; ++k) {  // a lone hot pixel on noise
+      for (auto& v : img) v = uint16_t(6000.0f + 2.0f * noise(s) + 1.0f);
+      img[size_t(96) * W + 128] = 9000;
+      p.process(img.data(), d.data());
+      CHECK(finite());
+    }
+  }
+}
