@@ -1,0 +1,63 @@
+// Stage 5, automatic tone mapping (docs/PLAN.md M4 stage 5; PRIOR_ART pass 2 item 8): the signal in
+// counts to display intensity. FLIR-style plateau equalization: a robust range from percentiles, a
+// double-plateau histogram equalization blended with a linear share, and a cap on the curve's slope
+// (max gain) that keeps a flat scene calm instead of stretching its noise, all damped over time
+// (expand fast, contract slowly, a deadband) and computed on the signal minus a tracked global
+// offset, so calibration steps and the camera's slow wander don't show as brightness changes.
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include "tv/frame.h"
+
+namespace tv {
+
+struct ToneOptions {
+  float lowPct = 0.3f, highPct = 99.7f;  // robust range (PLAN; 99.9 let a small hot spot jitter the range)
+  float maxGain = 1.0f;          // display levels (of 255) per count at most: the gain cap
+  float linearShare = 0.2f;      // the curve's linear part; the rest is plateau equalization
+  float plateauDown = 0.25f;     // occupied bins count at least this x the mean occupied bin...
+  // ...and at most the mean of the histogram's local maxima (the upper plateau).
+  float expandTauS = 0.1f;       // the range follows a wider scene this fast
+  float contractTauS = 1.3f;     // and a narrower one this slowly
+  float curveTauS = 0.3f;        // the curve's shape, smoothed over time
+  float deadbandCounts = 1.5f;   // range changes smaller than this are ignored...
+  float deadbandPct = 0.0f;      // ...or than this % of the current span, whichever is larger
+  float outLo = 0.03f, outHi = 0.97f;  // the display range the curve maps into
+  bool trackOffset = true;       // follow whole-frame steps (calibrations, the camera's wander)
+};
+
+class ToneMapper {
+ public:
+  static constexpr int kCurve = 256;  // bins across the smoothed range; the curve has kCurve + 1 edges
+
+  explicit ToneMapper(const ToneOptions& options = {});
+  void setOptions(const ToneOptions& options) { options_ = options; }
+  void reset();
+
+  // signal: kImagePixels counts (stages 1-4 done); exclude: optional mask, nonzero = leave out of the
+  // statistics (clipped pixels, outside the measurement region); out: intensity in [0, 1].
+  void map(const float* signal, float* out, const uint8_t* exclude = nullptr, float dtS = 0.04f);
+
+  // A calibration or another step change of the whole frame just happened: the next frame re-reads
+  // the global offset from itself instead of from the frame before (the caller skipped frames).
+  void resync() { havePrevious_ = false; }
+
+  // The current mapping, for the scale bar (M5): the smoothed range in counts and the curve at its
+  // kCurve + 1 bin edges (values in [0, 1] before the outLo..outHi squeeze).
+  float lowCounts() const { return lo_ + offset_; }
+  float highCounts() const { return hi_ + offset_; }
+  const std::vector<float>& curve() const { return curve_; }
+  float globalOffset() const { return offset_; }
+
+ private:
+  ToneOptions options_;
+  std::vector<float> previous_, work_, curve_, target_;
+  std::vector<uint32_t> hist_;
+  bool havePrevious_ = false, haveRange_ = false, haveCurve_ = false;
+  float offset_ = 0.0f;  // tracked global offset, counts
+  float lo_ = 0.0f, hi_ = 0.0f;  // smoothed range of (signal - offset), counts
+};
+
+}  // namespace tv

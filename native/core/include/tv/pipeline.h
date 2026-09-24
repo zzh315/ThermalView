@@ -11,6 +11,7 @@
 #include "tv/bad_pixels.h"
 #include "tv/drift.h"
 #include "tv/frame.h"
+#include "tv/tone.h"
 
 namespace tv {
 
@@ -53,6 +54,11 @@ struct PipelineOptions {
   bool denoise = true;  // approved 2026-09-25 (owner: "do what you think is best"), at 0.25
   float denoiseKMin = 0.25f;
   float denoiseMotionLo = 2.0f, denoiseMotionHi = 4.0f;  // in sigmas of the pooled difference
+
+  // Stage 5: automatic tone mapping (tone.h) in place of the baseline's per-frame min/max stretch.
+  // Pixels at the camera's clip stay out of its statistics.
+  bool tone = false;
+  ToneOptions toneOptions;
 };
 
 // What the pipeline needs from a frame's metadata (FrameView fpaC(), shutterC()).
@@ -67,7 +73,9 @@ struct FrameMeta {
 // switches stage 2; "drift" / "drift=0" switches stage 3's compensation, "driftScale=X" and
 // "driftC0=X" tune it; "destripe" / "destripe=0" switches stage 3b, "destripeTau=X",
 // "destripeGate=X" and "destripeClamp=X" tune it; "denoise" / "denoise=0" switches stage 4,
-// "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it. False on an unknown item.
+// "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it; "tone" / "tone=0" switches stage 5,
+// "toneGain=X" (max gain), "toneLinear=X", "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
+// "toneContract=X" and "toneCurve=X" (time constants) tune it. False on an unknown item.
 bool parseStages(const std::string& text, PipelineOptions* options);
 std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"
 
@@ -111,6 +119,8 @@ class Pipeline {
   std::vector<float> colOffset_, rowOffset_;  // stage 3b's corrections, counts
   std::vector<float> colAcc_, colCount_, colSum_;  // stage 3b's per-column scratch
   std::vector<float> filtered_, diff_, pooled_;    // stage 4's state and scratch
+  ToneMapper tone_;                                // stage 5
+  std::vector<uint8_t> clipped_;                   // stage 5's exclusion mask
   bool haveFiltered_ = false;
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
   void denoise(float* sig);

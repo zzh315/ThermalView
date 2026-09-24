@@ -17,6 +17,7 @@ add_library(thermalcore STATIC
   src/readouts.cpp
   src/stats.cpp
   src/temperature.cpp
+  src/tone.cpp
 )
 target_include_directories(thermalcore PUBLIC include)
 target_compile_options(thermalcore PRIVATE -Wall -Wextra -Wpedantic)
@@ -37,6 +38,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_readouts.cpp
     tests/test_stats.cpp
     tests/test_temperature.cpp
+    tests/test_tone.cpp
   )
   target_include_directories(core_tests PRIVATE ${TV_ROOT}/native/third_party/doctest/doctest)
   target_link_libraries(core_tests PRIVATE thermalcore)

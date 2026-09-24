@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "tv/display.h"
+#include "tv/readouts.h"
 
 namespace tv {
 
@@ -47,6 +48,28 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->denoiseMotionLo = float(std::atof(value.c_str()));
     } else if (key == "denoiseHi" && !value.empty()) {
       o->denoiseMotionHi = float(std::atof(value.c_str()));
+    } else if (key == "tone") {
+      o->tone = on;
+    } else if (key == "toneGain" && !value.empty()) {
+      o->toneOptions.maxGain = float(std::atof(value.c_str()));
+    } else if (key == "toneLinear" && !value.empty()) {
+      o->toneOptions.linearShare = float(std::atof(value.c_str()));
+    } else if (key == "toneLow" && !value.empty()) {
+      o->toneOptions.lowPct = float(std::atof(value.c_str()));
+    } else if (key == "toneHigh" && !value.empty()) {
+      o->toneOptions.highPct = float(std::atof(value.c_str()));
+    } else if (key == "toneExpand" && !value.empty()) {
+      o->toneOptions.expandTauS = float(std::atof(value.c_str()));
+    } else if (key == "toneContract" && !value.empty()) {
+      o->toneOptions.contractTauS = float(std::atof(value.c_str()));
+    } else if (key == "toneCurve" && !value.empty()) {
+      o->toneOptions.curveTauS = float(std::atof(value.c_str()));
+    } else if (key == "toneDeadband" && !value.empty()) {
+      o->toneOptions.deadbandCounts = float(std::atof(value.c_str()));
+    } else if (key == "toneDeadbandPct" && !value.empty()) {
+      o->toneOptions.deadbandPct = float(std::atof(value.c_str()));
+    } else if (key == "toneOffset") {
+      o->toneOptions.trackOffset = on;
     } else {
       return false;
     }
@@ -63,6 +86,7 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.badPixels) add("badPixels");
   if (o.destripe) add("destripe");
   if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
+  if (o.tone) add("tone(g" + std::to_string(o.toneOptions.maxGain).substr(0, 4) + ")");
   return s.empty() ? "none" : s;
 }
 
@@ -76,12 +100,16 @@ Pipeline::Pipeline(const PipelineOptions& options)
       filtered_(kImagePixels),
       diff_(kImagePixels),
       pooled_(kImagePixels),
+      tone_(options.toneOptions),
       work_(kImagePixels),
       previous_(kImagePixels),
       held_(kImagePixels),
       heldSignal_(kImagePixels) {}
 
-void Pipeline::setOptions(const PipelineOptions& options) { options_ = options; }
+void Pipeline::setOptions(const PipelineOptions& options) {
+  options_ = options;
+  tone_.setOptions(options.toneOptions);
+}
 
 void Pipeline::reset() {
   havePrevious_ = false;
@@ -89,6 +117,7 @@ void Pipeline::reset() {
   blendLeft_ = blendTotal_ = 0;
   restartDestripe();
   haveFiltered_ = false;
+  tone_.reset();
 }
 
 void Pipeline::restartDestripe() {
@@ -277,7 +306,18 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   if (options_.badPixels) replaceBadPixels(badPixels_, sig);  // stage 2
   if (options_.destripe) destripe(sig);                       // stage 3b
   if (options_.denoise) denoise(sig);                         // stage 4
-  renderBaseline(sig, display);
+  if (options_.tone) {
+    // Stage 5. Pixels at the camera's clip (too hot to measure) stay out of the statistics.
+    const uint8_t* exclude = nullptr;
+    if (*std::max_element(image, image + kImagePixels) >= kClipFloorRaw) {
+      clipped_.resize(kImagePixels);
+      for (size_t i = 0; i < kImagePixels; ++i) clipped_[i] = image[i] >= kClipFloorRaw;
+      exclude = clipped_.data();
+    }
+    tone_.map(sig, display, exclude);
+  } else {
+    renderBaseline(sig, display);
+  }
 
   if (!options_.shutterHold) return;
   if (resuming) {  // the first fresh frame after a cycle
