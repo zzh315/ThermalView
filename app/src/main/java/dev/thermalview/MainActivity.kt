@@ -30,6 +30,7 @@ data class DebugOptions(
     val denoise: Boolean = true,            // M4 stage 4 (approved): motion-adaptive temporal filter
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val detail: Boolean = false,            // M4 stage 6 (awaiting the owner's verdict): detail + sharpening
+    val stage6Variant: Int = 2,             // which stage 6 is under review: STAGE6_VARIANTS (2: mid x1.5)
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
     val perfHint: Boolean = true,           // ADPF: ask for the clock the frame budget needs
     val upscaler: Int = 1,                  // M5 preview: 0 nearest (M1), 1 cardinal B-spline + 2x2 clamp
@@ -40,7 +41,7 @@ data class DebugOptions(
     fun stages(): String = listOf(
         "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
         "denoise=" + bit(denoise), "tone=" + bit(tone), "detail=" + bit(detail),
-    ).joinToString(",")
+    ).joinToString(",") + (MainActivity.STAGE6_VARIANTS.getOrNull(stage6Variant)?.second?.let { ",$it" } ?: "")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
 }
@@ -117,7 +118,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores, perfHint (booleans), upscaler, palette, viewSize (ints; applied first); reconnect, shutter, lockout, stopReplay, readback, logOverlay (booleans);
+     * shutterHold, badPixels, drift, denoise, tone, detail, bigCores, perfHint (booleans), upscaler, palette, viewSize, stage6Variant (ints; applied first); reconnect, shutter, lockout, stopReplay, readback, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -145,6 +146,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("upscaler")) o = o.copy(upscaler = extras.getInt("upscaler"))
         if (extras.containsKey("palette")) o = o.copy(palette = extras.getInt("palette"))
         if (extras.containsKey("viewSize")) o = o.copy(viewSize = extras.getInt("viewSize"))
+        if (extras.containsKey("stage6Variant")) o = o.copy(stage6Variant = extras.getInt("stage6Variant"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -183,6 +185,16 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "ThermalView"
         val PALETTES = listOf("white_hot", "rainbow_hc")  // assets from palettes/, DebugOptions.palette 1 and 2
+        // Stage 6's variants under review (PIPELINE_LOG, 2026-09-25): name to stage text. The owner found
+        // the fine-scale sharpening jagged and liked the mid-scale layer's contrast.
+        val STAGE6_VARIANTS = listOf(
+            "proposed" to "detailGain=2.5,unsharp=1,detailMid=1",
+            "crisp" to "detailGain=2.5,unsharp=1.5,detailSmooth=0,detailMid=1",
+            "mid-scale x1.5" to "detailGain=1,unsharp=0,detailMid=1.5",
+            "mid-scale x2.5" to "detailGain=1,unsharp=0,detailMid=2.5",
+            "mid-scale x3" to "detailGain=1,unsharp=0,detailMid=3",
+            "proposed + mid x2" to "detailGain=2.5,unsharp=1,detailMid=2",
+        )
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val VIEW_WIDTHS = listOf(880, 1467, 0)
