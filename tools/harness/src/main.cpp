@@ -17,7 +17,14 @@
 // changed by a comma-separated list ("default", "shutter=0", "shutterBlend=N", ...), and writes
 // pipeline.f32 and pipeline_c.f32 the same way.
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
+//
+//   harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]
+//
+// Times Pipeline::process on every frame of DUMP (path without .raw), N passes (default 3), and
+// prints the p50, p95 and max per frame in ms. Built with the NDK and run over adb, it measures the
+// stages on the tablet's CPU without installing the app (the performance budget, CLAUDE.md).
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -43,7 +50,8 @@ struct Disc {
 int usage() {
   std::fprintf(stderr,
                "usage: harness temps DUMP [--range normal|high] [--math ht301|infi] [--disc X,Y,R ...]\n"
-               "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]\n");
+               "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [SCENE ...]\n"
+               "       harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]\n");
   return 2;
 }
 
@@ -243,10 +251,75 @@ int bench(int argc, char** argv) {
   return ok ? 0 : 1;
 }
 
+int perf(int argc, char** argv) {
+  if (argc < 3) return usage();
+  const std::string path = argv[2];
+  std::string stages, driftPath;
+  int passes = 3;
+  tv::PipelineOptions options;
+  for (int i = 3; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == "--pipeline" && i + 1 < argc) {
+      stages = argv[++i];
+      if (!tv::parseStages(stages, &options)) {
+        std::fprintf(stderr, "harness: unknown stage in \"%s\"\n", stages.c_str());
+        return 2;
+      }
+    } else if (a == "--drift" && i + 1 < argc) {
+      driftPath = argv[++i];
+    } else if (a == "--passes" && i + 1 < argc) {
+      passes = std::max(1, std::atoi(argv[++i]));
+    } else {
+      return usage();
+    }
+  }
+  tv::LoadedDump dump;
+  std::string error;
+  if (!tv::loadDump(path, &dump, &error) || dump.frameCount == 0) {
+    std::fprintf(stderr, "harness: %s: %s\n", path.c_str(), error.empty() ? "no frames" : error.c_str());
+    return 1;
+  }
+  if (driftPath.empty()) driftPath = TV_REPO_DIR "/native/core/data/drift_" + dump.serial + ".f32";
+  tv::Pipeline pipeline(options);
+  pipeline.setBadPixels(tv::badPixelMapFor(dump.serial));
+  pipeline.setDriftMap(tv::loadDriftMap(driftPath));
+  std::vector<float> display(tv::kImagePixels);
+  std::vector<double> ms, appMs;  // the pipeline; the app's other per-frame work (checks, table, readouts)
+  tv::TemperatureLut lut;
+  using Clock = std::chrono::steady_clock;
+  auto since = [](Clock::time_point t0) { return std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); };
+  for (int p = 0; p < passes; ++p) {
+    pipeline.reset();
+    for (size_t f = 0; f < dump.frameCount; ++f) {
+      const tv::FrameView frame(&dump.frames[f * tv::kFramePixels]);
+      auto t0 = Clock::now();
+      const tv::ImageStats stats = tv::computeImageStats(frame.image());
+      (void)tv::checkFrame(frame, stats, false);
+      lut.build(tv::temperatureInputs(frame), tv::TempRange::Normal);
+      const tv::Readouts r = tv::computeReadouts(frame.image(), lut, tv::Region{}, tv::overRangeRaw(lut));
+      appMs.push_back(since(t0));
+      t0 = Clock::now();
+      pipeline.process(frame.image(), display.data(), nullptr, {frame.fpaC(), frame.shutterC()});
+      ms.push_back(since(t0));
+      (void)r;
+    }
+  }
+  std::sort(ms.begin(), ms.end());
+  std::sort(appMs.begin(), appMs.end());
+  auto at = [](const std::vector<double>& v, double q) { return v[std::min(v.size() - 1, size_t(q * double(v.size())))]; };
+  std::printf("%s: %zu frames x %d, stages \"%s\" (drift map %s): p50 %.2f ms, p95 %.2f ms, max %.2f ms; "
+              "checks + table + readouts p50 %.2f ms, p95 %.2f ms\n",
+              path.c_str(), dump.frameCount, passes, tv::describeStages(pipeline.options()).c_str(),
+              pipeline.driftMap().empty() ? "none" : "loaded", at(ms, 0.5), at(ms, 0.95), ms.back(),
+              at(appMs, 0.5), at(appMs, 0.95));
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "temps") return temps(argc, argv);
   if (argc >= 2 && std::string(argv[1]) == "bench") return bench(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "perf") return perf(argc, argv);
   return usage();
 }

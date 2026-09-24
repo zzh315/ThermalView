@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "tv/display.h"
+#include "tv/filters.h"
 #include "tv/readouts.h"
 
 namespace tv {
@@ -66,6 +67,34 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->toneOptions.curveTauS = float(std::atof(value.c_str()));
     } else if (key == "toneDeadband" && !value.empty()) {
       o->toneOptions.deadbandCounts = float(std::atof(value.c_str()));
+    } else if (key == "detail") {
+      o->detail = on;
+    } else if (key == "detailRadius" && !value.empty()) {
+      o->detailRadius = std::atoi(value.c_str());
+    } else if (key == "detailEps" && !value.empty()) {
+      o->detailEps = float(std::atof(value.c_str()));
+    } else if (key == "detailGain" && !value.empty()) {
+      o->detailGain = float(std::atof(value.c_str()));
+    } else if (key == "detailLimit" && !value.empty()) {
+      o->detailLimit = float(std::atof(value.c_str()));
+    } else if (key == "detailNoiseLo" && !value.empty()) {
+      o->detailNoiseLo = float(std::atof(value.c_str()));
+    } else if (key == "detailNoiseHi" && !value.empty()) {
+      o->detailNoiseHi = float(std::atof(value.c_str()));
+    } else if (key == "detailEdgeRadius" && !value.empty()) {
+      o->detailEdgeRadius = std::max(1, std::atoi(value.c_str()));
+    } else if (key == "detailEdgeLo" && !value.empty()) {
+      o->detailEdgeLo = float(std::atof(value.c_str()));
+    } else if (key == "detailEdgeHi" && !value.empty()) {
+      o->detailEdgeHi = float(std::atof(value.c_str()));
+    } else if (key == "unsharpEdgeLo" && !value.empty()) {
+      o->unsharpEdgeLo = float(std::atof(value.c_str()));
+    } else if (key == "unsharpEdgeHi" && !value.empty()) {
+      o->unsharpEdgeHi = float(std::atof(value.c_str()));
+    } else if (key == "unsharp" && !value.empty()) {
+      o->unsharpAmount = float(std::atof(value.c_str()));
+    } else if (key == "unsharpSigma" && !value.empty()) {
+      o->unsharpSigma = float(std::atof(value.c_str()));
     } else if (key == "toneDeadbandPct" && !value.empty()) {
       o->toneOptions.deadbandPct = float(std::atof(value.c_str()));
     } else if (key == "toneOffset") {
@@ -87,6 +116,7 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.destripe) add("destripe");
   if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
   if (o.tone) add("tone(g" + std::to_string(o.toneOptions.maxGain).substr(0, 4) + ")");
+  if (o.detail && o.tone) add("detail(x" + std::to_string(o.detailGain).substr(0, 4) + ")");
   return s.empty() ? "none" : s;
 }
 
@@ -265,6 +295,72 @@ void Pipeline::denoise(float* sig) {
   }
 }
 
+void Pipeline::enhance(const float* sig, float* display, const uint8_t* exclude) {
+  base_.resize(kImagePixels);
+  detailLayer_.resize(kImagePixels);
+  energy_.resize(kImagePixels);
+  gate_.resize(kImagePixels);
+  float* base = base_.data();
+  float* det = detailLayer_.data();
+  float* e = energy_.data();
+  float* gate = gate_.data();
+  guidedFilterSelf(sig, base, options_.detailRadius, options_.detailEps, gfScratch_);
+  for (size_t i = 0; i < kImagePixels; ++i) det[i] = sig[i] - base[i];
+  auto smooth = [](float lo, float hi, float v) {
+    const float x = std::clamp((v - lo) / std::max(hi - lo, 1e-6f), 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+  };
+
+  // The noise gate: the detail's local energy (RMS over 3x3) against the frame's floor (its 10th
+  // percentile, from a subsample). Closed where the detail is only noise, so neither the gain nor
+  // the unsharp pass boosts it.
+  for (size_t i = 0; i < kImagePixels; ++i) gate[i] = det[i] * det[i];
+  boxFilter(gate, e, 1);  // the local energy, kept in energy_ for the halo guard
+  std::copy(e, e + kImagePixels, gate);
+  float* sample = colAcc_.data();
+  int n = 0;
+  for (size_t i = 5; i < kImagePixels && n < kFrameWidth; i += 191) sample[n++] = gate[i];  // every column
+  std::nth_element(sample, sample + n / 10, sample + n);
+  const float floorE = std::sqrt(std::max(sample[n / 10], 1e-6f));
+  const float nLo = options_.detailNoiseLo * floorE, nHi = options_.detailNoiseHi * floorE;
+  // (Running sums can leave a hair below zero where the energy is nil: a flat or clipped patch.)
+  for (size_t i = 0; i < kImagePixels; ++i) gate[i] = smooth(nLo, nHi, std::sqrt(std::max(gate[i], 0.0f)));
+
+  // The halo guard: beside a step, the filter leaves a faint rim along it (a residual of ~2% of the
+  // step, up to ~5 pixels out), not texture. Where the nearest big step (the base's local range)
+  // dwarfs the local detail (ratio detailEdgeLo..Hi), the gain fades out: scale-free, so it holds for
+  // a 50-count edge and a 1000-count one alike, while texture, a good fraction of its own local
+  // range, keeps its gain.
+  range_.resize(kImagePixels);
+  localRange(base, range_.data(), options_.detailEdgeRadius, gfScratch_);
+  const float g = options_.detailGain, lim = options_.detailLimit;
+  for (size_t i = 0; i < kImagePixels; ++i) {
+    const float ratio = range_[i] / std::max(std::sqrt(std::max(e[i], 0.0f)), 1e-3f);
+    const float boost = gate[i] * (1.0f - smooth(options_.detailEdgeLo, options_.detailEdgeHi, ratio));
+    det[i] = std::clamp((1.0f + (g - 1.0f) * boost) * det[i], -lim, lim);
+  }
+  tone_.map(base, display, exclude, 0.04f, det);
+
+  // Unsharp on the display where there is texture (the gate) or an edge (the base's 3x3 range well
+  // above the noise floor), clamped to each pixel's 3x3 min/max: sharper edges and texture with no
+  // overshoot, and flat areas' noise left alone.
+  if (options_.unsharpAmount > 0.0f) {
+    localRange(base, e, 1, gfScratch_);
+    const float eLo = options_.unsharpEdgeLo * floorE, eHi = options_.unsharpEdgeHi * floorE;
+    for (size_t i = 0; i < kImagePixels; ++i) gate[i] = std::max(gate[i], smooth(eLo, eHi, e[i]));
+    // (The base and the detail are spent: their buffers hold the 3x3 bounds and the unsharp input.)
+    float* in = det;
+    float* lo = base;
+    float* hi = range_.data();
+    std::copy(display, display + kImagePixels, in);
+    gaussianBlur(in, e, options_.unsharpSigma, gfScratch_);
+    localMinMax3(in, lo, hi, gfScratch_);
+    const float amount = options_.unsharpAmount;
+    for (size_t i = 0; i < kImagePixels; ++i)
+      display[i] = std::clamp(in[i] + amount * gate[i] * (in[i] - e[i]), lo[i], hi[i]);
+  }
+}
+
 void Pipeline::hold() {
   if (options_.shutterHold && havePrevious_) frozen_ = true;
 }
@@ -314,7 +410,8 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
       for (size_t i = 0; i < kImagePixels; ++i) clipped_[i] = image[i] >= kClipFloorRaw;
       exclude = clipped_.data();
     }
-    tone_.map(sig, display, exclude);
+    if (options_.detail) enhance(sig, display, exclude);  // stage 6, with stage 5 on its base
+    else tone_.map(sig, display, exclude);
   } else {
     renderBaseline(sig, display);
   }

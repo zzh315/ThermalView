@@ -38,7 +38,10 @@ class ToneMapper {
 
   // signal: kImagePixels counts (stages 1-4 done); exclude: optional mask, nonzero = leave out of the
   // statistics (clipped pixels, outside the measurement region); out: intensity in [0, 1].
-  void map(const float* signal, float* out, const uint8_t* exclude = nullptr, float dtS = 0.04f);
+  // With detail (stage 6), the curve comes from signal (the base layer) and each pixel gets its
+  // detail back scaled by the curve's slope there: out = T(base) + T'(base) x detail.
+  void map(const float* signal, float* out, const uint8_t* exclude = nullptr, float dtS = 0.04f,
+           const float* detail = nullptr);
 
   // A calibration or another step change of the whole frame just happened: the next frame re-reads
   // the global offset from itself instead of from the frame before (the caller skipped frames).

@@ -59,6 +59,27 @@ struct PipelineOptions {
   // baseline's per-frame min/max stretch. Pixels at the camera's clip stay out of its statistics.
   bool tone = true;
   ToneOptions toneOptions;
+
+  // Stage 6 (needs stage 5): split the signal into a base (a self-guided filter, radius
+  // detailRadius, eps detailEps counts^2) and detail; stage 5 maps the base, and the detail comes back
+  // at the curve's slope with gain detailGain, limited to +-detailLimit counts. The gain applies only
+  // where a noise gate is open (the detail's local energy above detailNoiseLo..detailNoiseHi x the
+  // frame's noise floor) and fades out beside steps that dwarf the local detail (the base's local
+  // range within detailEdgeRadius pixels, over detailEdgeLo..Hi x the detail's RMS), where the
+  // filter's residual is a faint rim that the gain would turn into a halo. Then an unsharp pass on the display (unsharpAmount, sigma unsharpSigma) where the gate is
+  // open, clamped to each pixel's 3x3 min/max so it can't overshoot.
+  bool detail = false;
+  int detailRadius = 2;
+  float detailEps = 50.0f;
+  float detailGain = 2.5f;
+  float detailLimit = 7.0f;
+  float detailNoiseLo = 2.0f, detailNoiseHi = 4.0f;  // the noise gate's ramp, in x the detail noise floor
+  int detailEdgeRadius = 6;                          // the halo guard looks this far for a step...
+  float detailEdgeLo = 12.0f, detailEdgeHi = 25.0f;  // ...and fades the gain out where the step is
+                                                     // this many times the local detail (RMS)
+  float unsharpAmount = 1.5f;
+  float unsharpSigma = 0.7f;
+  float unsharpEdgeLo = 3.0f, unsharpEdgeHi = 6.0f;  // its edge gate: the base's 3x3 range, x the floor
 };
 
 // What the pipeline needs from a frame's metadata (FrameView fpaC(), shutterC()).
@@ -75,7 +96,10 @@ struct FrameMeta {
 // "destripeGate=X" and "destripeClamp=X" tune it; "denoise" / "denoise=0" switches stage 4,
 // "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it; "tone" / "tone=0" switches stage 5,
 // "toneGain=X" (max gain), "toneLinear=X", "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
-// "toneContract=X" and "toneCurve=X" (time constants) tune it. False on an unknown item.
+// "toneContract=X" and "toneCurve=X" (time constants) tune it; "detail" / "detail=0" switches stage
+// 6, "detailRadius=N", "detailEps=X", "detailGain=X", "detailLimit=X", "detailNoiseLo=X",
+// "detailNoiseHi=X", "detailEdgeRadius=N", "detailEdgeLo=X", "detailEdgeHi=X", "unsharp=X" (amount),
+// "unsharpSigma=X", "unsharpEdgeLo=X" and "unsharpEdgeHi=X" tune it. False on an unknown item.
 bool parseStages(const std::string& text, PipelineOptions* options);
 std::string describeStages(const PipelineOptions& options);  // e.g. "shutter(8)", "none"
 
@@ -121,6 +145,8 @@ class Pipeline {
   std::vector<float> filtered_, diff_, pooled_;    // stage 4's state and scratch
   ToneMapper tone_;                                // stage 5
   std::vector<uint8_t> clipped_;                   // stage 5's exclusion mask
+  std::vector<float> base_, detailLayer_, energy_, gate_, range_, gfScratch_, detailScratch_;  // stage 6
+  void enhance(const float* sig, float* display, const uint8_t* exclude);
   bool haveFiltered_ = false;
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
   void denoise(float* sig);

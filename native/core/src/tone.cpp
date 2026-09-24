@@ -24,7 +24,7 @@ void ToneMapper::reset() {
   for (int i = 0; i <= kCurve; ++i) curve_[size_t(i)] = float(i) / float(kCurve);
 }
 
-void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, float dtS) {
+void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, float dtS, const float* detail) {
   // 1. The global offset: the median frame-to-frame change over a subsample (robust to anything
   //    covering less than half the frame), accumulated.
   if (!options_.trackOffset) {
@@ -153,12 +153,16 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
   haveCurve_ = true;
   for (int e = 0; e <= kCurve; ++e) curve_[size_t(e)] += a * (target_[size_t(e)] - curve_[size_t(e)]);
 
-  // 5. Apply: interpolate between edges (clamped outside the range), squeeze into outLo..outHi.
+  // 5. Apply: interpolate between edges (clamped outside the range), squeeze into outLo..outHi. With a
+  //    detail layer, add it at the curve's local slope (per count), so it keeps its size relative to
+  //    the base's contrast there.
   const float scale = options_.outHi - options_.outLo;
   for (size_t i = 0; i < kImagePixels; ++i) {
     const float t = std::clamp((signal[i] - offset_ - lo_) / binWidth, 0.0f, float(kCurve));
     const int k = std::min(int(t), kCurve - 1);
-    const float c = curve_[size_t(k)] + (t - float(k)) * (curve_[size_t(k + 1)] - curve_[size_t(k)]);
+    const float step = curve_[size_t(k + 1)] - curve_[size_t(k)];
+    float c = curve_[size_t(k)] + (t - float(k)) * step;
+    if (detail) c += detail[i] * step / binWidth;
     out[i] = options_.outLo + scale * std::clamp(c, 0.0f, 1.0f);
   }
 }

@@ -12,6 +12,7 @@ add_library(thermalcore STATIC
   src/display.cpp
   src/drift.cpp
   src/dump.cpp
+  src/filters.cpp
   src/frame.cpp
   src/pipeline.cpp
   src/readouts.cpp
@@ -32,6 +33,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_display.cpp
     tests/test_drift.cpp
     tests/test_dump.cpp
+    tests/test_filters.cpp
     tests/test_frame.cpp
     tests/test_pipeline.cpp
     tests/test_queues.cpp
