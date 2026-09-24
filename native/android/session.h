@@ -28,7 +28,9 @@ struct uvc_frame;
 
 namespace tv {
 
-enum class State { Idle, Starting, AwaitValid, RangeWait, ShutterHold, Running, Lockout, Failed, Replay };
+enum class State {
+  Idle, Starting, AwaitValid, RangeWait, ShutterHold, RangeSwitch, Running, Lockout, Failed, Replay
+};
 const char* stateName(State state);
 
 struct Options {
@@ -170,6 +172,10 @@ class Session {
   int holdNoFreezeMs_ = 1000;
   bool rangeLogPending_ = false;
   bool autoRange_ = false;
+  int64_t rangeSwitchNs_ = 0;
+  bool rangeBanner_ = false;
+  bool recoveryNucRequested_ = false, recoveryNucSent_ = false;
+  int blockAZeroStreak_ = 0;
   bool lockoutEnabled_ = true;
   std::vector<uint16_t> lastMeta_;  // the latest usable frame, for logging constants at a switch
 

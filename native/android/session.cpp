@@ -48,7 +48,6 @@ constexpr int kLockoutDumpFrames = 25;   // debug: frames saved when a lockout t
 constexpr int kRangeUpFrames = 50;     // 2 s of clipping in the normal range
 constexpr int kRangeDownFrames = 125;  // 5 s with nothing above kRangeDownC in the high range
 constexpr double kRangeDownC = 110.0;
-constexpr int kRangeHoldNoFreezeMs = 3000;  // a switch holds the display up to 3 s for a cycle
 constexpr int kLockoutFramesHigh = 2;       // in the high range the lockout acts at once
 
 // Debug capture on the owner's Ready tap: recalibrate, settle, record. Runs on the tablet, so a
@@ -120,6 +119,7 @@ const char* stateName(State state) {
     case State::AwaitValid: return "AwaitValid";
     case State::RangeWait: return "RangeWait";
     case State::ShutterHold: return "ShutterHold";
+    case State::RangeSwitch: return "RangeSwitch";
     case State::Lockout: return "Lockout";
     case State::Running: return "Running";
     case State::Failed: return "Failed";
@@ -298,6 +298,8 @@ bool Session::startStreaming() {
   rawReadouts_ = shownReadouts_ = Readouts{};
   lastReadoutNs_ = 0;
   range_ = TempRange::Normal;  // the start sequence always selects the normal range
+  recoveryNucRequested_ = recoveryNucSent_ = false;
+  blockAZeroStreak_ = 0;
   clipStreak_ = coolStreak_ = 0;
   autoRangeRequest_ = -1;
   hotStreak_ = 0;
@@ -451,12 +453,21 @@ void Session::switchRange(TempRange target, int64_t now, const char* why) {
   hotStreak_ = clipStreak_ = coolStreak_ = 0;
   rangeLogPending_ = true;
   readoutFilter_.reset();
-  beginHold(now, kRangeHoldNoFreezeMs);  // hold the display through whatever the camera does
+  rangeSwitchNs_ = now;
+  if (capturePhase_ == CapturePhase::None) {
+    setBanner("Switching range…");
+    rangeBanner_ = true;
+  }
+  enter(State::RangeSwitch, now);
 }
 
 void Session::enter(State state, int64_t now) {
   const State previous = state_.exchange(state);
   stateSinceNs_ = now;
+  if (state == State::Running && rangeBanner_) {
+    rangeBanner_ = false;
+    setBanner("");
+  }
   if (previous != state) FLOG("state %s -> %s", stateName(previous), stateName(state));
   if (state == State::Running && countersResetPending_) {
     // Drops count from here: start-up bursts (e.g. the short frames after 0x8020) aren't drops.
@@ -553,8 +564,10 @@ void Session::tickCapture(int64_t now) {
         if (state == State::Running) switchRange(TempRange::High, now, "range test");
         break;
       }
-      captureGapMs_ = kPairGapMs;
-      capturePhase_ = CapturePhase::WaitGap;
+      if (state != State::Running) break;  // still switching (the switch recalibrates)
+      capturePhase_ = CapturePhase::Settle;
+      capturePhaseNs_ = now;
+      setBanner(format("%s: recording, keep still…", leg));
       break;
     case CapturePhase::SwitchBack:
       if (range_ != TempRange::Normal) {
@@ -597,6 +610,17 @@ void Session::tick(int64_t now) {
       }
       break;
     case State::AwaitValid:
+      // Block A reads zero after a range switch until the camera recalibrates (M2), and the
+      // start sequence only recalibrates once frames are valid: break that deadlock once.
+      if (recoveryNucRequested_ && !recoveryNucSent_) {
+        recoveryNucRequested_ = false;
+        if (command(kCmdShutter) == CommandResult::Sent) {
+          recoveryNucSent_ = true;
+          stateSinceNs_ = now;  // give the cycle its own 5 s
+          FLOG("recovery: frames fail only on Block A zero; sent 0x8000");
+        }
+        break;
+      }
       if (since(stateSinceNs_) >= kAwaitValidMs) {
         const std::string why =
             "no valid frame within " + std::to_string(kAwaitValidMs / 1000) + " s (" +
@@ -628,6 +652,22 @@ void Session::tick(int64_t now) {
         else
           command(kCmdShutter);
         beginHold(now);  // the hold also covers a camera still calibrating after power-up
+      }
+      break;
+    case State::RangeSwitch:
+      // Like the start sequence: the range command, then 0x8000 once the gate allows it (>= 10 s
+      // after the last one), then a hold through the cycle. Without it, Block A reads zero after
+      // leaving the high range (M2).
+      if (stalled()) break;
+      if ((since(rangeSwitchNs_) >= kRangeToShutterMs && gate_ && gate_->shutterReady()) ||
+          since(rangeSwitchNs_) >= 15000) {
+        if (command(kCmdShutter) == CommandResult::Sent) {
+          FLOG("range switch: recalibrating");
+          beginHold(now);
+        } else if (since(rangeSwitchNs_) >= 15000) {
+          FLOG("range switch: 0x8000 refused; continuing without it");
+          beginHold(now);
+        }
       }
       break;
     case State::ShutterHold: {
@@ -842,6 +882,7 @@ void Session::handleFrame(const RawFrame& frame) {
     case State::Starting:
     case State::RangeWait:
     case State::ShutterHold:
+    case State::RangeSwitch:
       ++startupDiscarded_;
       break;
     case State::Lockout:
@@ -850,6 +891,8 @@ void Session::handleFrame(const RawFrame& frame) {
       ++startupDiscarded_;
       if (flags) {
         validStreak_ = 0;
+        blockAZeroStreak_ = flags == kSanityBlockAZero ? blockAZeroStreak_ + 1 : 0;
+        if (blockAZeroStreak_ == 25) recoveryNucRequested_ = true;  // 1 s of nothing else wrong
       } else if (++validStreak_ >= kValidStreak) {
         // Repeated frames right at the start: the camera is calibrating, as after power-up.
         coldStart_ = inFreeze_;
@@ -1214,6 +1257,7 @@ std::string Session::statusLine() {
   const State state = state_.load();
   const bool streaming = state == State::Starting || state == State::AwaitValid ||
                          state == State::RangeWait || state == State::ShutterHold ||
+                         state == State::RangeSwitch || state == State::Lockout ||
                          state == State::Running || state == State::Replay;
   std::string banner = banner_;
   std::replace(banner.begin(), banner.end(), ';', ',');
