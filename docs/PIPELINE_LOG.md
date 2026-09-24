@@ -28,4 +28,12 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 **Clips:** `bench/out/clips/<scene>.mp4` (local), with the same layout. Ours is the whole dump (8 s); the app's is seconds 1–9 of its recording.
 
-**Best reference per scene** (the bar for M4; the owner's pick): pending review.
+**Owner's review** (2026-09-24, review page and clips):
+- **Hti Image is first.** It has the best texture, but draws a bright rim around warm objects (a halo) and looks a bit washed out.
+- **Xtherm is second.** It's smooth and clean.
+- **Ours is good on `room`, and shows more detail than Xtherm.** But it's jagged (the M1 renderer's nearest-neighbour upscale) and not as smooth as Xtherm.
+
+**Best reference per scene:** Hti Image for all five scenes, with Xtherm second; the owner didn't split them by scene. The bar is Hti's texture without its rim or washed-out look, as smooth as Xtherm, and keeping the detail ours already shows. In plan terms:
+- the texture is stage 6 (detail enhancement), with `halo` held at the baseline's;
+- the washed-out look is stage 5 (tone mapping);
+- the smoothness is M5's upscaler.
