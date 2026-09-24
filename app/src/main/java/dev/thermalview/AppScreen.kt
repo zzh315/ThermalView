@@ -153,7 +153,13 @@ private fun DebugPanel(
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
                     Toggle("Stage 4: temporal filter", options.denoise) { onOptions(options.copy(denoise = it)) }
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
-                    Toggle("Stage 6: detail + sharpening", options.detail) { onOptions(options.copy(detail = it)) }
+                    Toggle("Stage 6: texture (mid-scale contrast)", options.detail) { onOptions(options.copy(detail = it)) }
+                    Button(onClick = {
+                        val s = MainActivity.TEXTURE_STRENGTHS
+                        onOptions(options.copy(textureStrength = s[(s.indexOf(options.textureStrength) + 1).mod(s.size)]))
+                    }) {
+                        Text("Texture strength: x" + options.textureStrength)
+                    }
                     Toggle("Processing on big cores", options.bigCores) { onOptions(options.copy(bigCores = it)) }
                     Toggle("Performance hint (ADPF)", options.perfHint) { onOptions(options.copy(perfHint = it)) }
                     Toggle("Upscaler: B-spline (off: nearest)", options.upscaler == 1) {

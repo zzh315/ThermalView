@@ -24,6 +24,7 @@ tv::PipelineOptions allOff() {
   o.destripe = false;
   o.denoise = false;
   o.tone = false;
+  o.detail = false;
   return o;
 }
 
@@ -80,6 +81,10 @@ TEST_CASE("the defaults are the approved stages") {
   CHECK(o.destripe);
   CHECK(o.denoise);
   CHECK(o.tone);
+  CHECK(o.detail);  // stage 6 as approved (2026-09-25): the mid-scale texture layer at x1.5 alone
+  CHECK(o.detailMidGain == doctest::Approx(1.5f));
+  CHECK(o.detailGain == doctest::Approx(1.0f));
+  CHECK(o.unsharpAmount == 0.0f);
 }
 
 TEST_CASE("stage 1 off: repeated frames pass straight through") {

@@ -126,7 +126,12 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.destripe) add("destripe");
   if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
   if (o.tone) add("tone(g" + std::to_string(o.toneOptions.maxGain).substr(0, 4) + ")");
-  if (o.detail && o.tone) add("detail(x" + std::to_string(o.detailGain).substr(0, 4) + ")");
+  if (o.detail && o.tone) {
+    if (o.detailMidGain > 1.0f) add("texture(x" + std::to_string(o.detailMidGain).substr(0, 4) + ")");
+    if (o.detailGain > 1.0f) add("detail(x" + std::to_string(o.detailGain).substr(0, 4) + ")");
+    if (o.unsharpAmount > 0.0f) add("unsharp(" + std::to_string(o.unsharpAmount).substr(0, 4) + ")");
+    if (o.detailMidGain <= 1.0f && o.detailGain <= 1.0f && o.unsharpAmount <= 0.0f) add("detail(off)");
+  }
   return s.empty() ? "none" : s;
 }
 

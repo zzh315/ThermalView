@@ -86,12 +86,57 @@ void boxPairCols(const float* a, const float* b, float* outA, float* outB, int r
   }
 }
 
+// One image: the same passes as the pair above.
+void boxRows1(const float* a, float* out, int r) {
+  float inv[W];
+  for (int x = 0; x < W; ++x) inv[x] = 1.0f / float(std::min(W - 1, x + r) - std::max(0, x - r) + 1);
+  for (int y = 0; y < H; ++y) {
+    const float* ia = a + size_t(y) * W;
+    float* oa = out + size_t(y) * W;
+    float sa = 0;
+    for (int k = 0; k <= std::min(r, W - 1); ++k) sa += ia[k];
+    oa[0] = sa * inv[0];
+    int x = 1;
+    for (; x <= r && x + r < W; ++x) {
+      sa += ia[x + r];
+      oa[x] = sa * inv[x];
+    }
+    for (; x + r < W; ++x) {
+      sa += ia[x + r] - ia[x - r - 1];
+      oa[x] = sa * inv[x];
+    }
+    for (; x < W; ++x) {
+      if (x - r - 1 >= 0) sa -= ia[x - r - 1];
+      oa[x] = sa * inv[x];
+    }
+  }
+}
+
+void boxCols1(const float* a, float* out, int r) {
+  float sa[W];
+  std::fill(sa, sa + W, 0.0f);
+  int lo = 0, hi = -1;
+  for (int y = 0; y < H; ++y) {
+    while (hi < std::min(H - 1, y + r)) {
+      const float* pa = a + size_t(++hi) * W;
+      for (int x = 0; x < W; ++x) sa[x] += pa[x];
+    }
+    while (lo < y - r) {
+      const float* pa = a + size_t(lo++) * W;
+      for (int x = 0; x < W; ++x) sa[x] -= pa[x];
+    }
+    const float inv = 1.0f / float(hi - lo + 1);
+    float* oa = out + size_t(y) * W;
+    for (int x = 0; x < W; ++x) oa[x] = sa[x] * inv;
+  }
+}
+
 }  // namespace
 
 void boxFilter(const float* src, float* dst, int r) {
-  std::vector<float> tmp(2 * kImagePixels), unused(kImagePixels);
-  boxPairRows(src, src, tmp.data(), tmp.data() + kImagePixels, r);
-  boxPairCols(tmp.data(), tmp.data(), dst, unused.data(), r);
+  std::vector<float> tmp(kImagePixels);
+  boxRows1(src, tmp.data(), r);
+  boxCols1(tmp.data(), dst, r);
 }
 
 void guidedFilterSelf(const float* src, float* dst, int r, float eps, std::vector<float>& scratch) {

@@ -61,30 +61,35 @@ struct PipelineOptions {
   bool tone = true;
   ToneOptions toneOptions;
 
-  // Stage 6 (needs stage 5): split the signal into a base (a self-guided filter, radius
-  // detailRadius, eps detailEps counts^2) and detail; stage 5 maps the base, and the detail comes back
-  // at the curve's slope with gain detailGain, limited to +-detailLimit counts. The gain applies only
-  // where a noise gate is open (the detail's local energy above detailNoiseLo..detailNoiseHi x the
-  // frame's noise floor) and fades out beside steps that dwarf the local detail (the base's local
-  // range within detailEdgeRadius pixels, over detailEdgeLo..Hi x the detail's RMS), where the
-  // filter's residual is a faint rim that the gain would turn into a halo. Then an unsharp pass on the display (unsharpAmount, sigma unsharpSigma) where the gate is
-  // open, clamped to each pixel's 3x3 min/max so it can't overshoot.
-  bool detail = false;
+  // Stage 6 (needs stage 5; approved 2026-09-25 as the mid-scale texture layer, on at x1.5, the
+  // strength a user setting up to x3): a self-guided filter (radius detailRadius, eps detailEps
+  // counts^2) splits the signal into a base and fine detail; a wider one (detailMidRadius,
+  // detailMidEps) splits the base into a smoother base and a mid-scale layer: surfaces and shapes a
+  // few to ~16 pixels across. The mid layer gets gain detailMidGain where its own noise gate is open
+  // (its local energy over detailNoiseLo..Hi x its floor) and fades out beside steps that dwarf it
+  // (the halo guard: the local range within 2 x detailMidRadius pixels, over detailEdgeLo..Hi x its
+  // RMS), and goes into stage 5's input, so the curve makes room for it and nothing blows out. Fine
+  // detail comes back at the curve's slope, at gain 1 by default.
+  //
+  // Also available, off by default (the owner found them jagged): gain detailGain on the fine layer
+  // (its own gate and guard over detailEdgeRadius pixels, limited to +-detailLimit counts, smoothed
+  // over detailSmooth px), and an unsharp pass on the display (unsharpAmount, sigma unsharpSigma)
+  // clamped to each pixel's 3x3 min/max.
+  bool detail = true;
   int detailRadius = 2;
   float detailEps = 50.0f;
-  float detailGain = 2.5f;
+  float detailGain = 1.0f;
   float detailLimit = 7.0f;
-  float detailNoiseLo = 2.0f, detailNoiseHi = 4.0f;  // the noise gate's ramp, in x the detail noise floor
-  float detailSmooth = 1.0f;  // > 0: the added contrast is blurred with this sigma (px) first
-  // Experimental (off at 1): gain on a mid-scale layer, the base against a wider self-guided filter.
-  float detailMidGain = 1.0f;
+  float detailNoiseLo = 2.0f, detailNoiseHi = 4.0f;  // the noise gates' ramp, in x each layer's floor
+  float detailSmooth = 1.0f;  // > 0: the fine layer's added contrast is blurred with this sigma (px)
+  float detailMidGain = 1.5f;  // the texture strength (owner: 1.5 by default, a setting up to 3)
   int detailMidRadius = 8;
   float detailMidEps = 100.0f;
   bool detailMidGate = true;  // the mid layer's own noise gate
-  int detailEdgeRadius = 6;                          // the halo guard looks this far for a step...
-  float detailEdgeLo = 12.0f, detailEdgeHi = 25.0f;  // ...and fades the gain out where the step is
-                                                     // this many times the local detail (RMS)
-  float unsharpAmount = 1.0f;
+  int detailEdgeRadius = 6;                          // the fine layer's halo guard looks this far...
+  float detailEdgeLo = 12.0f, detailEdgeHi = 25.0f;  // ...and both guards fade the gain out where the
+                                                     // step is this many times the local detail (RMS)
+  float unsharpAmount = 0.0f;
   float unsharpSigma = 0.7f;
   float unsharpEdgeLo = 3.0f, unsharpEdgeHi = 6.0f;  // its edge gate: the base's 3x3 range, x the floor
 };

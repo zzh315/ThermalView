@@ -110,9 +110,18 @@ TEST_CASE("stage 6 adds contrast to fine texture and leaves no overshoot beyond 
       const float v = x < 128 ? 5000.0f + texture : 5400.0f;
       img[size_t(y) * W + x] = uint16_t(v + 2.0f * noise(s));
     }
+  // Both stage 6 layers: the default (mid-scale), and the fine layer with the unsharp pass (off by
+  // default, the owner found them jagged).
+  for (bool fineLayer : {false, true}) {
+  CAPTURE(fineLayer);
   tv::PipelineOptions plain, enhanced;
   plain.detail = false;
   enhanced.detail = true;
+  if (fineLayer) {
+    enhanced.detailGain = 2.5f;
+    enhanced.unsharpAmount = 1.0f;
+    enhanced.detailMidGain = 1.0f;
+  }
   plain.denoise = enhanced.denoise = false;  // compare single frames
   tv::Pipeline a(plain), b(enhanced);
   std::vector<float> da(tv::kImagePixels), db(tv::kImagePixels);
@@ -138,6 +147,7 @@ TEST_CASE("stage 6 adds contrast to fine texture and leaves no overshoot beyond 
   for (int x = 120; x < 140; ++x) {
     CHECK(db[size_t(96) * W + x] <= brightPlateau + 1e-3f);
     CHECK(db[size_t(96) * W + x] >= darkMin - 1e-3f);
+  }
   }
 }
 
@@ -174,19 +184,26 @@ TEST_CASE("stage 6 draws no rim beside a strong step") {
     for (int x = 131; x < 141; ++x) bump = std::max(bump, p[size_t(x)] - mean(p, 160, 230));
     return std::pair{255.0f * dip, 255.0f * bump};
   };
-  tv::PipelineOptions o;
-  o.detail = true;
-  o.denoise = false;
-  o.destripe = false;      // a perfectly vertical step is all columns: leave it to stage 6
-  o.unsharpAmount = 0.0f;  // the texture gain alone (the unsharp pass is clamped to the 3x3 range)
-  const auto [dip, bump] = rims(run(o));
-  CHECK(dip < 0.5f);
-  CHECK(bump < 0.5f);
-  // Without the guard the rims show, so the checks above mean something.
-  o.detailEdgeLo = o.detailEdgeHi = 1e9f;
-  const auto [bareDip, bareBump] = rims(run(o));
-  CHECK(bareDip > 1.0f);
-  CHECK(bareBump > 1.0f);
+  for (bool fineLayer : {false, true}) {  // the default mid-scale layer, and the fine layer
+    CAPTURE(fineLayer);
+    tv::PipelineOptions o;
+    o.detail = true;
+    o.denoise = false;
+    o.destripe = false;      // a perfectly vertical step is all columns: leave it to stage 6
+    o.unsharpAmount = 0.0f;  // the texture gain alone (the unsharp pass is clamped to the 3x3 range)
+    if (fineLayer) {
+      o.detailGain = 2.5f;
+      o.detailMidGain = 1.0f;
+    }
+    const auto [dip, bump] = rims(run(o));
+    CHECK(dip < 0.5f);
+    CHECK(bump < 0.5f);
+    // Without the guard the rims show, so the checks above mean something.
+    o.detailEdgeLo = o.detailEdgeHi = 1e9f;
+    const auto [bareDip, bareBump] = rims(run(o));
+    CHECK(bareDip > 1.0f);
+    CHECK(bareBump > 1.0f);
+  }
 }
 
 TEST_CASE("stage 6 stays finite on degenerate frames: constant, all clipped, a lone hot pixel") {
