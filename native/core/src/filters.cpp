@@ -8,71 +8,112 @@ namespace {
 
 constexpr int W = kFrameWidth, H = kImageRows;
 
-// Running-sum box along rows, then columns (both shrink the window at the borders).
-void boxRows(const float* src, float* dst, int r) {
+// Box means along rows, then columns, with the window shrunk at the borders. Each pass handles two
+// images at once (the guided filter always needs pairs), multiplies by precomputed reciprocals of
+// the window sizes and keeps its branches out of the inner loops. b may be null: then the second
+// output is the box mean of a squared.
+void boxPairRows(const float* a, const float* b, float* outA, float* outB, int r) {
+  float inv[W];
+  for (int x = 0; x < W; ++x) inv[x] = 1.0f / float(std::min(W - 1, x + r) - std::max(0, x - r) + 1);
   for (int y = 0; y < H; ++y) {
-    const float* in = src + size_t(y) * W;
-    float* out = dst + size_t(y) * W;
-    float sum = 0;
-    int lo = 0, hi = -1;
-    for (int x = 0; x < W; ++x) {
-      while (hi < std::min(W - 1, x + r)) sum += in[++hi];
-      while (lo < x - r) sum -= in[lo++];
-      out[x] = sum / float(hi - lo + 1);
+    const float* ia = a + size_t(y) * W;
+    const float* ib = b ? b + size_t(y) * W : nullptr;
+    float* oa = outA + size_t(y) * W;
+    float* ob = outB + size_t(y) * W;
+    auto vb = [&](int k) { return ib ? ib[k] : ia[k] * ia[k]; };
+    float sa = 0, sb = 0;
+    for (int k = 0; k <= std::min(r, W - 1); ++k) {  // the window of x = 0
+      sa += ia[k];
+      sb += vb(k);
+    }
+    oa[0] = sa * inv[0];
+    ob[0] = sb * inv[0];
+    int x = 1;
+    for (; x <= r && x + r < W; ++x) {  // growing: only the right end comes in
+      sa += ia[x + r];
+      sb += vb(x + r);
+      oa[x] = sa * inv[x];
+      ob[x] = sb * inv[x];
+    }
+    for (; x + r < W; ++x) {  // sliding
+      sa += ia[x + r] - ia[x - r - 1];
+      sb += vb(x + r) - vb(x - r - 1);
+      oa[x] = sa * inv[x];
+      ob[x] = sb * inv[x];
+    }
+    for (; x < W; ++x) {  // shrinking: only the left end goes out
+      if (x - r - 1 >= 0) {
+        sa -= ia[x - r - 1];
+        sb -= vb(x - r - 1);
+      }
+      oa[x] = sa * inv[x];
+      ob[x] = sb * inv[x];
     }
   }
 }
 
-void boxCols(const float* src, float* dst, int r) {
-  std::vector<float> sum(size_t(W), 0.0f);
+void boxPairCols(const float* a, const float* b, float* outA, float* outB, int r) {
+  float sa[W], sb[W];
+  std::fill(sa, sa + W, 0.0f);
+  std::fill(sb, sb + W, 0.0f);
   int lo = 0, hi = -1;
   for (int y = 0; y < H; ++y) {
     while (hi < std::min(H - 1, y + r)) {
-      const float* add = src + size_t(++hi) * W;
-      for (int x = 0; x < W; ++x) sum[size_t(x)] += add[x];
+      ++hi;
+      const float* pa = a + size_t(hi) * W;
+      const float* pb = b + size_t(hi) * W;
+      for (int x = 0; x < W; ++x) {
+        sa[x] += pa[x];
+        sb[x] += pb[x];
+      }
     }
     while (lo < y - r) {
-      const float* sub = src + size_t(lo++) * W;
-      for (int x = 0; x < W; ++x) sum[size_t(x)] -= sub[x];
+      const float* pa = a + size_t(lo) * W;
+      const float* pb = b + size_t(lo) * W;
+      for (int x = 0; x < W; ++x) {
+        sa[x] -= pa[x];
+        sb[x] -= pb[x];
+      }
+      ++lo;
     }
-    const float n = float(hi - lo + 1);
-    float* out = dst + size_t(y) * W;
-    for (int x = 0; x < W; ++x) out[x] = sum[size_t(x)] / n;
+    const float inv = 1.0f / float(hi - lo + 1);
+    float* oa = outA + size_t(y) * W;
+    float* ob = outB + size_t(y) * W;
+    for (int x = 0; x < W; ++x) {
+      oa[x] = sa[x] * inv;
+      ob[x] = sb[x] * inv;
+    }
   }
 }
 
 }  // namespace
 
 void boxFilter(const float* src, float* dst, int r) {
-  std::vector<float> tmp(kImagePixels);
-  boxRows(src, tmp.data(), r);
-  boxCols(tmp.data(), dst, r);
+  std::vector<float> tmp(2 * kImagePixels), unused(kImagePixels);
+  boxPairRows(src, src, tmp.data(), tmp.data() + kImagePixels, r);
+  boxPairCols(tmp.data(), tmp.data(), dst, unused.data(), r);
 }
 
 void guidedFilterSelf(const float* src, float* dst, int r, float eps, std::vector<float>& scratch) {
   const size_t n = kImagePixels;
-  scratch.resize(5 * n);
+  scratch.resize(6 * n);
   float* meanI = scratch.data();
   float* meanII = meanI + n;
   float* a = meanII + n;
   float* b = a + n;
-  float* tmp = b + n;
-  // mean and mean of squares
-  boxRows(src, tmp, r);
-  boxCols(tmp, meanI, r);
-  for (size_t i = 0; i < n; ++i) a[i] = src[i] * src[i];
-  boxRows(a, tmp, r);
-  boxCols(tmp, meanII, r);
+  float* t1 = b + n;
+  float* t2 = t1 + n;
+  // The mean and the mean of squares, in one pair of passes.
+  boxPairRows(src, nullptr, t1, t2, r);
+  boxPairCols(t1, t2, meanI, meanII, r);
   for (size_t i = 0; i < n; ++i) {
     const float var = std::max(meanII[i] - meanI[i] * meanI[i], 0.0f);
     a[i] = var / (var + eps);
     b[i] = meanI[i] * (1.0f - a[i]);
   }
-  // average the coefficients, then apply
-  boxRows(a, tmp, r);
-  boxCols(tmp, meanI, r);  // mean of a
-  boxRows(b, tmp, r);
-  boxCols(tmp, meanII, r);  // mean of b
+  // Average the coefficients (another pair), then apply.
+  boxPairRows(a, b, t1, t2, r);
+  boxPairCols(t1, t2, meanI, meanII, r);  // mean of a, mean of b
   for (size_t i = 0; i < n; ++i) dst[i] = meanI[i] * src[i] + meanII[i];
 }
 
