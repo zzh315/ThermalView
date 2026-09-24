@@ -124,6 +124,7 @@ TEST_CASE("stage 6 adds contrast to fine texture and leaves no overshoot beyond 
     enhanced.detailMidGain = 1.0f;
   }
   plain.denoise = enhanced.denoise = false;  // compare single frames
+  plain.nr = enhanced.nr = false;            // stage 6 alone
   tv::Pipeline a(plain), b(enhanced);
   std::vector<float> da(tv::kImagePixels), db(tv::kImagePixels);
   for (int k = 0; k < 3; ++k) {

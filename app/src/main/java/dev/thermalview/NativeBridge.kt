@@ -40,8 +40,9 @@ object NativeBridge {
     external fun setOptions(
         skipStartupShutter: Boolean, statsCsv: Boolean, fallbackOrder: Boolean, dumpOnLockout: Boolean,
         autoRange: Boolean, highMathInfiCam: Boolean, lockoutEnabled: Boolean, rangeSettleMs: Int,
-        bigCores: Boolean, perfHint: Boolean,
+        bigCores: Boolean, perfHint: Boolean, gpuNr: Boolean,
     )
+    external fun requestNrCheck()  // debug: stage 4b's GPU against the CPU reference, into the field log
     external fun setRange(high: Boolean): String  // debug: manual range switch
     external fun triggerLockout(): String
     external fun mark(label: String)  // debug: "owner mark: <label>" in the field log

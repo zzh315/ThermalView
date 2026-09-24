@@ -16,6 +16,7 @@
 #include "libusb.h"
 #include "libuvc/libuvc.h"
 #include "log.h"
+#include "tv/filters.h"
 #include "tv/palette.h"
 
 namespace tv {
@@ -173,6 +174,7 @@ struct Session::Snapshot {
   uint16_t vertex = 0, clipRaw = 0, lockoutRaw = 0;
   bool rangeHigh = false, autoRange = false, highMathInfiCam = false;
   std::string pipeline;
+  std::string nr;  // where stage 4b ran on the last frame, and its GPU time
   bool pipelineFrozen = false, pipelineBlending = false, driftMap = false;
   double driftC = 0;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
@@ -210,6 +212,9 @@ void Session::init(const std::string& storageDir, const std::string& appVersion)
   ring_ = std::make_unique<FrameRing<8>>();
   snapshot_ = std::make_unique<Snapshot>();
   ctrl_ = std::make_unique<unsigned char[]>(sizeof(uvc_stream_ctrl_t));
+  pipeline_.setNoiseReducer([this](const float* src, float* dst, int searchRadius, int patchRadius, float h) {
+    return reduceNoiseOnGpu(src, dst, searchRadius, patchRadius, h);
+  });
   renderer_.start();
 }
 
@@ -448,6 +453,11 @@ void Session::processLoop() {
       std::lock_guard o(optionsMutex_);
       hint = options_.perfHint;
     }
+    {
+      std::lock_guard o(optionsMutex_);
+      if (gpuNr_ != options_.gpuNr) FLOG("stage 4b on the %s (debug option)", options_.gpuNr ? "GPU" : "CPU");
+      gpuNr_ = options_.gpuNr;
+    }
     if (!perfHintSet_ || hint != perfHintOn_) {
       if (hint) {
         perfHintText_ = perfHint_.start(8 * 1000000LL);  // 8 ms: stages 1-6 take ~6 ms at full clock
@@ -467,6 +477,70 @@ void Session::processLoop() {
       }
     }
     tick(nowNs());
+  }
+  gpuNlm_.release();  // its context is current on this thread; a new processing thread makes another
+}
+
+bool Session::reduceNoiseOnGpu(const float* src, float* dst, int searchRadius, int patchRadius, float h) {
+  const bool wasFailed = gpuNlm_.failed();
+  const bool ok = gpuNr_ && gpuNlm_.run(src, dst, searchRadius, patchRadius, h);
+  if (ok) gpuNrMs_.push(gpuNlm_.lastMs());
+  if (!ok && gpuNr_ && !wasFailed) FLOG("stage 4b: GPU unavailable (%s), the CPU takes over", gpuNlm_.status().c_str());
+  if (nrCheckRequested_.exchange(false)) checkGpuNoiseReduction(src, ok ? dst : nullptr, searchRadius, patchRadius, h);
+  return ok;
+}
+
+void Session::checkGpuNoiseReduction(const float* src, const float* gpu, int searchRadius, int patchRadius, float h) {
+  if (!gpu) {
+    FLOG("stage 4b check: no GPU result (%s)", gpuNr_ ? gpuNlm_.status().c_str() : "the GPU is off");
+    return;
+  }
+  // The same input through native/core's reference (filters.h): what the harness and the tests run.
+  std::vector<float> cpu(kImagePixels), scratch;
+  const int64_t t0 = nowNs();
+  nonLocalMeans(src, cpu.data(), searchRadius, patchRadius, h, scratch);
+  const double cpuMs = double(nowNs() - t0) / 1e6;
+  double maxDiff = 0, sumDiff = 0, sumChange = 0;
+  size_t worst = 0;
+  for (size_t i = 0; i < kImagePixels; ++i) {
+    const double d = std::fabs(double(gpu[i]) - double(cpu[i]));
+    if (d > maxDiff) {
+      maxDiff = d;
+      worst = i;
+    }
+    sumDiff += d;
+    sumChange += std::fabs(double(cpu[i]) - double(src[i]));
+  }
+  const std::string dir = storageDir_ + "/nrcheck";
+  mkdir(dir.c_str(), 0770);
+  auto save = [&dir](const char* name, const float* data) {
+    if (FILE* f = std::fopen((dir + "/" + name).c_str(), "wb")) {
+      std::fwrite(data, sizeof(float), kImagePixels, f);
+      std::fclose(f);
+    }
+  };
+  save("input.f32", src);
+  save("gpu.f32", gpu);
+  save("cpu.f32", cpu.data());
+  FLOG("stage 4b check (search %d, patch %d, h %.3f): |GPU - CPU| max %.2e counts at (%zu,%zu), mean %.2e; "
+       "the filter moved pixels %.3f counts on average; GPU %.2f ms, CPU reference %.1f ms (images in nrcheck/)",
+       searchRadius, patchRadius, h, maxDiff, worst % kFrameWidth, worst / kFrameWidth,
+       sumDiff / double(kImagePixels), sumChange / double(kImagePixels), gpuNlm_.lastMs(), cpuMs);
+  // Each shader variant (pixels a thread), back to back: its time and its difference from the CPU.
+  std::vector<float> out(kImagePixels);
+  for (int n : {1, 2, 4}) {
+    std::vector<double> ms;
+    for (int k = 0; k < 15 && gpuNlm_.run(src, out.data(), searchRadius, patchRadius, h, n); ++k) ms.push_back(gpuNlm_.lastMs());
+    if (ms.empty()) {
+      FLOG("stage 4b check: %d pixel(s) a thread failed (%s)", n, gpuNlm_.status().c_str());
+      return;
+    }
+    double worstDiff = 0;
+    for (size_t i = 0; i < kImagePixels; ++i) worstDiff = std::max(worstDiff, std::fabs(double(out[i]) - double(cpu[i])));
+    std::sort(ms.begin(), ms.end());
+    FLOG("stage 4b check: %d pixel(s) a thread%s: %.2f ms median of %zu runs back to back (min %.2f, max %.2f), "
+         "|GPU - CPU| max %.2e counts", n, n == GpuNlm::kDefaultPixelsPerThread ? " (in use)" : "", ms[ms.size() / 2],
+         ms.size(), ms.front(), ms.back(), worstDiff);
   }
 }
 
@@ -1141,6 +1215,15 @@ void Session::handleFrame(const RawFrame& frame) {
   s.rangeHigh = range_ == TempRange::High;
   s.autoRange = autoRange_;
   s.pipeline = describeStages(pipeline_.options());
+  if (!pipeline_.options().nr)
+    s.nr.clear();
+  else if (pipeline_.lastNoiseReductionAccelerated())
+    s.nr = format("stage 4b: %s, %.2f ms p50 / %.2f p95 (upload to read-back)", gpuNlm_.status().c_str(),
+                  gpuNrMs_.percentile(50), gpuNrMs_.percentile(95));
+  else
+    s.nr = format("stage 4b: CPU, search %dx%d (GPU: %s)", 2 * std::min(pipeline_.options().nrSearch, pipeline_.options().nrFallbackSearch) + 1,
+                  2 * std::min(pipeline_.options().nrSearch, pipeline_.options().nrFallbackSearch) + 1,
+                  gpuNr_ ? gpuNlm_.status().c_str() : "off");
   s.driftC = pipeline_.lastDriftC();
   s.driftMap = !pipeline_.driftMap().empty();
   s.pipelineFrozen = pipeline_.frozen();
@@ -1561,6 +1644,7 @@ std::string Session::overlayText() {
   o += format("pipeline: %s%s   drift since calibration %+.2f C%s\n", s.pipeline.c_str(),
               s.pipelineFrozen ? "  (holding)" : s.pipelineBlending ? "  (blending back)" : "", s.driftC,
               s.driftMap ? "" : " (no drift map for this camera)");
+  if (!s.nr.empty()) o += s.nr + "\n";
   o += format("temps (%s range, per-frame table, vertex raw %u): high %s @(%.0f,%.0f)  low %s @(%.0f,%.0f)  "
               "center %s   camera's own: max %s min %s center %s\n",
               s.rangeHigh ? "high" : "normal", s.vertex, t(s.raw.high).c_str(), s.raw.high.x, s.raw.high.y,

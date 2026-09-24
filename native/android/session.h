@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 
+#include "gpu_nlm.h"
 #include "perf_hint.h"
 #include "renderer.h"
 #include "tv/recalibration.h"
@@ -51,6 +52,7 @@ struct Options {
   bool bigCores = true;             // keep the processing thread on the big cores (the little ones run
                                     // the pipeline ~8x slower: M4 stage 6, 28 vs 3.4 ms a frame)
   bool perfHint = true;             // ADPF: ask for the clock the frame budget needs (perf_hint.h)
+  bool gpuNr = true;                // stage 4b on the GPU (gpu_nlm.h); off: the CPU, at its smaller search
 };
 
 class Session {
@@ -88,6 +90,9 @@ class Session {
   void requestReadback(const std::string& prefix, const std::string& paletteName) {
     renderer_.requestReadback(prefix, paletteName);
   }
+  // Debug: the next frame's stage 4b runs on the GPU and on the CPU reference too, and the field log
+  // gets the difference (the GPU version's check; the three images go to files/nrcheck/).
+  void requestNrCheck() { nrCheckRequested_ = true; }
   // Stage 3's drift maps, bundled with the app (native/core/data), by camera serial. Call before
   // opening the camera or starting a replay.
   void registerDriftMap(const std::string& serial, DriftMap map);
@@ -249,6 +254,14 @@ class Session {
   uint64_t cpuFrames_ = 0, cpuFramesBig_ = 0;
   void applyAffinity(bool big);
   PerfHint perfHint_;  // processing thread only
+  // Stage 4b on the GPU: the pipeline's noise reducer (processing thread only; its GL context is
+  // current there, and released when the thread ends).
+  GpuNlm gpuNlm_;
+  bool gpuNr_ = true;
+  std::atomic<bool> nrCheckRequested_{false};
+  RollingWindow gpuNrMs_{250};
+  bool reduceNoiseOnGpu(const float* src, float* dst, int searchRadius, int patchRadius, float h);
+  void checkGpuNoiseReduction(const float* src, const float* gpu, int searchRadius, int patchRadius, float h);
   bool perfHintSet_ = false, perfHintOn_ = false;
   std::string perfHintText_;
   RollingWindow rangeWindow_{125};

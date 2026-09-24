@@ -62,6 +62,7 @@ TEST_CASE("stage 3b removes a column offset but only up to its clamp, and starts
   o.destripeClamp = 2.0f;
   o.drift = false;
   o.denoise = false;
+  o.nr = false;  // (it would smooth the test's noise, not the stripe)
   o.tone = false;
   tv::Pipeline p(o);
   std::vector<float> disp(tv::kImagePixels), sig(tv::kImagePixels);

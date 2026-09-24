@@ -28,8 +28,9 @@ data class DebugOptions(
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
-    val nr: Boolean = false,                // M4 stage 4b (preview): spatial noise reduction, non-local means
-    val nrStrength: Float = 1.4f,           // its strength (h in noise sigmas): NR_STRENGTHS
+    val nr: Boolean = true,                 // M4 stage 4b (approved): spatial noise reduction, non-local means
+    val nrStrength: Float = 1.1f,           // its strength (h in noise sigmas) at the GPU's 11x11 search: NR_STRENGTHS
+    val gpuNr: Boolean = true,              // stage 4b on the GPU; off: the CPU at a 5x5 search (h scaled to match)
     val detail: Boolean = true,             // M4 stage 6 (approved): the mid-scale texture layer; a setting
     val textureStrength: Float = 1.5f,      // stage 6's strength: owner, 1.5 by default, up to 3 (TEXTURE_STRENGTHS)
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
@@ -42,7 +43,7 @@ data class DebugOptions(
     fun stages(): String = listOf(
         "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
         "denoise=0", "tone=" + bit(tone), "detail=" + bit(detail),  // stage 4 removed (owner, 2026-09-25)
-        "nr=" + bit(nr), "nrSearch=2", "nrStrength=$nrStrength",  // 5x5 search: the CPU preview (a GPU version to come)
+        "nr=" + bit(nr), "nrSearch=5", "nrStrength=$nrStrength",  // 11x11 search (the CPU falls back to 5x5)
         "detailMid=" + textureStrength,
     ).joinToString(",")
 
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+        setOptions(options.value)  // the app's defaults, before any debug extras (native keeps its own until told)
         applyDebugExtras(intent)
         setContent {
             AppScreen(
@@ -107,7 +109,7 @@ class MainActivity : ComponentActivity() {
         NativeBridge.setOptions(
             value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout,
             value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs, value.bigCores,
-            value.perfHint,
+            value.perfHint, value.gpuNr,
         )
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
         val palette = PALETTES.getOrNull(value.palette - 1)?.let { name ->
@@ -121,7 +123,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, tone, detail, nr, bigCores, perfHint (booleans), upscaler, palette, viewSize (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, logOverlay (booleans);
+     * shutterHold, badPixels, drift, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -151,6 +153,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("textureStrength")) o = o.copy(textureStrength = extras.getFloat("textureStrength"))
         if (extras.containsKey("nr")) o = o.copy(nr = extras.getBoolean("nr"))
         if (extras.containsKey("nrStrength")) o = o.copy(nrStrength = extras.getFloat("nrStrength"))
+        if (extras.containsKey("gpuNr")) o = o.copy(gpuNr = extras.getBoolean("gpuNr"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -168,6 +171,10 @@ class MainActivity : ComponentActivity() {
             val prefix = java.io.File(dir, "rb_" + System.currentTimeMillis()).absolutePath
             NativeBridge.requestReadback(prefix, PALETTES.getOrNull(options.value.palette - 1) ?: "gray")
             Log.i(TAG, "adb: readback $prefix")
+        }
+        if (extras.getBoolean("nrCheck")) {  // stage 4b's GPU against the CPU reference: the field log has it
+            NativeBridge.requestNrCheck()
+            Log.i(TAG, "adb: nrCheck")
         }
         extras.getString("replay")?.let { Log.i(TAG, "adb: replay " + NativeBridge.startReplay(it).ifEmpty { "started" }) }
         // Experiments: any stage text, until the next toggle change re-applies the toggles.
@@ -190,7 +197,7 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "ThermalView"
         val PALETTES = listOf("white_hot", "rainbow_hc")  // assets from palettes/, DebugOptions.palette 1 and 2
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
-        val NR_STRENGTHS = listOf(1.0f, 1.2f, 1.4f, 1.6f, 1.8f)  // stage 4b's, h in noise sigmas
+        val NR_STRENGTHS = listOf(0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas (11x11 search)
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val VIEW_WIDTHS = listOf(880, 1467, 0)

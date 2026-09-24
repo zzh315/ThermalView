@@ -23,6 +23,7 @@ tv::PipelineOptions allOff() {
   o.drift = false;
   o.destripe = false;
   o.denoise = false;
+  o.nr = false;
   o.tone = false;
   o.detail = false;
   return o;
@@ -80,6 +81,10 @@ TEST_CASE("the defaults are the approved stages") {
   CHECK(o.drift);
   CHECK(o.destripe);
   CHECK_FALSE(o.denoise);  // stage 4 removed (owner, 2026-09-25: after-images on camera motion)
+  CHECK(o.nr);              // stage 4b as approved (2026-09-25): 11x11 search, 5x5 patches, strength 1.1
+  CHECK(o.nrSearch == 5);
+  CHECK(o.nrPatch == 2);
+  CHECK(o.nrStrength == doctest::Approx(1.1f));
   CHECK(o.tone);
   CHECK(o.detail);  // stage 6 as approved (2026-09-25): the mid-scale texture layer at x1.5 alone
   CHECK(o.detailMidGain == doctest::Approx(1.5f));
@@ -130,7 +135,7 @@ TEST_CASE("stage settings as text") {
   tv::PipelineOptions o;
   CHECK(tv::parseStages("default", &o));
   CHECK(o.shutterHold);
-  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0,denoise=0,tone=0", &o));
+  CHECK(tv::parseStages("shutter=0,badPixels=0,drift=0,destripe=0,denoise=0,nr=0,tone=0", &o));
   CHECK_FALSE(o.shutterHold);
   CHECK(tv::describeStages(o) == "none");
   CHECK(tv::parseStages("shutter,shutterBlend=12", &o));
@@ -141,6 +146,8 @@ TEST_CASE("stage settings as text") {
   CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe");
   CHECK(tv::parseStages("denoise", &o));
   CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,denoise(k0.25)");
+  CHECK(tv::parseStages("denoise=0,nr", &o));
+  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,nr(h1.10)");
   CHECK_FALSE(tv::parseStages("bogus", &o));
 }
 

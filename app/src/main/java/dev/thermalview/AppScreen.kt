@@ -203,7 +203,7 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
-                    Toggle("Stage 4b: noise reduction (NLM preview, CPU: slow)", options.nr) { onOptions(options.copy(nr = it)) }
+                    Toggle("Stage 4b: noise reduction (non-local means)", options.nr) { onOptions(options.copy(nr = it)) }
                     Button(onClick = {
                         val s = MainActivity.NR_STRENGTHS
                         onOptions(options.copy(nrStrength = s[(s.indexOf(options.nrStrength) + 1).mod(s.size)]))
@@ -220,6 +220,7 @@ private fun DebugPanel(
                     }
                     Toggle("Processing on big cores", options.bigCores) { onOptions(options.copy(bigCores = it)) }
                     Toggle("Performance hint (ADPF)", options.perfHint) { onOptions(options.copy(perfHint = it)) }
+                    Toggle("Stage 4b on the GPU (off: CPU, 5x5 search)", options.gpuNr) { onOptions(options.copy(gpuNr = it)) }
                     Toggle("Upscaler: B-spline (off: nearest)", options.upscaler == 1) {
                         onOptions(options.copy(upscaler = if (it) 1 else 0))
                     }
