@@ -21,7 +21,7 @@ struct ToneOptions {
   // ...and at most the mean of the histogram's local maxima (the upper plateau).
   float expandTauS = 0.1f;       // the range follows a wider scene this fast
   float contractTauS = 1.3f;     // and a narrower one this slowly
-  float curveTauS = 0.3f;        // the curve's shape, smoothed over time
+  float curveTauS = 2.0f;        // the curve's shape, smoothed over time (0.3 made a moving hand pump)
   float deadbandCounts = 1.5f;   // range changes smaller than this are ignored...
   float deadbandPct = 0.0f;      // ...or than this % of the current span, whichever is larger
   float outLo = 0.03f, outHi = 0.97f;  // the display range the curve maps into
