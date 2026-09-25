@@ -26,7 +26,7 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - **At Low's noise** (interpolated), BM3D keeps texture differently: 1 px +6 / +4 / −1 points, 2 px +8 / +7 / +2. The finest texture is 0 / −1 / −6: strong 0.7 px texture is where BM3D's thresholds cost.
 - **At Medium's noise:** 1 px +9 / +10 / −1, 2 px +12 / +11 / +4, 0.7 px +2 / +3 / −6.
 - **The costlier configurations** add only 3–5 points at the same noise, so the real-time one keeps most of the gain.
-- **Stage 3c changes this little:** on stages 1–3b the same filters leave ~5% more noise and keep the same texture, within 2 points.
+- **Stage 3c changes this little:** on stages 1–3b the same filters leave 6–10% more noise (the stripes) and keep the same texture, within 2 points.
 
 **On the real scenes** (`harness`, BM3D on the CPU at ×1.04, the strength that matches Low's noise on `flat`), BM3D leaves 5–15% less temporal noise than NLM Low: `room` 0.65 vs 0.76 counts, `keyboard` 1.02 vs 1.13, `flat_aged` 0.65 vs 0.69. Non-local means backs off in textured areas; BM3D's thresholds don't. At 8×: no blocking or ringing. BM3D is smoother inside the keys and on walls, edges and the curtain folds hold, and it leaves a faint low-frequency mottle in flat areas.
 
