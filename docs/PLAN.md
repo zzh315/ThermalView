@@ -154,7 +154,10 @@ Tuning rule: add one stage at a time, run `tools/py/bench.py`, log the numbers a
 
 Landscape-first, full-screen, minimal chrome. The controls live in the black margins beside the 4:3 image (owner, 2026-09-26: "utilise them for quick action menus and items that I can toggle and activate"), so nothing covers the image and they needn't hide. At Full each margin is ~107 dp. Each bar's column hugs the screen's outer edge and is at most 150 dp wide, so the buttons stay under the thumbs and don't move when the view size changes.
 
-- **Left bar (how the image looks):** palette (a tap switches White hot ↔ Rainbow, with a swatch), Noise and Texture (a tap steps Off → Low → High), and View size (a tap cycles). Also the frame rate and lag (debug), and while zoomed in, the zoom factor (a tap goes back to 1×).
+- **Left bar (how the image looks):** the palette, the view size and the box. The frame rate and lag show there too (debug), and while zoomed in, the zoom factor (a tap goes back to 1×).
+  - *The palette tile opens a picker* (owner, 2026-09-26): White hot or Rainbow, each with its colours, and with Rainbow its colours too (Deep, the default, or Soft).
+  - *View size cycles* with a tap.
+  - *Noise and Texture moved to Settings* (owner, 2026-09-26).
 - **Right bar (measuring and acting):** the high, center and low readouts; Range (Auto / Locked) above the scale bar with its °C endpoints; Recalibrate; Capture (debug); Settings (debug).
 - **Range lock (the Manual range below):**
   - *The scale bar is a temperature axis* spanning the scene and the colour range, with a handle at each end of the range. Between the handles is the palette as the image uses it; the ticks mark the high, centre and low readings at their temperatures.
@@ -165,7 +168,7 @@ Landscape-first, full-screen, minimal chrome. The controls live in the black mar
   - *While locked, the high and low markers come from inside the range* (owner, 2026-09-26), so they point at the hottest and coldest parts of what it shows, never at a grey pixel.
 - **Over the image:** the markers, as crosshairs (red hottest, blue coldest, white center), each with its temperature. Labels never leave the image and never overlap each other, another marker, a banner or an open panel: each takes the first clear place around its marker and keeps it while it stays clear. Banners sit at the image's top or bottom edge, whichever is away from the markers.
 - **Controls:** palette toggle; Auto / Manual range (Manual = "lock current range" plus a range slider in °C); view size; Box on/off; Recalibrate (sends `0x8000` through the gate and stays disabled for 10 s).
-- **Settings** (owner, 2026-09-26: "simple presets that abstract settings into simple low and high effects"): each is Off / Low / High, kept across launches, and sets the stages underneath. Noise defaults to High (owner, 2026-09-26), Texture to Low.
+- **Settings** (owner, 2026-09-26: "simple presets that abstract settings into simple low and high effects"): each is Off / Low / High, kept across launches, and sets the stages underneath. Both default to Low (owner, 2026-09-26, after trying High), on the first Settings page rather than the bar.
   - **Noise reduction:** stage 3c (the per-frame stripes) with stage 4b: non-local means at h 0.8 (Low), or BM3D at the strength that leaves NLM 1.1's noise (High; image quality first, owner 2026-09-26: PIPELINE_LOG).
   - **Texture:** stage 6's mid-scale contrast, ×1.5 (Low) or ×3 (High). It's off-able in case performance suffers (owner, 2026-09-25).
 - **Temperature range:** the normal range only; the high range is parked. Clipped pixels read "> 120 °C". The over-range lockout's banner explains the freeze ("Too hot to measure: shutter closed to protect the sensor").

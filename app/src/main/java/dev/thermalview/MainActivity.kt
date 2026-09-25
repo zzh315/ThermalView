@@ -28,10 +28,10 @@ data class DebugOptions(
     val stripes: Boolean = true,            // M4 stage 3c: the per-frame column/row noise; part of NR_LEVELS' Low and High
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val nr: Boolean = true,                 // M4 stage 4b (approved): spatial noise reduction
-    val nrStrength: Float = 1.1f,           // its strength (h in noise sigmas): High, the default (owner, 2026-09-26)
+    val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): Low, the default (owner, 2026-09-26)
     val nrSearch: Int = 5,                  // its search radius: 2 (5x5), 3 (7x7), 5 (11x11); NR_SEARCHES
     val gpuNr: Boolean = true,              // stage 4b on the GPU; off: the CPU at a 5x5 search (h scaled to match)
-    val nrMethod: Int = 1,                  // stage 4b's filter: 0 non-local means, 1 BM3D (High, the default), same noise
+    val nrMethod: Int = 0,                  // stage 4b's filter: 0 non-local means (Low, the default), 1 BM3D (High)
     val detail: Boolean = true,             // M4 stage 6 (approved): the mid-scale texture layer; a setting
     val textureStrength: Float = 1.5f,      // stage 6's strength: owner, 1.5 by default, up to 3 (TEXTURE_STRENGTHS)
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
                 dumpsDir = "${storageDir()}/dumps",
                 options = options.value,
                 onOptions = ::setOptions,
-                paletteColors = { NativeBridge.paletteColors(paletteJson(it), 256) },
+                paletteColors = { palette, preset -> NativeBridge.paletteColors(paletteJson(palette, preset), 256) },
                 zoomRequest = zoomRequest.value,
                 onZoomRequestDone = { zoomRequest.value = null },
             )
@@ -131,8 +131,8 @@ class MainActivity : ComponentActivity() {
      * preset). Everything else starts from the defaults.
      */
     private fun restored(o: DebugOptions): DebugOptions {
-        if (prefs.getInt("defaults", 1) < 2) {  // (2026-09-26: Noise High became the default)
-            prefs.edit().remove("nrLevel").putInt("defaults", 2).apply()
+        if (prefs.getInt("defaults", 1) < 3) {  // (2026-09-26: Noise and Texture Low by default, the owner)
+            prefs.edit().remove("nrLevel").remove("textureLevel").putInt("defaults", 3).apply()
         }
         var r = o.copy(
             palette = prefs.getInt("palette", o.palette).coerceIn(1, PALETTES.size),
@@ -246,9 +246,10 @@ class MainActivity : ComponentActivity() {
     private fun storageDir() = (getExternalFilesDir(null) ?: filesDir).absolutePath
 
     /** A palette file's text ("" for 0, the plain gray). */
-    private fun paletteJson(palette: Int): String = paletteName(palette, options.value.rainbowPreset)?.let { name ->
-        runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
-    } ?: ""
+    private fun paletteJson(palette: Int, rainbowPreset: Int = options.value.rainbowPreset): String =
+        paletteName(palette, rainbowPreset)?.let { name ->
+            runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
+        } ?: ""
 
     /** Stage 3: every bundled drift map (assets/drift_<serial>.f32, from native/core/data). */
     private fun registerDriftMaps() {

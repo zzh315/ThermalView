@@ -181,16 +181,19 @@ private fun MainPage(
     open: (Page) -> Unit,
 ) {
     Text(
-        "Palette, noise, texture and view size are on the left bar; recalibrate and capture on the right.",
+        "Palette, view size and the box are on the left bar; the range, recalibrate and capture on the right.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
     )
+    // Noise and texture (owner, 2026-09-26: Low by default, here rather than on the bar).
     Section("Picture")
-    Choice(
-        "Rainbow",
-        MainActivity.RAINBOW_PRESETS.map { it.name },
-        options.rainbowPreset.coerceIn(0, MainActivity.RAINBOW_PRESETS.size - 1),
-        note = if (options.palette == 2) "Its colors" else "Its colors (the palette is White hot now)",
-    ) { onOptions(options.copy(rainbowPreset = it)) }
+    val nr = MainActivity.nrLevelOf(options)
+    Choice("Noise", MainActivity.LEVELS, nr, note = if (nr == null) "Custom (Image processing)" else "High: BM3D") {
+        onOptions(MainActivity.withNrLevel(options, it))
+    }
+    val texture = MainActivity.textureLevelOf(options)
+    Choice("Texture", MainActivity.LEVELS, texture, note = if (texture == null) "Custom (Image processing)" else "Fine detail") {
+        onOptions(MainActivity.withTextureLevel(options, it))
+    }
     Section("On screen")
     SwitchRow("Frame rate and lag", "On the left bar", showStats, onShowStats)
     Section("More")
@@ -211,7 +214,7 @@ private fun MainPage(
 @Composable
 private fun ImagePage(options: DebugOptions, onOptions: (DebugOptions) -> Unit) {
     Text(
-        "Tuning behind Noise and Texture on the left bar (changing one here shows that setting as Custom). " +
+        "Tuning behind Noise and Texture (changing one here shows that setting as Custom). " +
             "The stages that always help are always on.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
     )

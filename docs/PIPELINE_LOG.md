@@ -94,7 +94,7 @@ The presets only change the rainbow: white hot keeps stage 5 as it is. Locking i
 - **Low is unchanged:** NLM h 0.8. There the two filters are close (0.7 px texture −6 to 0 points, 1–2 px +2 to +8), and the owner couldn't tell them apart.
 - **Live cost, with 3c, on the tablet** (2026-09-26): 25 fps, no dropped frames, latency p50 / p95 25.4 / 30.5 ms. BM3D takes 11.9 / 13.4 ms of its own per frame.
 
-**Verdict:** the owner keeps Noise Off / Low / High, with High (BM3D) the default: "id keep noise high,low and off. But it should be default on and high" (2026-09-26).
+**Verdict:** the owner keeps Noise Off / Low / High, with High (BM3D) the default: "id keep noise high,low and off. But it should be default on and high" (2026-09-26). Later the same day: "Make noise and texture low by default", so Low (non-local means, h 0.8) is the default again; High stays BM3D.
 
 ## 2026-09-26 — Simple settings: noise reduction and texture Off / Low / High (owner)
 

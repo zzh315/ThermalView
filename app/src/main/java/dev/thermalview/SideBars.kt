@@ -59,6 +59,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,15 +88,16 @@ private fun BarColumn(modifier: Modifier, content: @Composable ColumnScope.() ->
 }
 
 /**
- * The left bar: how the image looks. Palette, noise reduction, texture and view size, each a tap to
- * change; the frame rate (debug), and while zoomed in, a way back to 1x.
+ * The left bar: how the image looks. The palette (a tap opens its picker), the view size (a tap for
+ * the next) and the box; the frame rate (debug), and while zoomed in, a way back to 1x. Noise and
+ * texture are in Settings (owner, 2026-09-26).
  */
 @Composable
 fun LeftBar(
     modifier: Modifier,
     options: DebugOptions,
     onOptions: (DebugOptions) -> Unit,
-    paletteColors: (Int) -> List<Color>,
+    paletteColors: (palette: Int, rainbowPreset: Int) -> List<Color>,
     stats: (@Composable () -> Unit)?,
     zoom: Float,
     onResetZoom: () -> Unit,
@@ -106,17 +108,24 @@ fun LeftBar(
 ) {
     BarColumn(modifier.fillMaxHeight().padding(start = 8.dp, end = 6.dp, top = 8.dp, bottom = 8.dp).widthIn(max = BarMaxWidth)) {
         stats?.invoke()
-        Tile(onClick = { onOptions(options.copy(palette = if (options.palette == 1) 2 else 1)) }) {
-            Caption("Palette")
-            Value(PALETTE_NAMES.getOrElse(options.palette) { "?" })
-            Spacer(Modifier.height(5.dp))
-            Box(
-                Modifier.fillMaxWidth().height(6.dp)
-                    .background(Brush.horizontalGradient(paletteColors(options.palette).ifEmpty { listOf(Color.Black, Color.White) }), RoundedCornerShape(3.dp)),
-            )
+        // The palette: a tap opens the picker (owner, 2026-09-26: "a selection window to select color
+        // palette and the colors if rainbow is picked").
+        var picking by remember { mutableStateOf(false) }
+        Box {
+            Tile(onClick = { picking = true }, color = if (picking) Ui.TileActive else Ui.Tile) {
+                Caption("Palette")
+                Value(PALETTE_NAMES.getOrElse(options.palette) { "?" })
+                Spacer(Modifier.height(5.dp))
+                Swatch(paletteColors(options.palette, options.rainbowPreset), Modifier.fillMaxWidth())
+                if (options.palette == 2) {
+                    Spacer(Modifier.height(3.dp))
+                    Note(MainActivity.RAINBOW_PRESETS.getOrElse(options.rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }.name)
+                }
+            }
+            DropdownMenu(expanded = picking, onDismissRequest = { picking = false }, offset = DpOffset(8.dp, 0.dp)) {
+                PalettePicker(options, onOptions, paletteColors) { picking = false }
+            }
         }
-        LevelTile("Noise", MainActivity.nrLevelOf(options)) { onOptions(MainActivity.withNrLevel(options, it)) }
-        LevelTile("Texture", MainActivity.textureLevelOf(options)) { onOptions(MainActivity.withTextureLevel(options, it)) }
         Tile(onClick = { onOptions(options.copy(viewSize = (options.viewSize + 1) % MainActivity.VIEW_WIDTHS.size)) }) {
             Caption("View")
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -514,25 +523,55 @@ private fun CaptureTile(status: Status, live: Boolean) {
     }
 }
 
-/** Noise or texture: Off / Low / High, a tap for the next (a custom setting from the debug pages goes to Low). */
+/**
+ * The palette picker: White hot or Rainbow, each with its colors; with Rainbow, its colors too (Deep or
+ * Soft). Picking closes it, except Rainbow, which stays open to show its colors.
+ */
 @Composable
-private fun LevelTile(title: String, level: Int?, onLevel: (Int) -> Unit) {
-    Tile(onClick = { onLevel(if (level == null) 1 else (level + 1) % MainActivity.LEVELS.size) }) {
-        Caption(title)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Value(level?.let { MainActivity.LEVELS[it] } ?: "Custom", Modifier.weight(1f))
-            if (level != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
-                    for (i in 1..2) {
-                        Box(
-                            Modifier.size(width = 5.dp, height = (6 + 5 * i).dp)
-                                .background(if (level >= i) Ui.Accent else Ui.Faint, RoundedCornerShape(2.dp)),
-                        )
-                    }
+private fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colors: (Int, Int) -> List<Color>, done: () -> Unit) {
+    Column(Modifier.width(260.dp).padding(horizontal = 14.dp, vertical = 6.dp)) {
+        Caption("Palette")
+        Spacer(Modifier.height(4.dp))
+        PickRow("White hot", colors(1, 0), options.palette == 1) {
+            onOptions(options.copy(palette = 1))
+            done()
+        }
+        PickRow("Rainbow", colors(2, options.rainbowPreset), options.palette == 2) { onOptions(options.copy(palette = 2)) }
+        if (options.palette == 2) {
+            Spacer(Modifier.height(10.dp))
+            Caption("Rainbow colors")
+            Spacer(Modifier.height(4.dp))
+            MainActivity.RAINBOW_PRESETS.forEachIndexed { i, preset ->
+                PickRow(preset.name, colors(2, i), options.rainbowPreset == i) {
+                    onOptions(options.copy(rainbowPreset = i))
+                    done()
                 }
             }
         }
     }
+}
+
+@Composable
+private fun PickRow(name: String, swatch: List<Color>, selected: Boolean, onPick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(if (selected) Ui.TileActive else Color.Transparent, RoundedCornerShape(10.dp))
+            .combinedClickableCompat(onPick).padding(horizontal = 8.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Swatch(swatch, Modifier.width(72.dp), height = 12.dp)
+        Spacer(Modifier.width(12.dp))
+        Text(name, color = Ui.Text, fontSize = 15.sp, modifier = Modifier.weight(1f))
+        if (selected) Text("✓", color = Ui.Accent, fontSize = 15.sp)
+    }
+}
+
+/** A palette's colors, cold to hot, as a small strip. */
+@Composable
+private fun Swatch(colors: List<Color>, modifier: Modifier, height: Dp = 6.dp) {
+    Box(
+        modifier.height(height)
+            .background(Brush.horizontalGradient(colors.ifEmpty { listOf(Color.Black, Color.White) }), RoundedCornerShape(height / 2)),
+    )
 }
 
 /** A small downward chevron: "more choices here" (drawn: the font's ▾ is tiny on this tablet). */

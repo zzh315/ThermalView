@@ -55,7 +55,7 @@ fun AppScreen(
     dumpsDir: String,
     options: DebugOptions,
     onOptions: (DebugOptions) -> Unit,
-    paletteColors: (Int) -> IntArray,
+    paletteColors: (palette: Int, rainbowPreset: Int) -> IntArray,
     zoomRequest: ZoomRequest? = null,
     onZoomRequestDone: () -> Unit = {},
 ) {
@@ -93,15 +93,15 @@ fun AppScreen(
         onDispose { view.keepScreenOn = false }
     }
 
-    // The palette's colors: the swatch (left to right, cold to hot) and the scale bar's table.
-    val swatches = remember(options.rainbowPreset) { HashMap<Int, List<Color>>() }
-    val swatch = { p: Int ->
-        swatches.getOrPut(p) {
-            val argb = paletteColors(p)
+    // The palettes' colors: swatches (left to right, cold to hot) and the scale bar's table.
+    val swatches = remember { HashMap<Pair<Int, Int>, List<Color>>() }
+    val swatch = { p: Int, preset: Int ->
+        swatches.getOrPut(p to preset) {
+            val argb = paletteColors(p, preset)
             if (argb.isEmpty()) listOf(Color.Black, Color.White) else (0 until 16).map { Color(argb[it * (argb.size - 1) / 15]) }
         }
     }
-    val scaleLut = remember(options.palette, options.rainbowPreset) { paletteColors(options.palette) }
+    val scaleLut = remember(options.palette, options.rainbowPreset) { paletteColors(options.palette, options.rainbowPreset) }
 
     // Zoom and pan (PLAN M6): pinch zooms 1x-8x around the fingers, a drag pans, a double tap goes
     // back to 1x. Display-only: the pipeline still processes the whole frame, but the auto range and
