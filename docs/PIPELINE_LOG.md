@@ -4,7 +4,7 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
-## 2026-09-25 — Stage 3c: the per-frame column and row noise (preview; awaiting the owner)
+## 2026-09-25 — Stage 3c: the per-frame column and row noise (preview, `0a19f38`; awaiting the owner's second look)
 
 **Why:** the owner chose "stripe fix, then BM3D".
 - **The white-noise BM3D keeps the stripes.** The sensor's per-frame column/row noise is the same down a column, so block matching stacks same-column blocks and keeps it as structure. On synthetic column noise, BM3D removed 45% of the streaks, NLM 83%.
@@ -20,8 +20,9 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 **Method** (`tv/stripes.h`, stage 3c, after 3b):
 - **The reference:** each frame against a 2 s average of the scene, kept in scene coordinates.
 - **The offsets:** per column, then per row, a one-step M-estimate of frame − reference over the unchanged pixels (under 3 × 1.4σ) that are off strong edges. Their fine part is subtracted, clamped at ±1.5 counts. Nothing is blended: one offset per column and per row.
-- **Motion:** global Lucas–Kanade at half resolution (three levels, Tukey weights), on images with their column and row means removed. Each frame enters the reference through one interpolation.
-- **Deferred work:** the reference update runs while stage 4b's GPU works. Stage 3b learns from the signal before 3c's correction.
+- **Motion:** global Lucas–Kanade at half resolution (three levels, Tukey weights), on images with their column and row means removed. A level moves only when its first step passes a score test. Each frame enters the reference through one interpolation.
+- **With stage 3b:** 3c works on 3b's output. 3b learns from that output before 3c's correction, and each change 3b makes to its estimate is made to 3c's reference too (in scene coordinates), so the two never disagree about the pattern.
+- **Deferred work:** the reference update and 3b's learning run while stage 4b's GPU works.
 
 **Found on the way** (each confirmed, then fixed):
 - **A reference built from corrected frames locks in its first pattern** (a 1.5-count lasting change). It follows the frame as it came.
@@ -30,27 +31,53 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - **Stage 3b fed 3c's output** missed the fast part of the pattern's drift, and the two chased each other (in the pipeline: `flat_aged` 0.292 → 0.238 only, a 1.15-count lasting change at one column).
 - **Half-resolution motion is accurate to ~0.07 px** (exact Fourier shifts). Through pans, the fix does as well with it as with the true motion.
 
-**Results** (fine column streaks per frame, counts; stages 1–3b, then 3c):
+**The owner's first look** (the first clips): on `flat_aged`, "sometimes the stage 3c on is even a bit worse than the off one when it comes to vertical streaks". The cause, a fix tried and rejected, and a second problem the new regression test found:
+- **3c undid 3b's learning.** After a calibration, 3b relearns the persistent pattern over seconds, so its output keeps changing. 3c's 2 s reference lagged behind that change, and 3c took the difference for stripes and put it back. So the output kept 3b's older, stronger correction. Fix: each change 3b makes goes into 3c's reference too.
+- **Estimating before 3b** (tried first) keeps the full fixed pattern in the reference, and a pan drags it along. On synthetic pans over the real fixed pattern (below), that was worse than off. Rejected: 3c stays after 3b.
+- **The motion estimate could wander** (found by the regression test, not in the owner's clip). On a scene with only column and row structure, the images are pure noise once their column and row means are gone. Iterated Lucas–Kanade then walks to a random peak of the noise's correlation, up to 20 px a frame, and the reference smears the pattern it holds. On the real scenes, the sensor's own per-pixel pattern anchors it (within 0.04 px on `flat_aged`). Fix: a score test on each level's first step, at 5 standard errors (with no motion, χ² with 2 degrees of freedom: a false start ~4·10⁻⁶ of the time). It changes no real scene or pan.
 
-| | Off | On |
+**Tests:**
+- **"Stage 3c doesn't hold back stage 3b"** (unit test): a persistent pattern that 3b learns over 2 s, plus per-frame stripes, on a scene with only column and row structure. In every window, the output's lasting pattern with 3c must be no stronger than without, and its per-frame part under 0.4× off's. Per frame, off 0.26–0.28 counts: 0.30 / 0.18 / 0.10 while the motion wandered, now 0.085 / 0.048 / 0.028.
+- **"estimateShift stays put when nothing is left to track"** (unit test): 20 trials, 0 px with the score test, up to 20 px without.
+- **Synthetic pans over the real fixed pattern** (local, `build/nr/pan_bench`): `flat`'s raw frames (the real sensor's fixed pattern, drift, stripes and noise) plus `room`'s structure. The structure pans back and forth over 40 px and runs through the whole pipeline, scored against the known scene.
+
+**Results** (`0a19f38`; counts; stages 1–3b, then 3c; frames 50+):
+- **Per frame:** each frame's fine column profile (under 9 px) less the time-mean's, i.e. the flicker. Rows are in brackets.
+- **Lasting:** the time-mean's fine column profile.
+
+| | Per frame, off | Per frame, on | Lasting, off → on |
+|---|---|---|---|
+| `flat` | 0.250 (0.173) | 0.040 (0.023) | 0.103 → 0.066 |
+| `flat_aged` | 0.277 (0.175) | 0.040 (0.024) | 0.158 → 0.148 |
+| `room` | 0.253 (0.173) | 0.044 (0.026) | 0.413 → 0.403 (mostly the scene) |
+| `keyboard` | 0.263 (0.181) | 0.061 (0.049) | 1.852 → 1.850 (the scene) |
+| `night` (handheld) | 0.271 | 0.112 | — |
+| `hand` (a hand moving) | 0.399 | 0.320 | — |
+
+`night` and `hand` move, so their time-mean isn't the scene and their per-frame figure includes the motion.
+
+| Synthetic pan over the real fixed pattern | Off | On |
 |---|---|---|
-| `flat` | 0.252 | 0.099 |
-| `room` | 0.259 | 0.105 |
-| `keyboard` | 0.279 | 0.136 |
-| `night` (handheld) | 0.280 | 0.163 |
-| `flat_aged` | 0.292 | 0.169 |
-| Synthetic pans of `room`, 0.1–3 px/frame (real sensor noise) | 0.250 | 0.088–0.104 (the true motion: 0.088–0.106) |
+| Still | 0.308 (0.254) | 0.175 (0.051) |
+| 0.1 px/frame | 0.284 (0.253) | 0.108 (0.099) |
+| 0.3 px/frame | 0.282 (0.253) | 0.100 (0.090) |
+| 1 px/frame | 0.283 (0.254) | 0.132 (0.127) |
 
-- **Rows fall similarly:** e.g. `flat` 0.176 → 0.064.
+(Fine column error against the true scene per frame, counts; its per-frame part in brackets.)
+
+**In the clips** (display levels, NLM Low; flickering / static / whole):
+- **`flat_aged`:** 0.35 / 0.21 / 0.41 → 0.07 / 0.19 / 0.19.
+- **The part of it the owner looked at** (x 64–192, y 48–144): whole 0.43 → 0.26, and the worst 5% of frames 0.50 → 0.34.
+
 - **Real vertical structure is untouched:** e.g. `room`'s curtain folds.
 - **Moving objects:** a warm block moving across a still scene adds no streaks (unit test).
-- **Lasting change** (time-mean on − off, fine part): 0.078 counts, 0.14 on `flat_aged` (its strong post-calibration drift). That's the stripes' and drift's slower fluctuations, removed too. On synthetic stripes, the output's lasting pattern is slightly smaller than the input's.
+- **Lasting change** (time-mean on − off, fine part): 0.06–0.09 counts on the real scenes.
 
-**Cost:** 0.36 ms a frame on the Mac. On the tablet at full clock, +1.6 ms (the harness). Live latency is pending: the camera was unplugged, and replays with the screen off run on the little cores.
+**Cost:** +0.44 ms a frame on the Mac (the whole pipeline: p50 5.12 → 5.56 ms, `harness perf`). On the tablet at full clock, the first version cost +1.6 ms (the harness). Live latency is pending: it needs the camera plugged in and the screen on.
 
-**Review:** side-by-side clips (NLM Low, 3c off | on), local: `bench/out/clips/stage3c/` (full frames, 4×) and `bench/out/clips/stage3c_crops/` (8×). Made with `tools/py/compare_clips.py`.
+**Review:** side-by-side clips (NLM Low, 3c off | on), regenerated for `0a19f38`, local: `bench/out/clips/stage3c/` (full frames, 4×) and `bench/out/clips/stage3c_crops/` (8×). Made with `tools/py/compare_clips.py`.
 
-**Verdict:** pending. The debug panel has "Stage 3c: per-frame stripe fix (preview)".
+**Verdict:** pending (second look). The debug panel has "Stage 3c: per-frame stripe fix (preview)", and the build on the tablet has the fixes.
 
 ## 2026-09-25 — Stage 4b loses subtle detail (owner); measured on known texture
 
