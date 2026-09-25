@@ -55,6 +55,7 @@ class ToneMapper {
 
   // The current mapping, for the scale bar (M5): the smoothed range in counts and the curve at its
   // kCurve + 1 bin edges (values in [0, 1] before the outLo..outHi squeeze).
+  bool ready() const { return haveRange_; }  // a mapping exists (after the first frame)
   float lowCounts() const { return lo_ + offset_; }
   float highCounts() const { return hi_ + offset_; }
   const std::vector<float>& curve() const { return curve_; }

@@ -27,9 +27,11 @@ struct PipelineOptions {
   // Stage 1 (approved 2026-09-25): while the camera repeats one frame (a shutter cycle), hold the
   // last output without advancing any stage; when fresh frames return, crossfade from the held output
   // over this many frames (0 = jump). A motion gate is left out on purpose: the NUC's own correction
-  // change is large and coherent (PIPELINE_LOG, stage 1), so it would read as motion.
+  // change is large and coherent (PIPELINE_LOG, stage 1), so it would read as motion. The crossfade
+  // is off (owner, 2026-09-26: no afterimages; a sharp change is fine): whatever moved during the
+  // cycle would ghost through it.
   bool shutterHold = true;
-  int shutterBlendFrames = 8;  // ~0.3 s at 25 fps
+  int shutterBlendFrames = 0;
 
   // Stage 2 (approved 2026-09-25): replace the camera's known bad pixels (setBadPixels) for
   // display, from their good neighbours, before anything else sees them.
@@ -203,6 +205,10 @@ class Pipeline {
   // palette ends. A change retargets the mapping at once, easing over ~0.3 s (PLAN M4 stage 5).
   void setRegion(const Region& region);
   const Region& region() const { return region_; }
+
+  // Stage 5's current mapping (the scale bar's endpoints; empty until the first frame, or with
+  // stage 5 off).
+  const ToneMapper* toneMapper() const { return options_.tone && tone_.ready() ? &tone_ : nullptr; }
 
   // One 256x192 camera image in; display intensity in [0, 1] out (kImagePixels floats). signal, if
   // given, receives the value tone mapping started from, in raw counts (for the harness's °C metrics).
