@@ -112,6 +112,8 @@ class Session {
   // automatic mapping; then move the locked range's ends, in °C.
   std::string setRangeLock(bool on);
   void setRangeEnds(double loC, double hiC);
+  // The rainbow's Room preset: a fixed scale linear in °C (while no range lock is held); off: Auto.
+  void setRoomScale(bool on, double loC, double hiC);
   // Shown readouts for the UI: {temp, x, y, flags} for high, low and center, then 1 if the high
   // range is active. flags: 1 = a valid temperature, 2 = over range. temp is NaN when invalid.
   std::vector<float> readouts();
@@ -214,12 +216,15 @@ class Session {
   double scaleCurve_[kScaleSamples] = {};  // the mapping's intensity at even temperatures from its low to high end
   // The range lock (processing thread), and the UI's requests for it.
   RangeLock rangeLock_;
+  RawWindow readoutWindow_;  // the raw values the high and low readouts may come from (the lock's)
   FixedMapping fixedMapping_;
   bool fixedMappingValid_ = false;  // fixedMapping_ holds a good mapping (the last one built)
   std::atomic<int> rangeLockRequest_{-1};  // 1 lock, 0 release, -1 nothing new
   std::mutex rangeEndsMutex_;
   double pendingLoC_ = 0, pendingHiC_ = 0;  // under rangeEndsMutex_
   std::atomic<bool> rangeEndsPending_{false};
+  std::atomic<bool> roomOn_{false};
+  std::atomic<double> roomLoC_{13.0}, roomHiC_{29.0};
   int64_t capturePhaseNs_ = 0;
   int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's
 

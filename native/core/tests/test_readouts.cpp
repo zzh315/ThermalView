@@ -134,3 +134,43 @@ TEST_CASE("over range starts at the rated 120 C or the clip floor, whichever is 
   img.at(3, 3) = 13841;  // a pixel clipped low (the 300 °C iron, docs/DEVICE.md)
   CHECK(tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut)).high.overRange);
 }
+
+TEST_CASE("a window keeps low and high inside it (a locked range), the center regardless") {
+  const auto lut = realLut();
+  Image img;
+  img.at(10, 20) = 7000;   // too hot for the window
+  img.at(30, 40) = 6000;   // the hottest inside it
+  img.at(200, 150) = 4000; // too cold
+  img.at(100, 100) = 5200; // (the bulk is 5500)
+  img.at(120, 60) = 5100;  // the coldest inside it
+  const tv::RawWindow w{5000, 6500};
+  const Readouts r = tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut), nullptr, w);
+  CHECK(r.high.x == 30);
+  CHECK(r.high.y == 40);
+  CHECK(r.low.x == 120);
+  CHECK(r.low.y == 60);
+  CHECK(std::isfinite(r.center.tempC));
+
+  // Nothing inside: no low or high (the UI draws no marker), the center still.
+  const Readouts none = tv::computeReadouts(img.px.data(), lut, Region{}, tv::overRangeRaw(lut), nullptr, {9000, 9100});
+  CHECK(std::isnan(none.high.x));
+  CHECK(std::isnan(none.low.x));
+  CHECK(std::isfinite(none.center.tempC));
+}
+
+TEST_CASE("the filter drops a marked pixel that leaves the window") {
+  const auto lut = realLut();
+  Image img;
+  img.at(30, 40) = 6000;
+  ReadoutFilter f;
+  const Region all{};
+  const uint16_t clip = tv::overRangeRaw(lut);
+  f.update(tv::computeReadouts(img.px.data(), lut, all, clip), img.px.data(), lut, all, clip, 0.04);
+  // The window narrows below the marked pixel: the high moves to what's inside.
+  img.at(50, 50) = 5800;
+  const tv::RawWindow w{0, 5900};
+  const Readouts r = f.update(tv::computeReadouts(img.px.data(), lut, all, clip, nullptr, w), img.px.data(), lut, all,
+                              clip, 0.04, w);
+  CHECK(r.high.x == 50);
+  CHECK(r.high.y == 50);
+}

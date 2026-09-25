@@ -94,14 +94,14 @@ fun AppScreen(
     }
 
     // The palette's colors: the swatch (left to right, cold to hot) and the scale bar's table.
-    val swatches = remember(options.rainbowStyle) { HashMap<Int, List<Color>>() }
+    val swatches = remember(options.rainbowPreset) { HashMap<Int, List<Color>>() }
     val swatch = { p: Int ->
         swatches.getOrPut(p) {
             val argb = paletteColors(p)
             if (argb.isEmpty()) listOf(Color.Black, Color.White) else (0 until 16).map { Color(argb[it * (argb.size - 1) / 15]) }
         }
     }
-    val scaleLut = remember(options.palette, options.rainbowStyle) { paletteColors(options.palette) }
+    val scaleLut = remember(options.palette, options.rainbowPreset) { paletteColors(options.palette) }
 
     // Zoom and pan (PLAN M6): pinch zooms 1x-8x around the fingers, a drag pans, a double tap goes
     // back to 1x. Display-only: the pipeline still processes the whole frame, but the auto range and

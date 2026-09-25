@@ -40,9 +40,8 @@ data class DebugOptions(
     val palette: Int = 1,                   // M5: 1 white_hot, 2 rainbow_hc (0: the old plain gray, adb only)
     val viewSize: Int = 2,                  // M6 presets, debug until then: 0 Phone, 1 Small tablet, 2 Full
     val boxDim: Float = 0.5f,               // M6: the brightness outside the box (start at 50%; tunable)
-    // For the owner's pick (2026-09-26), then gone: the rainbow's style and the auto contrast.
-    val rainbowStyle: Int = 0,              // 0 vivid (rainbow_hc), 1 deep, 2 soft (RAINBOWS)
-    val contrast: Int = 0,                  // 0 normal (gain cap 2), 1 balanced, 2 stronger (CONTRASTS)
+    // For the owner's pick (2026-09-26), then gone: the rainbow's look (RAINBOW_PRESETS).
+    val rainbowPreset: Int = 0,
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -55,8 +54,11 @@ data class DebugOptions(
         // BM3D's real-time shape, at the strength that leaves the noise non-local means would (PIPELINE_LOG)
         "nrMethod=bm3d", "bm3dStrength=" + MainActivity.bm3dStrengthFor(nrStrength), "bm3dBlock=8", "bm3dStride=6",
         "bm3dSearch=5", "bm3dGroup1=8", "bm3dGroup2=8", "bm3dTau1=0", "bm3dTau2=0",
-    ) else emptyList()).plus(MainActivity.CONTRASTS.getOrElse(contrast) { "" }.let { if (it.isEmpty()) emptyList() else listOf(it) })
-        .joinToString(",")
+    ) else emptyList()).plus(
+        // (the rainbow presets' own auto contrast; white hot keeps stage 5 as it is)
+        (if (palette == 2) MainActivity.RAINBOW_PRESETS.getOrElse(rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }.tone else "")
+            .let { if (it.isEmpty()) emptyList() else listOf(it) },
+    ).joinToString(",")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
 }
@@ -162,6 +164,8 @@ class MainActivity : ComponentActivity() {
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
         NativeBridge.setDisplay(value.upscaler, paletteJson(value.palette)).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
         NativeBridge.setViewWidth(VIEW_WIDTHS.getOrElse(value.viewSize) { 0 })
+        val room = value.palette == 2 && RAINBOW_PRESETS.getOrElse(value.rainbowPreset) { RAINBOW_PRESETS[0] }.room
+        NativeBridge.setRoomScale(room, ROOM_LO_C, ROOM_HI_C)
     }
 
     /**
@@ -219,7 +223,7 @@ class MainActivity : ComponentActivity() {
         if (extras.getBoolean("readback")) {
             val dir = java.io.File(storageDir(), "readback").apply { mkdirs() }
             val prefix = java.io.File(dir, "rb_" + System.currentTimeMillis()).absolutePath
-            NativeBridge.requestReadback(prefix, paletteName(options.value.palette, options.value.rainbowStyle) ?: "gray")
+            NativeBridge.requestReadback(prefix, paletteName(options.value.palette, options.value.rainbowPreset) ?: "gray")
             Log.i(TAG, "adb: readback $prefix")
         }
         if (extras.getBoolean("nrCheck")) {  // stage 4b's GPU against the CPU reference: the field log has it
@@ -243,7 +247,7 @@ class MainActivity : ComponentActivity() {
     private fun storageDir() = (getExternalFilesDir(null) ?: filesDir).absolutePath
 
     /** A palette file's text ("" for 0, the plain gray). */
-    private fun paletteJson(palette: Int): String = paletteName(palette, options.value.rainbowStyle)?.let { name ->
+    private fun paletteJson(palette: Int): String = paletteName(palette, options.value.rainbowPreset)?.let { name ->
         runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
     } ?: ""
 
@@ -259,15 +263,23 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "ThermalView"
         val PALETTES = listOf("white_hot", "rainbow_hc")  // assets from palettes/, DebugOptions.palette 1 and 2
-        // The owner's pick (2026-09-26): rainbow_hc's hues as they are, or with a deeper cold end and less chroma.
-        val RAINBOWS = listOf("rainbow_hc", "rainbow_deep", "rainbow_soft")
-        val RAINBOW_NAMES = listOf("Vivid", "Deep", "Soft")
-        // ...and the auto contrast: stage 5 as it is, with the median at the palette's middle, and that
-        // with the gain cap at 3 (display noise with NR High about the old default's: PIPELINE_LOG).
-        val CONTRASTS = listOf("", "toneBalance", "toneBalance,toneGain=3")
-        val CONTRAST_NAMES = listOf("Normal", "Balanced", "Stronger")
-        fun paletteName(palette: Int, rainbowStyle: Int): String? =
-            if (palette == 2) RAINBOWS.getOrElse(rainbowStyle) { RAINBOWS[0] } else PALETTES.getOrNull(palette - 1)
+        // The rainbow's looks for the owner's pick (2026-09-26: "have some presets for me to choose and
+        // pick ... take into account normal average room temperature and used as baseline for one"):
+        // the palette file, stage 5's contrast (the balance centres the scene's median; the cap at 3 gives
+        // more contrast at about the old default's noise, PIPELINE_LOG), or Room's fixed scale.
+        class RainbowPreset(val name: String, val palette: String, val tone: String, val room: Boolean, val note: String)
+        val RAINBOW_PRESETS = listOf(
+            RainbowPreset("Vivid", "rainbow_hc", "", false, "As before: the most vivid colors, Auto as it was"),
+            RainbowPreset("Deep", "rainbow_deep", "toneBalance", false, "A darker cold end; Auto centred on the scene"),
+            RainbowPreset("Deep+", "rainbow_deep", "toneBalance,toneGain=3", false, "Deep with more contrast (a little more noise)"),
+            RainbowPreset("Soft", "rainbow_soft", "toneBalance", false, "Gentler colors; Auto centred on the scene"),
+            RainbowPreset("Room", "rainbow_deep", "", true, "Fixed: a normal room's 21 °C yellow, 13 °C green, 29 °C red"),
+        )
+        const val ROOM_LO_C = 13f  // Room: 21 °C (a normal room) in the middle, ±8 °C
+        const val ROOM_HI_C = 29f
+        fun paletteName(palette: Int, rainbowPreset: Int): String? =
+            if (palette == 2) RAINBOW_PRESETS.getOrElse(rainbowPreset) { RAINBOW_PRESETS[0] }.palette
+            else PALETTES.getOrNull(palette - 1)
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
         val NR_STRENGTHS = listOf(0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas
         val NR_SEARCHES = listOf(2, 3, 5)  // stage 4b's search radius: 5x5, 7x7, 11x11

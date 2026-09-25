@@ -28,6 +28,14 @@ struct Readouts {
   Spot low, high, center;
 };
 
+// The raw values low and high may come from (M6: a locked range's, so the markers point at the
+// hottest and coldest parts of what the range shows; the owner, 2026-09-26). The whole scale by
+// default.
+struct RawWindow {
+  uint16_t lo = 0, hi = UINT16_MAX;
+  bool contains(uint16_t v) const { return v >= lo && v <= hi; }
+};
+
 // The normal range clips per pixel, at raw ~13835-14192 (docs/DEVICE.md), and the rated range ends
 // at 120 °C. A pixel is over range at 120 °C through the table or at kClipFloorRaw, whichever comes
 // first, so every clipped pixel counts at any camera temperature.
@@ -41,8 +49,10 @@ inline uint16_t overRangeRaw(const TemperatureLut& lut) {
 // One frame, unsmoothed. Low and high are our own argmin/argmax over the region, skipping pixels
 // marked in badPixels (width x rows, nonzero = bad; empty until M4 builds the map). The center is
 // the mean of the 1-4 pixels nearest the region's center.
+// Low and high only from pixels inside [window] (none there: no low or high).
 Readouts computeReadouts(const uint16_t* image, const TemperatureLut& lut, const Region& region,
-                         uint16_t clipRaw, const std::vector<uint8_t>* badPixels = nullptr);
+                         uint16_t clipRaw, const std::vector<uint8_t>* badPixels = nullptr,
+                         RawWindow window = {});
 
 // Display smoothing: a low/high marker moves only when a new extreme beats the marked pixel by
 // hysteresisC, so it doesn't jitter between near-equal pixels, and shown values follow an EMA with
@@ -53,12 +63,12 @@ class ReadoutFilter {
       : hysteresis_(hysteresisC), tau_(tauS) {}
 
   Readouts update(const Readouts& frame, const uint16_t* image, const TemperatureLut& lut,
-                  const Region& region, uint16_t clipRaw, double dtS);
+                  const Region& region, uint16_t clipRaw, double dtS, RawWindow window = {});
   void reset() { primed_ = false; }
 
  private:
   Spot follow(const Spot& extreme, Spot& marked, bool higherWins, const uint16_t* image,
-              const TemperatureLut& lut, const Region& region, uint16_t clipRaw) const;
+              const TemperatureLut& lut, const Region& region, uint16_t clipRaw, RawWindow window) const;
   static void smooth(Spot& shown, const Spot& target, double alpha);
 
   double hysteresis_, tau_;

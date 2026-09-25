@@ -185,7 +185,7 @@ struct Session::Snapshot {
   // The scale bar (PLAN M5): the temperatures at the ends of stage 5's range (NaN: no mapping), and
   // whether the top one is over range.
   double scaleLoC = NAN, scaleHiC = NAN;
-  bool scaleHiOver = false, scaleLocked = false;
+  bool scaleHiOver = false, scaleLocked = false, scaleRoom = false;
   // Where the high, low and center readouts fall on the scale: their temperatures through the mapping
   // (NaN: no readout), in the order of Readouts' high, low, center.
   double scaleMark[3] = {NAN, NAN, NAN};
@@ -1182,6 +1182,10 @@ void Session::handleFrame(const RawFrame& frame) {
     scaleLoC_ = rangeLock_.loC();
     scaleHiC_ = rangeLock_.hiC();
     scaleHiOver_ = false;
+  } else if (roomOn_) {
+    scaleLoC_ = roomLoC_;
+    scaleHiC_ = roomHiC_;
+    scaleHiOver_ = false;
   }
   // The temperature work (PROTOCOL.md "Temperature math"; CLAUDE.md rule 2): this frame's table, the
   // readouts from raw values, the over-range counts and what they trigger (the lockout, range
@@ -1206,7 +1210,14 @@ void Session::handleFrame(const RawFrame& frame) {
       // Stage 2 on: readouts also stay off the known bad pixels (PLAN M4).
       const BadPixelMap& bad = pipeline_.badPixels();
       const bool exclude = pipeline_.options().badPixels && !bad.empty();
-      rawReadouts_ = computeReadouts(view.image(), lut_, region_, clipRaw_, exclude ? &bad.mask : nullptr);
+      // With the range locked, the hottest and coldest points of what it shows (owner, 2026-09-26).
+      RawWindow window;
+      if (rangeLock_.held()) {
+        window.lo = uint16_t(std::clamp(std::ceil(countsAt(lut_, rangeLock_.loC())), 0.0, 65535.0));
+        window.hi = uint16_t(std::clamp(std::floor(countsAt(lut_, rangeLock_.hiC())), 0.0, 65535.0));
+      }
+      readoutWindow_ = window;
+      rawReadouts_ = computeReadouts(view.image(), lut_, region_, clipRaw_, exclude ? &bad.mask : nullptr, window);
       if (stats.max >= std::min(clipRaw_, lockoutRaw_)) {
         const uint16_t* img = view.image();
         for (size_t i = 0; i < kImagePixels; ++i) {
@@ -1259,7 +1270,7 @@ void Session::handleFrame(const RawFrame& frame) {
     }
     captureForDump(frame);  // every full frame, so a dump also shows cycles and lockouts
     if (displayOut) {  // what the display shows with this frame: its readouts and over-range mask
-      shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, region_, clipRaw_, readoutDt);
+      shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, region_, clipRaw_, readoutDt, readoutWindow_);
       for (size_t i = 0; i < kImagePixels; ++i) displayOut->clipped[i] = view.image()[i] >= clipRaw_ ? 255 : 0;
     }
     tableNs = nowNs() - tTable0;
@@ -1358,6 +1369,9 @@ void Session::handleFrame(const RawFrame& frame) {
     if (rangeLock_.held()) {
       if (rangeLock_.mapping(lut_, &fixedMapping_)) fixedMappingValid_ = true;
       pipeline_.setFixedMapping(fixedMappingValid_ ? &fixedMapping_ : nullptr);
+    } else if (roomOn_) {  // the Room preset: its fixed scale (locking it holds this one)
+      fixedMappingValid_ = linearMapping(lut_, roomLoC_, roomHiC_, &fixedMapping_);
+      pipeline_.setFixedMapping(fixedMappingValid_ ? &fixedMapping_ : nullptr);
     } else {
       fixedMappingValid_ = false;
       pipeline_.setFixedMapping(nullptr);
@@ -1378,6 +1392,9 @@ void Session::handleFrame(const RawFrame& frame) {
     if (rangeLock_.held()) {  // (the lock's own ends: what the UI adjusts)
       scaleLoC_ = rangeLock_.loC();
       scaleHiC_ = rangeLock_.hiC();
+    } else if (roomOn_) {
+      scaleLoC_ = roomLoC_;
+      scaleHiC_ = roomHiC_;
     } else if (const ToneMapper* tone = pipeline_.toneMapper()) {
       scaleLoC_ = celsiusAt(lut_, tone->lowCounts());
       scaleHiOver_ = tone->highCounts() >= clipRaw_;
@@ -1386,7 +1403,7 @@ void Session::handleFrame(const RawFrame& frame) {
     }
     out.arrivalNs = frame.arrivalNs;
     // The range lock's marks for the display (for palettes that show them: the rainbow's grey).
-    if (const uint8_t* m = pipeline_.outsideMask()) {
+    if (const uint8_t* m = rangeLock_.held() ? pipeline_.outsideMask() : nullptr) {
       out.locked = true;
       for (size_t i = 0; i < kImagePixels; ++i) {
         out.outside[2 * i] = m[i] == 1 ? 255 : 0;
@@ -1486,6 +1503,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.scaleHiC = scaleHiC_;
   s.scaleHiOver = scaleHiOver_;
   s.scaleLocked = rangeLock_.held();
+  s.scaleRoom = !rangeLock_.held() && roomOn_;
   for (int k = 0; k < 3; ++k) s.scaleMark[k] = scaleMark_[k];
   for (int k = 0; k < kScaleSamples; ++k) s.scaleCurve[k] = scaleCurve_[k];
   s.lastCycleMs = lastCycleMs_;
@@ -1746,6 +1764,12 @@ std::string Session::setRangeLock(bool on) {
   return on ? "range lock requested" : "automatic range";
 }
 
+void Session::setRoomScale(bool on, double loC, double hiC) {
+  roomLoC_ = loC;
+  roomHiC_ = hiC;
+  if (on != roomOn_.exchange(on)) FLOG("room scale %s: %.1f to %.1f C", on ? "on" : "off", loC, hiC);
+}
+
 void Session::setRangeEnds(double loC, double hiC) {
   {
     std::lock_guard lock(rangeEndsMutex_);
@@ -1873,6 +1897,7 @@ std::vector<float> Session::readouts() {
   v.push_back(snapshot_->scaleLocked ? 1.0f : 0.0f);
   for (double m : snapshot_->scaleMark) v.push_back(float(m));
   for (double c : snapshot_->scaleCurve) v.push_back(float(c));
+  v.push_back(snapshot_->scaleRoom ? 1.0f : 0.0f);
   return v;
 }
 

@@ -17,6 +17,10 @@ double celsiusAt(const TemperatureLut& lut, double counts);
 // Its inverse: the fractional counts reading tempC, clamped to the table's valid, rising part.
 double countsAt(const TemperatureLut& lut, double tempC);
 
+// A mapping linear in °C from loC to hiC through [lut] (the rainbow's Room preset: a fixed scale
+// around a normal room temperature). False if the table can't express it.
+bool linearMapping(const TemperatureLut& lut, double loC, double hiC, FixedMapping* out);
+
 class RangeLock {
  public:
   static constexpr double kMinSpanC = 0.5;  // the ends stay at least this far apart (or the span locked, if less)

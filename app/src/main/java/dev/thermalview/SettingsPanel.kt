@@ -186,12 +186,13 @@ private fun MainPage(
     )
     // For the owner's pick (2026-09-26); the chosen ones become the defaults and this goes.
     Section("Compare, then tell Claude")
-    Choice("Rainbow", MainActivity.RAINBOW_NAMES, options.rainbowStyle.coerceIn(0, 2), note = "Its colors") {
-        onOptions(options.copy(rainbowStyle = it))
-    }
-    Choice("Auto contrast", MainActivity.CONTRAST_NAMES, options.contrast.coerceIn(0, 2), note = "How Auto spreads the colors") {
-        onOptions(options.copy(contrast = it))
-    }
+    val preset = MainActivity.RAINBOW_PRESETS.getOrElse(options.rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }
+    Choice(
+        "Rainbow preset",
+        MainActivity.RAINBOW_PRESETS.map { it.name },
+        options.rainbowPreset.coerceIn(0, MainActivity.RAINBOW_PRESETS.size - 1),
+        note = preset.note + if (options.palette != 2) " (switch the palette to Rainbow)" else "",
+    ) { onOptions(options.copy(rainbowPreset = it)) }
     Section("On screen")
     SwitchRow("Frame rate and lag", "On the left bar", showStats, onShowStats)
     Section("More")

@@ -21,6 +21,21 @@ double countsAt(const TemperatureLut& lut, double tempC) {
   return double(r - 1) + (b > a ? std::clamp((tempC - a) / (b - a), 0.0, 1.0) : 1.0);
 }
 
+bool linearMapping(const TemperatureLut& lut, double loC, double hiC, FixedMapping* out) {
+  if (!(hiC > loC)) return false;
+  constexpr int K = ToneMapper::kCurve;
+  const double lo = countsAt(lut, loC), hi = countsAt(lut, hiC);
+  if (!(hi - lo >= 1.0)) return false;
+  out->lo = float(lo);
+  out->hi = float(hi);
+  out->curve.resize(K + 1);
+  for (int e = 0; e <= K; ++e) {
+    const double t = celsiusAt(lut, lo + (hi - lo) * e / K);
+    out->curve[size_t(e)] = std::isfinite(t) ? float(std::clamp((t - loC) / (hiC - loC), 0.0, 1.0)) : float(e) / K;
+  }
+  return true;
+}
+
 bool RangeLock::lock(const ToneMapper& tone, const TemperatureLut& lut) {
   release();
   if (!tone.ready()) return false;

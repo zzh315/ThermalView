@@ -173,6 +173,11 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setRangeEnds(JNIEnv*, j
   session().setRangeEnds(double(loC), double(hiC));
 }
 
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setRoomScale(JNIEnv*, jobject, jboolean on, jfloat loC,
+                                                                      jfloat hiC) {
+  session().setRoomScale(bool(on), double(loC), double(hiC));
+}
+
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {
   return env->NewStringUTF(session().triggerLockout().c_str());
 }

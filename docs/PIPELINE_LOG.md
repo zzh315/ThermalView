@@ -27,11 +27,19 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - **Only scaling its chroma** (80%, 65%) washes it out to pastel.
 - **New option:** `"chroma": "lightness"` takes each stop's own lightness at `chromaScale` of the chroma sRGB allows there. Candidates keep rainbow_hc's hues (green, yellow, red) with a darker cold green for depth: `rainbow_deep` (90% chroma) and `rainbow_soft` (75%).
 
-**To look at it:** Settings › Compare on the tablet, live:
-- Rainbow: Vivid (rainbow_hc) / Deep / Soft.
-- Auto contrast: Normal (as before) / Balanced (the balance, cap 2) / Stronger (the balance, cap 3).
+**To look at it:** Settings › Compare on the tablet has one choice, Rainbow preset. The owner asked for presets to pick from, one of them using a normal room temperature as its baseline:
 
-**Verdict:** pending the owner's pick. The chosen ones become the defaults and the comparison goes.
+| Preset | Palette | Mapping |
+|---|---|---|
+| Vivid | rainbow_hc | Auto as before |
+| Deep | rainbow_deep | Auto with the balance |
+| Deep+ | rainbow_deep | Auto with the balance, cap 3 |
+| Soft | rainbow_soft | Auto with the balance |
+| Room | rainbow_deep | Fixed, linear in °C: 21 °C (a normal room) at the middle, 13 °C green, 29 °C red (`tv::linearMapping`); clips at the ends, no grey |
+
+The presets only change the rainbow: white hot keeps stage 5 as it is. Locking in Room holds its scale.
+
+**Verdict:** pending the owner's pick. The chosen one becomes the default and the comparison goes.
 
 ## 2026-09-26 — Quality first (owner): stage 1 without the crossfade; noise reduction High is BM3D
 
