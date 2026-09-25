@@ -29,6 +29,8 @@
 // grey), with pixels over range in the palette's saturation color. Writes a binary PPM. With
 // FILE.f32 in place of DUMP (one frame's intensity, as the app's GPU readback saves it) the pipeline
 // is skipped; --clip FILE.u8 gives its over-range mask and --mirror-x / --mirror-y its mirroring.
+// --rotate N turns the image N quarter turns clockwise in the view, as M6's orientation does (--size
+// is the view's: 3:4 for odd turns).
 //
 //   harness palette FILE.json --out FILE.ppm
 //
@@ -73,7 +75,8 @@ int usage() {
                "       harness bench [--bench DIR] [--out DIR] [--pipeline STAGES] [--box X,Y,W,H] [SCENE ...]\n"
                "       harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H]\n"
                "                      [--kernel K] [--clamp] [--palette FILE.json] [--box X,Y,W,H] --out FILE.ppm\n"
-               "       harness render FILE.f32 [--clip FILE.u8] [--mirror-x] [--mirror-y] --size WxH ... --out FILE.ppm\n"
+               "       harness render FILE.f32 [--clip FILE.u8] [--mirror-x] [--mirror-y] [--rotate N] --size WxH ...\n"
+               "                      --out FILE.ppm\n"
                "       harness palette FILE.json --out FILE.ppm\n"
                "       harness perf DUMP [--pipeline STAGES] [--drift PATH] [--passes N]\n");
   return 2;
@@ -306,7 +309,7 @@ int render(int argc, char** argv) {
   if (argc < 3) return usage();
   const std::string path = argv[2];
   std::string stages = "default", out, palettePath, kernelText = "bspline", clipPath, outsidePath;
-  int frameIndex = 0, w = 0, h = 0;
+  int frameIndex = 0, w = 0, h = 0, rot = 0;
   bool clamp = false, mirrorX = false, mirrorY = false;
   const bool fromIntensity = path.size() > 4 && path.compare(path.size() - 4, 4, ".f32") == 0;
   tv::ViewRect rect;
@@ -327,6 +330,7 @@ int render(int argc, char** argv) {
     else if (a == "--outside") outsidePath = next();  // a locked range's marks: 1 above, 2 below (the readback's)
     else if (a == "--mirror-x") mirrorX = true;
     else if (a == "--mirror-y") mirrorY = true;
+    else if (a == "--rotate") rot = ((std::atoi(next().c_str()) % 4) + 4) % 4;  // quarter turns clockwise (M6)
     else if (a == "--box") {
       int x, y, bw, bh;
       if (std::sscanf(next().c_str(), "%d,%d,%d,%d", &x, &y, &bw, &bh) != 4 || bw <= 0 || bh <= 0) return usage();
@@ -381,12 +385,15 @@ int render(int argc, char** argv) {
     const uint16_t clipRaw = tv::overRangeRaw(table);
     for (size_t i = 0; i < tv::kImagePixels; ++i) mask[i] = shown.image()[i] >= clipRaw ? 1.0f : 0.0f;
   }
-  std::vector<float> up(size_t(w) * size_t(h));
-  tv::upscale(tv::kernelInput(display.data(), kernel), display.data(), kernel, clamp, rect, w, h, up.data());
+  // The image as the camera sees it (uw x uh), then turned and mirrored into the view (w x h), as the
+  // vertex shader maps the view's corners: the turn first, the mirroring on the screen after.
+  const int uw = rot % 2 == 0 ? w : h, uh = rot % 2 == 0 ? h : w;
+  std::vector<float> up(size_t(uw) * size_t(uh));
+  tv::upscale(tv::kernelInput(display.data(), kernel), display.data(), kernel, clamp, rect, uw, uh, up.data());
   // Over-range pixels take the palette's saturation color where their bilinear mask passes 0.5, as
   // the GPU does with a filtered R8 mask.
   std::vector<float> maskUp(up.size());
-  tv::upscale(mask, mask.data(), tv::Kernel::Bilinear, false, rect, w, h, maskUp.data());
+  tv::upscale(mask, mask.data(), tv::Kernel::Bilinear, false, rect, uw, uh, maskUp.data());
   // A locked range's marks, filtered like the over-range mask (the GPU's RG8 texture).
   std::vector<float> aboveUp, belowUp;
   if (!outsidePath.empty() && spec.marksLocked && !lut.empty()) {
@@ -400,24 +407,10 @@ int render(int argc, char** argv) {
     }
     aboveUp.resize(up.size());
     belowUp.resize(up.size());
-    tv::upscale(above, above.data(), tv::Kernel::Bilinear, false, rect, w, h, aboveUp.data());
-    tv::upscale(below, below.data(), tv::Kernel::Bilinear, false, rect, w, h, belowUp.data());
+    tv::upscale(above, above.data(), tv::Kernel::Bilinear, false, rect, uw, uh, aboveUp.data());
+    tv::upscale(below, below.data(), tv::Kernel::Bilinear, false, rect, uw, uh, belowUp.data());
   }
-  if (mirrorX || mirrorY) {
-    std::vector<float> a = up, b = maskUp, c = aboveUp, d = belowUp;
-    for (int y = 0; y < h; ++y)
-      for (int x = 0; x < w; ++x) {
-        const size_t from = size_t(mirrorY ? h - 1 - y : y) * size_t(w) + size_t(mirrorX ? w - 1 - x : x);
-        const size_t to = size_t(y) * size_t(w) + size_t(x);
-        up[to] = a[from];
-        maskUp[to] = b[from];
-        if (!c.empty()) {
-          aboveUp[to] = c[from];
-          belowUp[to] = d[from];
-        }
-      }
-  }
-  std::vector<uint8_t> rgb(up.size() * 3);
+  std::vector<uint8_t> camRgb(up.size() * 3);
   for (size_t i = 0; i < up.size(); ++i) {
     const float v = std::clamp(up[i], 0.0f, 1.0f);
     float c[3];
@@ -433,16 +426,26 @@ int render(int argc, char** argv) {
       const auto& e = lut[size_t(std::lround(v * float(lut.size() - 1)))];
       for (size_t k = 0; k < 3; ++k) c[k] = float(e[k]) / 255.0f;
     }
-    // M6's box, as the shader dims it: by the camera coordinate of the (unmirrored) pixel's center.
+    // M6's box, as the shader dims it: by the camera coordinate of the pixel's center.
     if (haveBox) {
-      const int x = int(i % size_t(w)), y = int(i / size_t(w));
-      const float cx = rect.x + (float(mirrorX ? w - 1 - x : x) + 0.5f) * rect.w / float(w);
-      const float cy = rect.y + (float(mirrorY ? h - 1 - y : y) + 0.5f) * rect.h / float(h);
+      const int x = int(i % size_t(uw)), y = int(i / size_t(uw));
+      const float cx = rect.x + (float(x) + 0.5f) * rect.w / float(uw);
+      const float cy = rect.y + (float(y) + 0.5f) * rect.h / float(uh);
       if (cx < float(box.x0) || cx >= float(box.x1) || cy < float(box.y0) || cy >= float(box.y1))
         for (float& k : c) k *= dim;
     }
-    for (size_t k = 0; k < 3; ++k) rgb[3 * i + k] = uint8_t(std::lround(255.0f * std::clamp(c[k], 0.0f, 1.0f)));
+    for (size_t k = 0; k < 3; ++k) camRgb[3 * i + k] = uint8_t(std::lround(255.0f * std::clamp(c[k], 0.0f, 1.0f)));
   }
+  std::vector<uint8_t> rgb(camRgb.size());
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      const int sx = mirrorX ? w - 1 - x : x, sy = mirrorY ? h - 1 - y : y;  // the view before mirroring
+      int cx = sx, cy = sy;  // ...and the camera's pixel it shows (renderer.cpp's vertex shader)
+      if (rot == 1) { cx = sy; cy = w - 1 - sx; }
+      else if (rot == 2) { cx = w - 1 - sx; cy = h - 1 - sy; }
+      else if (rot == 3) { cx = h - 1 - sy; cy = sx; }
+      std::copy_n(&camRgb[3 * (size_t(cy) * size_t(uw) + size_t(cx))], 3, &rgb[3 * (size_t(y) * size_t(w) + size_t(x))]);
+    }
   if (!writePpm(out, w, h, rgb)) {
     std::fprintf(stderr, "harness: cannot write %s\n", out.c_str());
     return 1;

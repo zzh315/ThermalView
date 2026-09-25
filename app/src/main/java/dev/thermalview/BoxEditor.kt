@@ -74,7 +74,17 @@ enum class Grab(val left: Boolean, val top: Boolean, val right: Boolean, val bot
     Left(true, false, false, false), Right(false, false, true, false),
     Top(false, true, false, false), Bottom(false, false, false, true),
     TopLeft(true, true, false, false), TopRight(false, true, true, false),
-    BottomLeft(true, false, false, true), BottomRight(false, false, true, true),
+    BottomLeft(true, false, false, true), BottomRight(false, false, true, true);
+
+    /**
+     * A grab of the box's sides as the screen shows them, as the box's own sides with the image turned
+     * [rot] quarters clockwise: a quarter turn shows the camera's left side on top, its top on the right.
+     */
+    fun onCamera(rot: Int): Grab {
+        val screen = booleanArrayOf(left, top, right, bottom)  // (clockwise from the left)
+        val cam = BooleanArray(4) { screen[(it + rot) and 3] }
+        return entries.first { it.left == cam[0] && it.top == cam[1] && it.right == cam[2] && it.bottom == cam[3] }
+    }
 }
 
 /**
@@ -111,27 +121,27 @@ fun hitBox(p: Offset, l: Float, t: Float, r: Float, b: Float, reach: Float, view
 /**
  * The image's gestures: with the box on, a finger that lands on it edits it (until it lifts, or a
  * second finger turns the gesture into a zoom); anything else zooms and pans (as
- * detectTransformGestures: pinch around the fingers, drag to pan). Positions are view pixels.
+ * detectTransformGestures: pinch around the fingers, drag to pan). Positions are view pixels; [rot]:
+ * the image's quarter turns on the screen (the box is hit and dragged as the screen shows it).
  */
 suspend fun PointerInputScope.imageGestures(
     boxAt: () -> CamBox?,           // the box if it's on
     rect: () -> CamRect,            // the camera pixels shown
     viewW: Float,
     viewH: Float,
+    rot: Int,
     onBox: (CamBox) -> Unit,
     onTransform: (centroid: Offset, pan: Offset, zoom: Float) -> Unit,
 ) {
     val reach = 28.dp.toPx()
+    val view = ViewBox(0f, 0f, viewW, viewH)
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         val box = boxAt()
         val r = rect()
         val grab = box?.let {
-            val l = (it.x - r.x) / r.w * viewW
-            val t = (it.y - r.y) / r.h * viewH
-            val rr = (it.right - r.x) / r.w * viewW
-            val bb = (it.bottom - r.y) / r.h * viewH
-            hitBox(down.position, l, t, rr, bb, reach, viewW, viewH)
+            val s = r.toSurface(view, it.x.toFloat(), it.y.toFloat(), it.right.toFloat(), it.bottom.toFloat(), rot)
+            hitBox(down.position, s.left, s.top, s.right, s.bottom, reach, viewW, viewH)?.onCamera(rot)
         }
         if (box != null && grab != null) {
             var total = Offset.Zero
@@ -148,7 +158,8 @@ suspend fun PointerInputScope.imageGestures(
                 if (!dragging && total.getDistance() > viewConfiguration.touchSlop) dragging = true
                 if (dragging) {
                     change.consume()
-                    onBox(box.edited(grab, total.x / viewW * r.w, total.y / viewH * r.h))
+                    val (dx, dy) = r.cameraDelta(view, total.x, total.y, rot)
+                    onBox(box.edited(grab, dx, dy))
                 }
             }
         } else {

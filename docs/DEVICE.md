@@ -328,6 +328,20 @@ Commands: `adb shell input keyevent KEYCODE_HOME`, then `am start -n dev.thermal
 
 - **So:** the side bars avoid graphics layers (`SideBars.kt` `Tile`). A clip or alpha layer elsewhere should be checked through a background cycle.
 
+### Display rotation and the image's turn (M6, 2026-09-26)
+
+Command: `adb shell dumpsys window displays | grep -E "mCurrentRotation|mLandscapeRotation|mPortraitRotation"`.
+
+| Fact | Value |
+|---|---|
+| Natural orientation | Portrait: `mPortraitRotation=ROTATION_0`, `mLandscapeRotation=ROTATION_90`, `mSeascapeRotation=ROTATION_270`, `mUpsideDownRotation=ROTATION_180` |
+| The owner's landscape | `mCurrentRotation=ROTATION_90`, at 320 dpi (density 2). The image is upright there with no turn: the M1 orientation check above, and the owner's use since |
+| Portrait (the View menu's Portrait, tablet still on its stand) | `ROTATION_0`. The screen is 1600 × 2560; the camera keeps running through the change (the activity handles it, no restart) |
+| A menu open through a background cycle (its fade and scale are layers) | It came back open and fully drawn, and the tiles kept their backgrounds |
+
+- **So:** the camera is plugged straight into the tablet and turns with it, so the image turns back by as much as the screen turns: `(1 − rotation) mod 4` quarter turns clockwise (`MainActivity.imageTurns`). That keeps it fixed on the panel, like a window.
+- **Still to check:** that the image is upright with the tablet actually held in portrait and in the other landscape. That needs the owner to turn it, with Auto on.
+
 ### Recordings archived off the tablet (2026-09-26)
 
 The owner asked for what's no longer useful to be deleted. The tablet now keeps only the nine benchmark recordings, for on-device replay. The recordings this file cites as evidence (`dump_20260924_201315`, `_205023`, `_212923`), `dump_20260925_164754` (stage 3c's motion tests) and the M1–M2 stats CSVs are archived on the Mac in `bench/archive/tablet_2026-09-26/` (local, not in git). The drift series is in `bench/drift/`; the other bench sources are the scenes' `thermalview.raw`.

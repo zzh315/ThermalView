@@ -26,7 +26,8 @@ object NativeBridge {
     external fun setPipeline(stages: String): String
     external fun setDisplay(upscaler: Int, paletteJson: String): String  // "" or an error
     external fun requestReadback(prefix: String, palette: String)  // debug: M5's GPU-vs-CPU check
-    external fun setViewWidth(px: Int)  // the view's width in panel pixels; 0: the largest 4:3 fit
+    external fun setViewWidth(px: Int)  // the image's long side in panel pixels; 0: the largest fit
+    external fun setRotation(quarterTurns: Int)  // the image turned clockwise on the screen (M6's orientation)
     external fun setViewRect(x: Float, y: Float, w: Float, h: Float)  // zoom and pan: camera pixels shown
     external fun setBox(on: Boolean, x: Int, y: Int, w: Int, h: Int, dim: Float)  // M6's box, camera pixels; dim: outside it
 

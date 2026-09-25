@@ -83,8 +83,10 @@ class Session {
   // text; empty: gray). Returns an error, or "".
   std::string setDisplay(int upscaler, const std::string& paletteJson);
 
-  // The view's width in panel pixels (M6's view-size presets; 0: the largest 4:3 fit).
+  // The image's long side in panel pixels (M6's view-size presets; 0: the largest fit), and its turn
+  // on the screen, quarter turns clockwise (M6's orientation).
   void setViewWidth(int px) { renderer_.setViewWidth(px); }
+  void setRotation(int quarterTurns) { renderer_.setRotation(quarterTurns); }
 
   // Zoom and pan (PLAN M6): the visible part of the frame, camera pixels. The renderer draws it; the
   // tone mapping and the readouts measure it (the processing thread applies it with the next frame).

@@ -5,7 +5,7 @@ reference for the same frame.
 With the app showing a frame (a replay, or the camera), this asks it over adb to read back its next
 drawn frame (`--ez readback true`), pulls the readback (the drawn view as PPM, the intensity and
 over-range mask it came from, and how it was drawn), renders the same intensity with `harness
-render` at the same size, upscaler, palette and mirroring, and compares them per channel:
+render` at the same size, upscaler, palette, mirroring and turn, and compares them per channel:
 
     tools/py/.venv/bin/python tools/py/gpu_check.py [--adb ADB] [--tolerance 2]
 
@@ -72,6 +72,9 @@ def main():
         cmd.append("--mirror-x")
     if info["mirror_y"]:
         cmd.append("--mirror-y")
+    rot = int(info.get("rot", 0))
+    if rot:  # M6's orientation: the image turned in the view
+        cmd += ["--rotate", str(rot)]
     subprocess.run(["cmake", "--build", ROOT / "build" / "harness"], check=True, stdout=subprocess.DEVNULL)
     subprocess.run(cmd, check=True)
     gpu = np.asarray(Image.open(OUT / "readback.ppm").convert("RGB")).astype(int)
@@ -96,17 +99,19 @@ def main():
         edge[:, :-1] |= h
         edge[1:, :] |= v
         edge[:-1, :] |= v
+    # Each view pixel's camera pixel: unmirrored, then turned back (renderer.cpp's vertex shader).
     rx, ry, rw, rh = info.get("rect", [0, 0, 256, 192])
     height, width = diff.shape[:2]
-    xs = np.arange(width)
-    ys = np.arange(height)
+    ys, xs = np.mgrid[0:height, 0:width]
     if info["mirror_x"]:
-        xs = xs[::-1]
+        xs = width - 1 - xs
     if info["mirror_y"]:
-        ys = ys[::-1]
-    cx = np.clip((rx + (xs + 0.5) * rw / width).astype(int), 0, 255)
-    cy = np.clip((ry + (ys + 0.5) * rh / height).astype(int), 0, 191)
-    at_edge = edge[cy[:, None], cx[None, :]]
+        ys = height - 1 - ys
+    s, t = (xs + 0.5) / width, (ys + 0.5) / height
+    a, b = {0: (s, t), 1: (t, 1 - s), 2: (1 - s, 1 - t), 3: (1 - t, s)}[rot]
+    cx = np.clip((rx + a * rw).astype(int), 0, 255)
+    cy = np.clip((ry + b * rh).astype(int), 0, 191)
+    at_edge = edge[cy, cx]
     bad = diff.max(axis=2) > args.tolerance
     flips = int((bad & at_edge).sum())
     if flips:

@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -18,12 +19,17 @@ int64_t nowNs() {
   return int64_t(t.tv_sec) * 1'000'000'000 + t.tv_nsec;
 }
 
+// vUV: the camera's UV at each corner of the view. uRot turns the image clockwise by quarter turns on
+// the screen (the camera turns with the tablet: M6's orientation), so a screen UV (s, t) samples the
+// camera at the turned-back UV.
 constexpr const char* kVertexShader = R"(#version 300 es
 uniform vec2 uMirror;
+uniform int uRot;
 out vec2 vUV;
 void main() {
   vec2 pos = vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0, (gl_VertexID & 2) == 0 ? -1.0 : 1.0);
-  vUV = vec2(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);  // image row 0 at the top
+  vec2 s = vec2(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);  // the screen's UV, row 0 at the top
+  vUV = uRot == 1 ? vec2(s.y, 1.0 - s.x) : uRot == 2 ? vec2(1.0 - s.x, 1.0 - s.y) : uRot == 3 ? vec2(1.0 - s.y, s.x) : s;
   gl_Position = vec4(pos * uMirror, 0.0, 1.0);
 }
 )";
@@ -252,10 +258,10 @@ void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix
   std::snprintf(json, sizeof json,
                 "{\"width\": %d, \"height\": %d, \"upscaler\": \"%s\", \"palette\": \"%s\", \"mirror_x\": %s, "
                 "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f], \"box\": [%.0f, %.0f, %.0f, %.0f], \"dim\": %.3f, "
-                "\"locked\": %s}\n",
+                "\"locked\": %s, \"rot\": %d}\n",
                 w, h, upscaler == 1 ? "bspline" : "nearest", palette.c_str(), mirrorX_.load() < 0 ? "true" : "false",
                 mirrorY_.load() < 0 ? "true" : "false", rect[0], rect[1], rect[2], rect[3], box[0], box[1], box[2],
-                box[3], dim, markLocked ? "true" : "false");
+                box[3], dim, markLocked ? "true" : "false", rotation_.load());
   std::ofstream(prefix + ".json", std::ios::trunc) << json;
   LOGI("renderer: readback saved to %s (%dx%d)", prefix.c_str(), w, h);
 }
@@ -425,6 +431,7 @@ bool Renderer::initGl() {
     return false;
   }
   uMirror_ = glGetUniformLocation(program_, "uMirror");
+  uRot_ = glGetUniformLocation(program_, "uRot");
   uMode_ = glGetUniformLocation(program_, "uMode");
   uPalette_ = glGetUniformLocation(program_, "uPalette");
   glUseProgram(program_);
@@ -486,13 +493,17 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glClear(GL_COLOR_BUFFER_BIT);
   if (!haveFrame || !program_) return;
 
-  // Letterbox the 4:3 image into the surface.
+  // Letterbox the 4:3 image into the surface (3:4 when it's turned a quarter). A view-size preset gives
+  // the image's long side.
+  const int rot = rotation_.load();
+  const bool upright = rot % 2 == 0;
+  const int aw = upright ? 4 : 3, ah = upright ? 3 : 4;
   int vw = w, vh = h;
-  if (int64_t(w) * 3 > int64_t(h) * 4) vw = h * 4 / 3; else vh = w * 3 / 4;
+  if (int64_t(w) * ah > int64_t(h) * aw) vw = h * aw / ah; else vh = w * ah / aw;
   const int want = viewWidthPx_.load();
-  if (want > 0 && want < vw) {  // a smaller preset, centered
-    vw = want;
-    vh = want * 3 / 4;
+  if (want > 0 && want < std::max(vw, vh)) {  // a smaller preset, centered
+    vw = upright ? want : want * 3 / 4;
+    vh = upright ? want * 3 / 4 : want;
   }
   viewX_ = (w - vw) / 2;
   viewY_ = (h - vh) / 2;
@@ -564,6 +575,7 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glUniform4f(uBox_, box[0], box[1], box[2], box[3]);  // (the fallback shader has neither: -1, ignored)
   glUniform1f(uDim_, dim);
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
+  glUniform1i(uRot_, rot);
   glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
   glUniform1i(uPalette_, palette ? 1 : 0);
   glUniform1i(uLocked_, markLocked ? 1 : 0);

@@ -66,9 +66,13 @@ class Renderer {
   // brightness. x1 <= x0: no box.
   void setBox(float x0, float y0, float x1, float y1, float dim = 0.5f);
 
-  // The view's width in panel pixels (4:3; M6's view-size presets, a debug setting until then); 0 or
-  // anything larger than the screen allows: the largest 4:3 fit.
+  // The view's size in panel pixels: the image's long side (M6's view-size presets); 0 or anything
+  // larger than the screen allows: the largest fit.
   void setViewWidth(int px) { viewWidthPx_ = px; }
+
+  // The image turned clockwise by quarter turns on the screen (M6's orientation: the camera turns with
+  // the tablet, so the app turns the image back); odd turns make the view 3:4.
+  void setRotation(int quarterTurns) { rotation_ = ((quarterTurns % 4) + 4) % 4; }
 
   // Debug (M5's GPU-vs-CPU check): after the next frame drawn, save what the GPU drew in the view
   // (<prefix>.ppm), the intensity and over-range mask it drew from (<prefix>.f32, <prefix>_clip.u8)
@@ -109,7 +113,8 @@ class Renderer {
   ANativeWindow* window_ = nullptr;
   GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, clipTexture_ = 0, outsideTexture_ = 0, vao_ = 0;
   GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1, uSaturation_ = -1, uRect_ = -1, uBox_ = -1, uDim_ = -1;
-  GLint uLocked_ = -1, uAbove_ = -1, uBelow_ = -1;
+  GLint uLocked_ = -1, uAbove_ = -1, uBelow_ = -1, uRot_ = -1;
+  std::atomic<int> rotation_{0};
   bool marksLocked_ = false;                         // under displayMutex_
   std::array<float, 3> above_{}, below_{};           // under displayMutex_
   std::array<float, 4> rect_{0.0f, 0.0f, float(kFrameWidth), float(kImageRows)};  // under displayMutex_

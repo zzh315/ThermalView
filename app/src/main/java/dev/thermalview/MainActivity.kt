@@ -2,9 +2,11 @@ package dev.thermalview
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.util.Log
+import android.view.Surface
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +43,7 @@ data class DebugOptions(
     val viewSize: Int = 2,                  // M6 presets, debug until then: 0 Phone, 1 Small tablet, 2 Full
     val boxDim: Float = 0.5f,               // M6: the brightness outside the box (start at 50%; tunable)
     val rainbowPreset: Int = 0,             // the rainbow's look: 0 Deep, 1 Soft (RAINBOW_PRESETS; kept)
+    val orientation: Int = 1,               // M6: how the screen turns, ORIENTATION_NAMES (0 Auto, 1 Landscape, 2 Portrait; kept)
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -126,9 +129,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * PLAN M6's persistence: the palette, the view size and the noise and texture settings are kept
-     * across launches (a custom setting from the debug pages isn't: the next launch starts from its
-     * preset). Everything else starts from the defaults.
+     * PLAN M6's persistence: the palette, the view size and orientation and the noise and texture
+     * settings are kept across launches (a custom setting from the debug pages isn't: the next launch
+     * starts from its preset). Everything else starts from the defaults.
      */
     private fun restored(o: DebugOptions): DebugOptions {
         if (prefs.getInt("defaults", 1) < 3) {  // (2026-09-26: Noise and Texture Low by default, the owner)
@@ -138,6 +141,7 @@ class MainActivity : ComponentActivity() {
             palette = prefs.getInt("palette", o.palette).coerceIn(1, PALETTES.size),
             viewSize = prefs.getInt("viewSize", o.viewSize).coerceIn(0, VIEW_WIDTHS.size - 1),
             rainbowPreset = prefs.getInt("rainbow", o.rainbowPreset).coerceIn(0, RAINBOW_PRESETS.size - 1),
+            orientation = prefs.getInt("orientation", o.orientation).coerceIn(0, ORIENTATIONS.size - 1),
         )
         prefs.getInt("nrLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withNrLevel(r, it) }
         prefs.getInt("textureLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withTextureLevel(r, it) }
@@ -149,6 +153,7 @@ class MainActivity : ComponentActivity() {
             if (o.palette in 1..PALETTES.size) putInt("palette", o.palette)
             putInt("viewSize", o.viewSize)
             putInt("rainbow", o.rainbowPreset)
+            putInt("orientation", o.orientation)
             nrLevelOf(o)?.let { putInt("nrLevel", it) }
             textureLevelOf(o)?.let { putInt("textureLevel", it) }
         }.apply()
@@ -165,13 +170,15 @@ class MainActivity : ComponentActivity() {
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
         NativeBridge.setDisplay(value.upscaler, paletteJson(value.palette)).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
         NativeBridge.setViewWidth(VIEW_WIDTHS.getOrElse(value.viewSize) { 0 })
+        val turn = ORIENTATIONS.getOrElse(value.orientation) { ORIENTATIONS[1] }
+        if (requestedOrientation != turn) requestedOrientation = turn
     }
 
     /**
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
+     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, orientation, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0"); zoom, zoomX, zoomY (floats: the zoom and the camera point at
      * the view's center); message (a test banner, "" to clear).
@@ -199,6 +206,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("upscaler")) o = o.copy(upscaler = extras.getInt("upscaler"))
         if (extras.containsKey("palette")) o = o.copy(palette = extras.getInt("palette"))
         if (extras.containsKey("viewSize")) o = o.copy(viewSize = extras.getInt("viewSize"))
+        if (extras.containsKey("orientation")) o = o.copy(orientation = extras.getInt("orientation").coerceIn(0, ORIENTATIONS.size - 1))
         if (extras.containsKey("textureStrength")) o = o.copy(textureStrength = extras.getFloat("textureStrength"))
         if (extras.containsKey("nr")) o = o.copy(nr = extras.getBoolean("nr"))
         if (extras.containsKey("nrStrength")) o = o.copy(nrStrength = extras.getFloat("nrStrength"))
@@ -314,7 +322,27 @@ class MainActivity : ComponentActivity() {
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val BOX_DIMS = listOf(0.3f, 0.5f, 0.7f)  // the box's outside, debug choices
-        val VIEW_WIDTHS = listOf(880, 1467, 0)
-        val VIEW_NAMES = listOf("Phone", "Tablet", "Full")  // 4.5", 7.5" and 10.9" diagonals
+        val VIEW_WIDTHS = listOf(880, 1467, 0)  // (the image's long side, whichever way it's turned)
+        val VIEW_NAMES = listOf("Phone", "Tablet", "Full")
+        val VIEW_DIAGONALS = listOf("4.5″", "7.5″", "10.9″")
+        // M6's orientation (owner, 2026-09-26: "there should be auto orientation that changes with
+        // device orientation as well"): Auto turns the screen all four ways with the tablet (whatever
+        // the system's rotation lock); Landscape and Portrait either way up.
+        val ORIENTATION_NAMES = listOf("Auto", "Landscape", "Portrait")
+        val ORIENTATION_NOTES = listOf(
+            "The screen turns with the tablet, all four ways.",
+            "Landscape, either way up.",
+            "Portrait, either way up.",
+        )
+        val ORIENTATIONS = listOf(
+            ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR,
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT,
+        )
+        // The camera is fixed to the tablet and turns with it; the image is upright at this display
+        // rotation (DEVICE.md, the M1 orientation check), and at any other it's turned back by the
+        // difference: (UPRIGHT_ROTATION - rotation) quarter turns clockwise.
+        const val UPRIGHT_ROTATION = Surface.ROTATION_90
+        fun imageTurns(displayRotation: Int) = (UPRIGHT_ROTATION - displayRotation + 4) % 4
     }
 }

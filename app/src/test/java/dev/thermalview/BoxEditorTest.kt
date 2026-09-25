@@ -55,6 +55,18 @@ class BoxEditorTest {
         assertNull(hit(5f, 375f, l = -200f, t = -100f, r = 1300f, b = 900f))  // its edges are off screen
     }
 
+    @Test fun aTurnedImageGrabsTheSideTheScreenShows() {
+        // A quarter turn clockwise: the camera's left side is on top, its bottom on the left.
+        assertEquals(Grab.Left, Grab.Top.onCamera(1))
+        assertEquals(Grab.Bottom, Grab.Left.onCamera(1))
+        assertEquals(Grab.BottomRight, Grab.BottomLeft.onCamera(1))
+        // A half turn swaps opposite sides; three quarters: the camera's top on the left.
+        assertEquals(Grab.TopRight, Grab.BottomLeft.onCamera(2))
+        assertEquals(Grab.Top, Grab.Left.onCamera(3))
+        for (rot in 0..3) assertEquals(Grab.Move, Grab.Move.onCamera(rot))
+        for (g in Grab.entries) assertEquals(g, g.onCamera(0))
+    }
+
     @Test fun onlyTheEdgesOnScreenCanBeGrabbed() {
         // Left edge on screen at x = 300, the others off it: the left edge, or a move from inside.
         assertEquals(Grab.Left, hit(310f, 375f, l = 300f, t = -100f, r = 1300f, b = 900f))

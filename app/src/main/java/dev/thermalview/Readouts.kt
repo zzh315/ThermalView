@@ -78,12 +78,13 @@ private class Marker(val at: Offset, val arm: Float, val gap: Float, val color: 
 /**
  * What's drawn over the image (PLAN M5/M6): crosshairs at the hottest (red) and coldest (blue)
  * points and at the center (white), each with its temperature, and the banner. Marker positions
- * follow the renderer's 4:3 view (renderer.cpp draw(); [viewBox]) and the zoom ([rect]: the camera
- * pixels shown). Nothing leaves the view: the crosshairs are clipped to it, and each label takes the
- * first place around its marker that stays inside and clear of the other markers, the labels placed
- * before it and the banner, keeping its last place while that still works so labels don't hop. The
- * banner sits at the top or the bottom of the image, whichever is clear of the markers (the middle
- * when there's no image). [covered]: a part of the image under a panel, which labels keep out of.
+ * follow the renderer's view (renderer.cpp draw(); [viewBox]), the zoom ([rect]: the camera pixels
+ * shown) and the image's turn on the screen ([rot]). Nothing leaves the view: the crosshairs are
+ * clipped to it, and each label takes the first place around its marker that stays inside and clear
+ * of the other markers, the labels placed before it and the banner, keeping its last place while that
+ * still works so labels don't hop. The banner sits at the top or the bottom of the image, whichever is
+ * clear of the markers (the middle when there's no image). [covered]: a part of the image under a
+ * panel, which labels keep out of.
  */
 @Composable
 fun ImageOverlay(
@@ -94,6 +95,7 @@ fun ImageOverlay(
     live: Boolean,
     covered: Rect? = null,
     camBox: CamBox? = null,
+    rot: Int = 0,
 ) {
     val measurer = rememberTextMeasurer()
     val last = remember { IntArray(4) { -1 } }  // the place each label (and the banner) took last time
@@ -101,7 +103,7 @@ fun ImageOverlay(
     Canvas(Modifier.fillMaxSize()) {
         val view = Rect(box.x, box.y, box.x + box.w, box.y + box.h)
         val inner = view.deflate(6.dp.toPx())
-        val px = box.w / rect.w  // one camera pixel on screen
+        val px = rect.pixelSize(box, rot)  // one camera pixel on screen
 
         val markers = ArrayList<Marker?>(3)
         if (readings != null) {
@@ -114,7 +116,7 @@ fun ImageOverlay(
                 val y0 = max(s.y, rect.y)
                 val y1 = min(s.y + 1f, rect.y + rect.h)
                 if (x1 <= x0 || y1 <= y0) return null
-                val (x, y) = rect.toSurface(box, (x0 + x1) / 2 - 0.5f, (y0 + y1) / 2 - 0.5f)
+                val (x, y) = rect.toSurface(box, (x0 + x1) / 2, (y0 + y1) / 2, rot)
                 // The gap keeps the marked pixel itself visible, however far zoomed in.
                 val gap = max(3.dp.toPx(), 0.6f * px)
                 val text = measurer.measure(readings.text(s), labelStyle.copy(color = textColor))
@@ -173,12 +175,14 @@ fun ImageOverlay(
             // (a few dp of clamping are tolerated before a label hops from where it was)
             val (best, bestRect) = placeLabel(candidates, size, inner, obstacles, last[k], stickiness = 2.dp.toPx())
             last[k] = best
+            // (with no room clear of the panel, a label it would mostly hide isn't drawn)
+            if (covered != null && overlap(bestRect, covered) > 0.4f * bestRect.width * bestRect.height) return@mapIndexed null
             placed += bestRect
             bestRect
         }
 
         clipRect(view.left, view.top, view.right, view.bottom) {
-            if (camBox != null) measuringBox(camBox, rect, box)
+            if (camBox != null) measuringBox(camBox, rect, box, rot)
             for (m in markers) if (m != null) crosshair(m.at, m.arm, m.gap, m.color)
         }
         markers.forEachIndexed { k, m ->
@@ -268,11 +272,9 @@ internal fun overlap(a: Rect, b: Rect): Float {
 }
 
 /** The box's outline and its eight handles (the image outside is dimmed by the renderer). */
-private fun DrawScope.measuringBox(b: CamBox, rect: CamRect, box: ViewBox) {
-    val l = box.x + (b.x - rect.x) / rect.w * box.w
-    val t = box.y + (b.y - rect.y) / rect.h * box.h
-    val r = box.x + (b.right - rect.x) / rect.w * box.w
-    val bt = box.y + (b.bottom - rect.y) / rect.h * box.h
+private fun DrawScope.measuringBox(b: CamBox, rect: CamRect, box: ViewBox, rot: Int) {
+    val s = rect.toSurface(box, b.x.toFloat(), b.y.toFloat(), b.right.toFloat(), b.bottom.toFloat(), rot)
+    val (l, t, r, bt) = listOf(s.left, s.top, s.right, s.bottom)
     val size = Size(r - l, bt - t)
     drawRect(Color(0xB0000000), Offset(l, t), size, style = androidx.compose.ui.graphics.drawscope.Stroke(3.5.dp.toPx()))
     drawRect(Color.White, Offset(l, t), size, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))

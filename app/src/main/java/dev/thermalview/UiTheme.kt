@@ -10,6 +10,8 @@ internal object Ui {
     val TileBusy = Color(0xFF4A2A12)       // a capture in progress
     val TileAlert = Color(0xFF55161F)      // the replay badge
     val Panel = Color(0xF5141920)
+    val Menu = Color(0xFA161B22)           // the bars' menus (Popups.kt)
+    val MenuCard = Color(0xFF212833)       // a choice in them
     val Text = Color(0xFFF1F3F6)
     val Subtle = Color(0xFF9AA4B2)
     val Faint = Color(0x33FFFFFF)

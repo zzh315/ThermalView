@@ -4,97 +4,142 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.rememberTextMeasurer
-import kotlin.math.roundToInt
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 // The side bars (owner, 2026-09-26: "there are empty black spaces on both side of the screen, utilise
 // them for quick action menus and items that I can toggle and activate"): the controls live in the
-// margins beside the 4:3 image, so nothing covers it. Each bar's column hugs the screen's outer edge,
-// so the buttons stay under the thumbs and don't move when the view size changes.
+// margins beside the image, so nothing covers it. Each bar's column hugs the screen's outer edge, so
+// the buttons stay under the thumbs and don't move when the view size changes. In portrait (M6's
+// orientation) the margins are above and below the image, and the bars become rows there.
 
 /** The widest a bar's column gets (the bars themselves are ~107 dp at Full, wider at smaller views). */
 internal val BarMaxWidth: Dp = 150.dp
 
-/** True in a narrow bar (Full view): values get a smaller size so they fit. */
+/** The tallest a bar's row gets (portrait: the rows above and below the image, ~107 dp at Full). */
+internal val BarMaxHeight: Dp = 96.dp
+
+/** True in a narrow bar (Full view) or a row: values get a smaller size so they fit. */
 internal val LocalCompact = compositionLocalOf { false }
 
-/** A bar's column: at most [BarMaxWidth] wide, with compact text when it's narrow. */
+/** True in portrait: the bars are rows above and below the image. */
+internal val LocalPortrait = compositionLocalOf { false }
+
+/** The bars as the owner sees them, for text that points at them. */
 @Composable
-private fun BarColumn(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
-    BoxWithConstraints(modifier) {
-        CompositionLocalProvider(LocalCompact provides (maxWidth < 120.dp)) {
-            Column(Modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+internal fun leftBarName() = if (LocalPortrait.current) "top row" else "left bar"
+
+@Composable
+internal fun rightBarName() = if (LocalPortrait.current) "bottom row" else "right bar"
+
+/**
+ * What a bar's content lays itself out with: in a column (landscape: the bars beside the image), each
+ * item takes the bar's width; in a row (portrait: above and below it), its own width and the row's
+ * height.
+ */
+internal class BarScope(val horizontal: Boolean, private val row: RowScope?, private val column: ColumnScope?) {
+    /** An item: the column's width, or [rowWidth] wide and the row's height. */
+    fun Modifier.item(rowWidth: Dp): Modifier = if (horizontal) width(rowWidth).fillMaxHeight() else fillMaxWidth()
+
+    /** A tile inside an item's Box (a tile with a menu): it fills the item. */
+    val inBox: Modifier get() = if (horizontal) Modifier.fillMaxHeight() else Modifier
+
+    /** The rest of the bar's length. */
+    fun Modifier.rest(): Modifier = if (row != null) with(row) { this@rest.weight(1f) } else with(column!!) { this@rest.weight(1f) }
+
+    /** Where a tile's menu opens: toward the image. */
+    fun menuSide(leftBar: Boolean) = when {
+        horizontal -> if (leftBar) PopupSide.Below else PopupSide.Above
+        else -> if (leftBar) PopupSide.Right else PopupSide.Left
+    }
+}
+
+/** A bar: a column at most [BarMaxWidth] wide, or a row at most [BarMaxHeight] tall. */
+@Composable
+private fun Bar(modifier: Modifier, horizontal: Boolean, content: @Composable BarScope.() -> Unit) {
+    if (horizontal) {
+        CompositionLocalProvider(LocalCompact provides true) {
+            Row(
+                modifier.fillMaxWidth().heightIn(max = BarMaxHeight).fillMaxHeight(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+            ) { BarScope(true, this, null).content() }
+        }
+    } else {
+        BoxWithConstraints(modifier.fillMaxHeight().widthIn(max = BarMaxWidth)) {
+            CompositionLocalProvider(LocalCompact provides (maxWidth < 120.dp)) {
+                Column(Modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BarScope(false, null, this).content()
+                }
+            }
         }
     }
 }
 
 /**
- * The left bar: how the image looks. The palette (a tap opens its picker), the view size (a tap for
- * the next) and the box; the frame rate (debug), and while zoomed in, a way back to 1x. Noise and
+ * The left bar (the top row in portrait): how the image looks. The palette and the view (each tap opens
+ * its menu) and the box; the frame rate (debug), and while zoomed in, a way back to 1x. Noise and
  * texture are in Settings (owner, 2026-09-26).
  */
 @Composable
 fun LeftBar(
     modifier: Modifier,
+    horizontal: Boolean,
     options: DebugOptions,
     onOptions: (DebugOptions) -> Unit,
     paletteColors: (palette: Int, rainbowPreset: Int) -> List<Color>,
@@ -106,13 +151,15 @@ fun LeftBar(
     replay: String,
     onStopReplay: () -> Unit,
 ) {
-    BarColumn(modifier.fillMaxHeight().padding(start = 8.dp, end = 6.dp, top = 8.dp, bottom = 8.dp).widthIn(max = BarMaxWidth)) {
+    val pad = if (horizontal) Modifier.padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)
+    else Modifier.padding(start = 8.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
+    Bar(modifier.then(pad), horizontal) {
         stats?.invoke()
         // The palette: a tap opens the picker (owner, 2026-09-26: "a selection window to select color
         // palette and the colors if rainbow is picked").
         var picking by remember { mutableStateOf(false) }
-        Box {
-            Tile(onClick = { picking = true }, color = if (picking) Ui.TileActive else Ui.Tile) {
+        Box(Modifier.item(150.dp)) {
+            Tile(inBox, onClick = { picking = true }, color = if (picking) Ui.TileActive else Ui.Tile) {
                 Caption("Palette")
                 Value(PALETTE_NAMES.getOrElse(options.palette) { "?" })
                 Spacer(Modifier.height(5.dp))
@@ -122,35 +169,43 @@ fun LeftBar(
                     Note(MainActivity.RAINBOW_PRESETS.getOrElse(options.rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }.name)
                 }
             }
-            DropdownMenu(expanded = picking, onDismissRequest = { picking = false }, offset = DpOffset(8.dp, 0.dp)) {
+            SidePopup(picking, { picking = false }, menuSide(leftBar = true), width = 300.dp) {
                 PalettePicker(options, onOptions, paletteColors) { picking = false }
             }
         }
-        Tile(onClick = { onOptions(options.copy(viewSize = (options.viewSize + 1) % MainActivity.VIEW_WIDTHS.size)) }) {
-            Caption("View")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Value(MainActivity.VIEW_NAMES.getOrElse(options.viewSize) { "?" }, Modifier.weight(1f))
-                ViewGlyph(options.viewSize)
+        // The view: its size and how the screen turns (owner, 2026-09-26).
+        var viewing by remember { mutableStateOf(false) }
+        Box(Modifier.item(128.dp)) {
+            Tile(inBox, onClick = { viewing = true }, color = if (viewing) Ui.TileActive else Ui.Tile) {
+                Caption("View")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Value(MainActivity.VIEW_NAMES.getOrElse(options.viewSize) { "?" }, Modifier.weight(1f))
+                    ViewGlyph(options.viewSize)
+                }
+                Note(MainActivity.ORIENTATION_NAMES.getOrElse(options.orientation) { "" })
+            }
+            SidePopup(viewing, { viewing = false }, menuSide(leftBar = true), width = 360.dp) {
+                ViewMenu(options, onOptions) { viewing = false }
             }
         }
         // The box (PLAN M6): the readouts and the colors come from inside it; drag it, its edges or corners.
-        Tile(onClick = { onBox(!boxOn) }, color = if (boxOn) Ui.TileActive else Ui.Tile) {
+        Tile(Modifier.item(108.dp), onClick = { onBox(!boxOn) }, color = if (boxOn) Ui.TileActive else Ui.Tile) {
             Caption("Box")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Value(if (boxOn) "On" else "Off", Modifier.weight(1f))
                 BoxGlyph(boxOn)
             }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.rest())
         if (zoom > 1.01f) {
-            Tile(onClick = onResetZoom, color = Ui.TileActive) {
+            Tile(Modifier.item(96.dp), onClick = onResetZoom, color = Ui.TileActive) {
                 Caption("Zoom")
                 Value("%.1f×".format(zoom))
                 Note("tap for 1×")
             }
         }
         if (replay.isNotEmpty()) {  // (a replay runs: the way back to the camera)
-            Tile(onClick = onStopReplay, color = Ui.TileAlert) {
+            Tile(Modifier.item(150.dp), onClick = onStopReplay, color = Ui.TileAlert) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Caption("Replay", Color(0xFFFFB4B4), Modifier.weight(1f))
                     Text("✕", color = Color(0xFFFFB4B4), fontSize = 13.sp)
@@ -175,12 +230,14 @@ fun StatsLines(status: Status, recentDrops: Long) {
 }
 
 /**
- * The right bar: measuring and acting. The three readouts, the range (Auto, or locked: M6) and the
- * scale bar with the temperatures at its ends, Recalibrate, Capture (debug) and Settings.
+ * The right bar (the bottom row in portrait): measuring and acting. The three readouts, the range
+ * (Auto, or locked: M6) and the scale bar with the temperatures at its ends, Recalibrate, Capture
+ * (debug) and Settings.
  */
 @Composable
 fun RightBar(
     modifier: Modifier,
+    horizontal: Boolean,
     readings: Readings?,
     palette: IntArray,      // the palette's colors, cold to hot (the scale bar)
     marksLocked: Boolean,   // the palette marks pixels beyond a locked range (the rainbow's grey)
@@ -189,24 +246,26 @@ fun RightBar(
     panelOpen: Boolean,
     onPanel: () -> Unit,
 ) {
-    BarColumn(modifier.fillMaxHeight().padding(start = 6.dp, end = 8.dp, top = 8.dp, bottom = 8.dp).widthIn(max = BarMaxWidth)) {
-        Tile {
+    val pad = if (horizontal) Modifier.padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 8.dp)
+    else Modifier.padding(start = 6.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)
+    Bar(modifier.then(pad), horizontal) {
+        Tile(Modifier.item(112.dp)) {
             ReadoutRow(Ui.Hot, Ui.HotText, readings?.let { it.text(it.high, unit = false) })
             ReadoutRow(Ui.Center, Color.White, readings?.let { it.text(it.center, unit = false) })
             ReadoutRow(Ui.Cold, Ui.ColdText, readings?.let { it.text(it.low, unit = false) })
         }
         val locked = readings?.locked == true
-        Tile(onClick = { NativeBridge.setRangeLock(!locked) }, enabled = live, color = if (locked) Ui.TileActive else Ui.Tile) {
+        Tile(Modifier.item(104.dp), onClick = { NativeBridge.setRangeLock(!locked) }, enabled = live, color = if (locked) Ui.TileActive else Ui.Tile) {
             Caption("Range")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Value(if (locked) "Locked" else "Auto", Modifier.weight(1f))
                 LockGlyph(locked)
             }
         }
-        ScaleBar(readings, palette, marksLocked, Modifier.weight(1f))
-        CalibrateTile(live)
-        if (BuildConfig.DEBUG) CaptureTile(status, live)
-        Tile(onClick = onPanel, color = if (panelOpen) Ui.TileActive else Ui.Tile) {
+        ScaleBar(readings, palette, marksLocked, Modifier.rest().then(if (horizontal) Modifier.fillMaxHeight() else Modifier.fillMaxWidth()), horizontal)
+        CalibrateTile(Modifier.item(104.dp), live)
+        if (BuildConfig.DEBUG) CaptureTile(this, status, live)
+        Tile(Modifier.item(92.dp), onClick = onPanel, color = if (panelOpen) Ui.TileActive else Ui.Tile) {
             Value(if (panelOpen) "Close" else "Settings")
         }
     }
@@ -220,7 +279,23 @@ private fun ReadoutRow(marker: Color, textColor: Color, text: String?) {
             crosshair(c, size.width / 2 - 1.dp.toPx(), 2.dp.toPx(), marker, width = 1.6.dp.toPx())
         }
         Spacer(Modifier.width(8.dp))
-        Text(text ?: "--", color = textColor, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, style = Tabular, maxLines = 1)
+        Text(
+            text ?: "--", color = textColor, fontSize = if (LocalCompact.current) 16.sp else 18.sp, fontWeight = FontWeight.SemiBold,
+            style = Tabular, maxLines = 1,
+        )
+    }
+}
+
+/** The scale bar's temperature axis along the bar: hot at the top (a column) or on the right (a row). */
+private class ScaleAxis(val start: Float, val length: Float, val horizontal: Boolean, val lo: Float, val hi: Float) {
+    fun pos(t: Float): Float {
+        val f = (t - lo) / (hi - lo)
+        return start + (if (horizontal) f else 1f - f) * length
+    }
+
+    fun temp(p: Float): Float {
+        val f = (p - start) / length
+        return lo + (if (horizontal) f else 1f - f) * (hi - lo)
     }
 }
 
@@ -231,9 +306,10 @@ private fun ReadoutRow(marker: Color, textColor: Color, text: String?) {
  * them, what the image shows there (the rainbow's grey marks when locked, else the palette's ends).
  * Dragging a handle moves that end alone, locking the range first if it was Auto; the axis holds
  * still while a finger is down. Ticks mark the high, center and low readouts at their temperatures.
+ * Upright in a column (hot at the top), across in a row (hot on the right).
  */
 @Composable
-private fun ScaleBar(readings: Readings?, palette: IntArray, marksLocked: Boolean, modifier: Modifier) {
+private fun ScaleBar(readings: Readings?, palette: IntArray, marksLocked: Boolean, modifier: Modifier, horizontal: Boolean) {
     val locked = readings?.locked == true
     val measurer = rememberTextMeasurer()
     // While dragging, and after it until the native side shows the same ends (at most 3 s), the ends
@@ -265,26 +341,30 @@ private fun ScaleBar(readings: Readings?, palette: IntArray, marksLocked: Boolea
         (a0 - pad) to (a1 + pad)
     }
     val current by rememberUpdatedState(Triple(lo, hi, axis))
+    val lockedNow by rememberUpdatedState(locked)  // (the gesture outlives compositions)
     val labelStyle = TextStyle(fontSize = 13.sp, fontFeatureSettings = "tnum", color = if (locked) Ui.Accent else Ui.Text)
+    // The axis's ends on the bar: 10 dp in from a column's ends, 16 dp from a row's (its labels are centered on the handles).
+    fun axisIn(width: Float, height: Float, ax: Pair<Float, Float>, dp: Float) =
+        if (horizontal) ScaleAxis(16 * dp, width - 32 * dp, true, ax.first, ax.second)
+        else ScaleAxis(10 * dp, height - 20 * dp, false, ax.first, ax.second)
     Box(
-        modifier.fillMaxWidth().pointerInput(Unit) {
+        modifier.pointerInput(horizontal) {
             awaitEachGesture {
                 val down = awaitFirstDown()
                 val (l0, h0, ax) = current
                 if (l0.isNaN() || h0.isNaN() || ax.first.isNaN()) return@awaitEachGesture
-                val barTop = 10.dp.toPx()
-                val barH = size.height - 2 * barTop
-                fun yOf(t: Float) = barTop + (ax.second - t) / (ax.second - ax.first) * barH
-                fun tOf(y: Float) = ax.second - (y - barTop) / barH * (ax.second - ax.first)
+                val a = axisIn(size.width.toFloat(), size.height.toFloat(), ax, 1.dp.toPx())
+                if (a.length <= 0f) return@awaitEachGesture  // (no room for the bar)
+                fun along(p: Offset) = if (horizontal) p.x else p.y
                 // The nearer handle takes the drag.
-                val hot = abs(down.position.y - yOf(h0)) <= abs(down.position.y - yOf(l0))
+                val hot = abs(along(down.position) - a.pos(h0)) <= abs(along(down.position) - a.pos(l0))
                 frozenAxis = ax
-                if (!locked) NativeBridge.setRangeLock(true)
+                if (!lockedNow) NativeBridge.setRangeLock(true)
                 val minSpan = minOf(0.5f, h0 - l0)
                 try {
                     drag(down.id) { change ->
                         change.consume()
-                        val t = tOf(change.position.y).coerceIn(ax.first, ax.second)
+                        val t = a.temp(along(change.position)).coerceIn(ax.first, ax.second)
                         val next = if (hot) l0 to maxOf(t, l0 + minSpan) else minOf(t, h0 - minSpan) to h0
                         ours = next
                         NativeBridge.setRangeEnds(next.first, next.second)
@@ -299,35 +379,44 @@ private fun ScaleBar(readings: Readings?, palette: IntArray, marksLocked: Boolea
         Canvas(Modifier.fillMaxSize()) {
             val ax = axis
             if (lo.isNaN() || hi.isNaN() || ax.first.isNaN() || palette.isEmpty()) return@Canvas
+            val a = axisIn(size.width, size.height, ax, 1.dp.toPx())
+            if (a.length <= 0f) return@Canvas
             val barW = 16.dp.toPx()
-            val barX = size.width - barW - 10.dp.toPx()
-            val barTop = 10.dp.toPx()
-            val barH = size.height - 2 * barTop
-            fun yOf(t: Float) = barTop + (ax.second - t) / (ax.second - ax.first) * barH
             fun color(i: Float) = Color(palette[(i.coerceIn(0f, 1f) * (palette.size - 1)).roundToInt()])
             val curve = readings?.curve ?: FloatArray(0)
             val above = if (marksLocked && locked) Color(0xFFC8C8C8) else color(0.97f)  // (palettes/rainbow_*.json)
             val below = if (marksLocked && locked) Color(0xFF555555) else color(0.03f)
-            // The bar, row by row: the mapping between the ends, the marks or the palette's ends beyond.
-            val step = 2f
-            var y = barTop
-            while (y < barTop + barH) {
-                val t = ax.second - (y + step / 2 - barTop) / barH * (ax.second - ax.first)
-                val c = when {
-                    t > hi -> above
-                    t < lo -> below
-                    curve.size >= 2 && hi > lo -> {
-                        val f = (t - lo) / (hi - lo) * (curve.size - 1)
-                        val k = f.toInt().coerceIn(0, curve.size - 2)
-                        val v = curve[k] + (f - k) * (curve[k + 1] - curve[k])
-                        color(if (v.isNaN()) (t - lo) / (hi - lo) * 0.94f + 0.03f else v)
-                    }
-                    else -> color((t - lo) / (hi - lo) * 0.94f + 0.03f)
+            fun colorAt(t: Float) = when {
+                t > hi -> above
+                t < lo -> below
+                curve.size >= 2 && hi > lo -> {
+                    val f = (t - lo) / (hi - lo) * (curve.size - 1)
+                    val k = f.toInt().coerceIn(0, curve.size - 2)
+                    val v = curve[k] + (f - k) * (curve[k + 1] - curve[k])
+                    color(if (v.isNaN()) (t - lo) / (hi - lo) * 0.94f + 0.03f else v)
                 }
-                drawRect(c, Offset(barX, y), Size(barW, minOf(step, barTop + barH - y)))
-                y += step
+                else -> color((t - lo) / (hi - lo) * 0.94f + 0.03f)
             }
-            drawRect(Color(0x80000000), Offset(barX, barTop), Size(barW, barH), style = Stroke(1.dp.toPx()))
+            val hiText = measurer.measure(if (readings?.scaleHiOver == true && ours == null) "> 120°" else "%.1f°".format(hi), labelStyle)
+            val loText = measurer.measure("%.1f°".format(lo), labelStyle)
+            val gap = 2.dp.toPx()
+            // The bar across its length: a column's at its right edge; a row's under the labels, the
+            // pair centered in the row's height.
+            val across = if (horizontal) {
+                (size.height - (hiText.size.height + 9.dp.toPx() + barW + 5.dp.toPx())) / 2 + hiText.size.height + 9.dp.toPx()
+            } else size.width - barW - 10.dp.toPx()
+            fun rect(p0: Float, p1: Float, o: Float = 0f) =
+                if (horizontal) Offset(p0, across - o) to Size(p1 - p0, barW + 2 * o) else Offset(across - o, p0) to Size(barW + 2 * o, p1 - p0)
+            // The bar, 2 px at a time: the mapping between the ends, the marks or the palette's ends beyond.
+            val step = 2f
+            var p = a.start
+            while (p < a.start + a.length) {
+                val q = minOf(p + step, a.start + a.length)
+                val (tl, sz) = rect(p, q)
+                drawRect(colorAt(a.temp((p + q) / 2)), tl, sz)
+                p += step
+            }
+            rect(a.start, a.start + a.length).let { (tl, sz) -> drawRect(Color(0x80000000), tl, sz, style = Stroke(1.dp.toPx())) }
             // The readouts at their temperatures.
             if (readings != null) {
                 for ((s, c) in listOf(readings.low to Ui.Cold, readings.center to Ui.Center, readings.high to Ui.Hot)) {
@@ -336,34 +425,55 @@ private fun ScaleBar(readings: Readings?, palette: IntArray, marksLocked: Boolea
                         s.valid -> s.tempC
                         else -> continue
                     }
-                    val ty = yOf(t.coerceIn(ax.first, ax.second))
+                    val at = a.pos(t.coerceIn(ax.first, ax.second))
                     val o = 3.dp.toPx()
-                    drawLine(Color(0xC0000000), Offset(barX - o, ty), Offset(barX + barW + o, ty), 4.dp.toPx())
-                    drawLine(c, Offset(barX - o + 1.dp.toPx(), ty), Offset(barX + barW + o - 1.dp.toPx(), ty), 2.dp.toPx())
+                    fun line(color: Color, inset: Float, width: Float) = if (horizontal) {
+                        drawLine(color, Offset(at, across - o + inset), Offset(at, across + barW + o - inset), width)
+                    } else {
+                        drawLine(color, Offset(across - o + inset, at), Offset(across + barW + o - inset, at), width)
+                    }
+                    line(Color(0xC0000000), 0f, 4.dp.toPx())
+                    line(c, 1.dp.toPx(), 2.dp.toPx())
                 }
             }
-            // The handles, and their temperatures beside them (pushed apart when they'd touch).
-            val yHi = yOf(hi)
-            val yLo = yOf(lo)
-            val hiText = measurer.measure(if (readings?.scaleHiOver == true && ours == null) "> 120°" else "%.1f°".format(hi), labelStyle)
-            val loText = measurer.measure("%.1f°".format(lo), labelStyle)
-            val gap = 2.dp.toPx()
-            var hiLabelY = yHi - hiText.size.height / 2f
-            var loLabelY = yLo - loText.size.height / 2f
-            val overlap = hiLabelY + hiText.size.height + gap - loLabelY
-            if (overlap > 0) {
-                hiLabelY -= overlap / 2
-                loLabelY += overlap / 2
-            }
-            hiLabelY = hiLabelY.coerceIn(0f, size.height - hiText.size.height)
-            loLabelY = loLabelY.coerceIn(0f, size.height - loText.size.height)
-            for ((hy, text, ly) in listOf(Triple(yHi, hiText, hiLabelY), Triple(yLo, loText, loLabelY))) {
-                val knob = Size(barW + 10.dp.toPx(), 8.dp.toPx())
-                val tl = Offset(barX - 5.dp.toPx(), hy - knob.height / 2)
+            // The handles, and their temperatures beside them (a column: to the left; a row: above),
+            // pushed apart when they'd touch.
+            val pHi = a.pos(hi)
+            val pLo = a.pos(lo)
+            val knobColor = if (locked) Ui.Accent else Color.White
+            for (at in listOf(pHi, pLo)) {
+                val knob = if (horizontal) Size(8.dp.toPx(), barW + 10.dp.toPx()) else Size(barW + 10.dp.toPx(), 8.dp.toPx())
+                val tl = if (horizontal) Offset(at - knob.width / 2, across - 5.dp.toPx()) else Offset(across - 5.dp.toPx(), at - knob.height / 2)
                 drawRoundRect(Color(0xE0000000), tl - Offset(1.dp.toPx(), 1.dp.toPx()), Size(knob.width + 2.dp.toPx(), knob.height + 2.dp.toPx()),
                     CornerRadius(4.dp.toPx()))
-                drawRoundRect(if (locked) Ui.Accent else Color.White, tl, knob, CornerRadius(3.dp.toPx()))
-                drawText(text, topLeft = Offset(barX - 8.dp.toPx() - text.size.width, ly))
+                drawRoundRect(knobColor, tl, knob, CornerRadius(3.dp.toPx()))
+            }
+            if (horizontal) {
+                var hiX = pHi - hiText.size.width / 2f
+                var loX = pLo - loText.size.width / 2f
+                val overlap = loX + loText.size.width + 2 * gap - hiX
+                if (overlap > 0) {
+                    hiX += overlap / 2
+                    loX -= overlap / 2
+                }
+                // (kept in the row, and the low one left of the high one; never throwing when it's too narrow)
+                loX = loX.coerceAtMost(size.width - loText.size.width - hiText.size.width - 2 * gap).coerceAtLeast(0f)
+                hiX = hiX.coerceAtLeast(loX + loText.size.width + 2 * gap).coerceAtMost(maxOf(0f, size.width - hiText.size.width))
+                val y = across - 9.dp.toPx() - hiText.size.height
+                drawText(hiText, topLeft = Offset(hiX, y))
+                drawText(loText, topLeft = Offset(loX, y))
+            } else {
+                var hiLabelY = pHi - hiText.size.height / 2f
+                var loLabelY = pLo - loText.size.height / 2f
+                val overlap = hiLabelY + hiText.size.height + gap - loLabelY
+                if (overlap > 0) {
+                    hiLabelY -= overlap / 2
+                    loLabelY += overlap / 2
+                }
+                hiLabelY = hiLabelY.coerceAtMost(size.height - hiText.size.height).coerceAtLeast(0f)
+                loLabelY = loLabelY.coerceAtMost(size.height - loText.size.height).coerceAtLeast(0f)
+                drawText(hiText, topLeft = Offset(across - 8.dp.toPx() - hiText.size.width, hiLabelY))
+                drawText(loText, topLeft = Offset(across - 8.dp.toPx() - loText.size.width, loLabelY))
             }
         }
     }
@@ -392,7 +502,7 @@ private fun LockGlyph(locked: Boolean) {
 
 /** Recalibrate (PLAN M6): sends 0x8000 through the gate, then waits out its 10 s before the next. */
 @Composable
-private fun CalibrateTile(live: Boolean) {
+private fun CalibrateTile(modifier: Modifier, live: Boolean) {
     var until by remember { mutableLongStateOf(0L) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var result by remember { mutableStateOf("") }
@@ -411,7 +521,7 @@ private fun CalibrateTile(live: Boolean) {
     }
     val left = ((until - now + 999) / 1000).coerceAtLeast(0)
     val ready = live && left == 0L
-    Tile(onClick = {
+    Tile(modifier, onClick = {
         if (ready) {
             val r = NativeBridge.sendShutter()
             if (r == "sent") until = System.currentTimeMillis() + 10_000 else result = r
@@ -443,7 +553,7 @@ private val CAPTURE_MODES = listOf(
  * scripts can still wait for it.
  */
 @Composable
-private fun CaptureTile(status: Status, live: Boolean) {
+private fun CaptureTile(bar: BarScope, status: Status, live: Boolean) {
     var mode by rememberSaveable { mutableIntStateOf(0) }
     var count by rememberSaveable { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(false) }
@@ -480,8 +590,8 @@ private fun CaptureTile(status: Status, live: Boolean) {
             }
         }
     }
-    Box {
-        Tile(onClick = tap, onLongClick = { if (!busy) menu = true }, enabled = live || busy, color = if (busy) Ui.TileBusy else Ui.Tile) {
+    Box(with(bar) { Modifier.item(112.dp) }) {
+        Tile(bar.inBox, onClick = tap, onLongClick = { if (!busy) menu = true }, enabled = live || busy, color = if (busy) Ui.TileBusy else Ui.Tile) {
             if (running) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Caption(m.caption, Ui.Warning, Modifier.weight(1f))
@@ -517,74 +627,22 @@ private fun CaptureTile(status: Status, live: Boolean) {
                 }
             }
         }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            CAPTURE_MODES.forEachIndexed { i, cm ->
-                DropdownMenuItem(
-                    text = {
-                        Column(Modifier.widthIn(max = 280.dp)) {
-                            Text(cm.title + if (i == mode) "  ✓" else "", fontSize = 15.sp)
-                            Text(cm.description, fontSize = 12.sp, color = Ui.Subtle)
-                        }
-                    },
-                    onClick = {
+        SidePopup(menu, { menu = false }, bar.menuSide(leftBar = false), width = 300.dp) {
+            MenuHeading("Capture")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CAPTURE_MODES.forEachIndexed { i, cm ->
+                    ChoiceCard(i == mode, {
                         mode = i
                         menu = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-/**
- * The palette picker: White hot or Rainbow, each with its colors; with Rainbow, its colors too (Deep or
- * Soft). Picking closes it, except Rainbow, which stays open to show its colors.
- */
-@Composable
-private fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colors: (Int, Int) -> List<Color>, done: () -> Unit) {
-    Column(Modifier.width(260.dp).padding(horizontal = 14.dp, vertical = 6.dp)) {
-        Caption("Palette")
-        Spacer(Modifier.height(4.dp))
-        PickRow("White hot", colors(1, 0), options.palette == 1) {
-            onOptions(options.copy(palette = 1))
-            done()
-        }
-        PickRow("Rainbow", colors(2, options.rainbowPreset), options.palette == 2) { onOptions(options.copy(palette = 2)) }
-        if (options.palette == 2) {
-            Spacer(Modifier.height(10.dp))
-            Caption("Rainbow colors")
-            Spacer(Modifier.height(4.dp))
-            MainActivity.RAINBOW_PRESETS.forEachIndexed { i, preset ->
-                PickRow(preset.name, colors(2, i), options.rainbowPreset == i) {
-                    onOptions(options.copy(rainbowPreset = i))
-                    done()
+                    }, Modifier.fillMaxWidth()) {
+                        ChoiceName(cm.title, i == mode, check = true)
+                        Spacer(Modifier.height(2.dp))
+                        Text(cm.description, color = Ui.Subtle, fontSize = 12.sp, lineHeight = 15.sp)
+                    }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun PickRow(name: String, swatch: List<Color>, selected: Boolean, onPick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().background(if (selected) Ui.TileActive else Color.Transparent, RoundedCornerShape(10.dp))
-            .combinedClickableCompat(onPick).padding(horizontal = 8.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Swatch(swatch, Modifier.width(72.dp), height = 12.dp)
-        Spacer(Modifier.width(12.dp))
-        Text(name, color = Ui.Text, fontSize = 15.sp, modifier = Modifier.weight(1f))
-        if (selected) Text("✓", color = Ui.Accent, fontSize = 15.sp)
-    }
-}
-
-/** A palette's colors, cold to hot, as a small strip. */
-@Composable
-private fun Swatch(colors: List<Color>, modifier: Modifier, height: Dp = 6.dp) {
-    Box(
-        modifier.height(height)
-            .background(Brush.horizontalGradient(colors.ifEmpty { listOf(Color.Black, Color.White) }), RoundedCornerShape(height / 2)),
-    )
 }
 
 /** A small downward chevron: "more choices here" (drawn: the font's ▾ is tiny on this tablet). */
@@ -639,6 +697,7 @@ private fun Color.dimmedUnless(enabled: Boolean) = if (enabled) this else copy(a
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun Tile(
+    modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
@@ -650,7 +709,7 @@ internal fun Tile(
     val pressed by interaction.collectIsPressedAsState()
     CompositionLocalProvider(LocalTileEnabled provides enabled) {
         Column(
-            Modifier.fillMaxWidth().background(if (pressed) lerp(color, Color.White, 0.10f) else color, shape)
+            modifier.fillMaxWidth().background(if (pressed) lerp(color, Color.White, 0.10f) else color, shape)
                 .then(
                     if (onClick != null) {
                         Modifier.combinedClickable(
@@ -660,6 +719,7 @@ internal fun Tile(
                     } else Modifier,
                 )
                 .padding(horizontal = 9.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.Center,  // (in a row, tiles share its height)
             content = content,
         )
     }

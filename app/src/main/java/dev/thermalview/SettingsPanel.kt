@@ -125,7 +125,7 @@ private fun MainPage(
     open: (Page) -> Unit,
 ) {
     Text(
-        "Palette, view size and the box are on the left bar; the range, recalibrate and capture on the right.",
+        "Palette, view and the box are on the ${leftBarName()}; the range, recalibrate and capture on the ${rightBarName()}.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
     )
     // Noise and texture (owner, 2026-09-26: Low by default, here rather than on the bar).
@@ -139,7 +139,7 @@ private fun MainPage(
         onOptions(MainActivity.withTextureLevel(options, it))
     }
     Section("On screen")
-    SwitchRow("Frame rate and lag", "On the left bar", showStats, onShowStats)
+    SwitchRow("Frame rate and lag", "On the ${leftBarName()}", showStats, onShowStats)
     Section("More")
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NavTile("Image processing", "Tuning", Modifier.weight(1f)) { open(Page.Image) }
@@ -218,8 +218,8 @@ private fun CameraPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit,
 @Composable
 private fun RecordingPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit, say: (String) -> Unit, chooseReplay: () -> Unit) {
     Text(
-        "To record, use Capture on the right bar: the mode above it (or a long press) picks what it does. " +
-            "A replay pauses the camera; Exit replay on the left bar goes back to it.",
+        "To record, use Capture on the ${rightBarName()}: the mode at its top (or a long press) picks what it does. " +
+            "A replay pauses the camera; Exit replay on the ${leftBarName()} goes back to it.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
     )
     Section("Recordings")
