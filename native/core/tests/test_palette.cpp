@@ -68,6 +68,35 @@ TEST_CASE("rainbow_hc: green through yellow to red, smoothly, as vivid as sRGB a
   CHECK(dull == 0);
 }
 
+TEST_CASE("rainbow_deep and rainbow_soft: rainbow_hc's hues at their stops' lightness, less chroma") {
+  for (const char* name : {"rainbow_deep", "rainbow_soft"}) {
+    const tv::PaletteSpec spec = load(name);
+    CHECK(spec.stopLightness);
+    // The lightness follows the stops': a darker cold end, the brightest at the yellow middle.
+    const float l0 = tv::srgbToOklab(tv::paletteColor(spec, 0.0f))[0];
+    const float l5 = tv::srgbToOklab(tv::paletteColor(spec, 0.5f))[0];
+    const float l1 = tv::srgbToOklab(tv::paletteColor(spec, 1.0f))[0];
+    CHECK(l0 < 0.6f);
+    CHECK(l5 > l0 + 0.25f);
+    CHECK(l5 > l1);
+    // The same hue order as rainbow_hc: falling steadily from green to red.
+    float previous = hueDeg(tv::paletteColor(spec, 0.0f));
+    for (int i = 1; i <= 100; ++i) {
+      const float h = hueDeg(tv::paletteColor(spec, float(i) / 100.0f));
+      CHECK(h <= previous + 0.05f);
+      previous = h;
+    }
+    // Less vivid than rainbow_hc: some chroma held back everywhere.
+    for (int i = 0; i <= 10; ++i) {
+      const tv::Lab lab = tv::srgbToOklab(tv::paletteColor(spec, float(i) / 10.0f));
+      tv::PaletteSpec full = spec;
+      full.chromaScale = 1.0f;
+      const tv::Lab max = tv::srgbToOklab(tv::paletteColor(full, float(i) / 10.0f));
+      CHECK(std::hypot(lab[1], lab[2]) <= std::hypot(max[1], max[2]) * (spec.chromaScale + 0.02f));
+    }
+  }
+}
+
 TEST_CASE("palette files are checked") {
   tv::PaletteSpec spec;
   std::string error;

@@ -557,6 +557,8 @@ def main():
     ap.add_argument("--pipeline", default="",
                     help="stages for a pipeline column next to the baseline (harness bench --pipeline), e.g. shutter")
     ap.add_argument("--no-clips", action="store_true", help="skip the side-by-side clips")
+    ap.add_argument("--label", default="", help="name the results <commit>+LABEL instead of after the stages "
+                    "(for stage lists too long for a file name)")
     ap.add_argument("--rois", action="store_true", help="also draw each scene's ROIs")
     ap.add_argument("--upscale", choices=("bicubic", "nearest"), default="bicubic",
                     help="how sheets and clips draw ours: bicubic (default; judge the processing, not "
@@ -565,7 +567,7 @@ def main():
     scenes = args.scenes or sorted(p.name for p in BENCH.iterdir() if (p / "thermalview.raw").exists())
     run_harness(scenes, args.pipeline)
     commit, dirty, base = label()
-    name = base + ("+" + args.pipeline.replace(",", "_").replace("=", "-") if args.pipeline else "")
+    name = base + ("+" + (args.label or args.pipeline.replace(",", "_").replace("=", "-")) if args.pipeline else "")
     stages = ["baseline"] + (["pipeline"] if args.pipeline else [])
     results_dir = BENCH / "results" / name
     results_file = BENCH / "results" / f"{name}.json"

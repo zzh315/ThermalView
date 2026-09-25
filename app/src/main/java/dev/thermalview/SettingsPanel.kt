@@ -69,8 +69,6 @@ fun SettingsPanel(
     onOptions: (DebugOptions) -> Unit,
     showStats: Boolean,
     onShowStats: (Boolean) -> Unit,
-    ruler: Boolean = false,
-    onRuler: (Boolean) -> Unit = {},
 ) {
     var notice by remember { mutableStateOf("") }
     var choosingReplay by remember { mutableStateOf(false) }
@@ -102,11 +100,11 @@ fun SettingsPanel(
             }
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 when (page) {
-                    Page.Main -> MainPage(showStats, onShowStats, onPage)
+                    Page.Main -> MainPage(options, onOptions, showStats, onShowStats, onPage)
                     Page.Image -> ImagePage(options, onOptions)
                     Page.Camera -> CameraPage(options, onOptions, say)
                     Page.Recording -> RecordingPage(options, onOptions, say) { choosingReplay = true }
-                    Page.Diagnostics -> DiagnosticsPage(options, onOptions, say, ruler, onRuler)
+                    Page.Diagnostics -> DiagnosticsPage(say)
                 }
                 Spacer(Modifier.height(6.dp))
             }
@@ -175,17 +173,31 @@ private fun listDumps(dir: String): List<DumpEntry> {
 // --- The pages -------------------------------------------------------------------------------------
 
 @Composable
-private fun MainPage(showStats: Boolean, onShowStats: (Boolean) -> Unit, open: (Page) -> Unit) {
+private fun MainPage(
+    options: DebugOptions,
+    onOptions: (DebugOptions) -> Unit,
+    showStats: Boolean,
+    onShowStats: (Boolean) -> Unit,
+    open: (Page) -> Unit,
+) {
     Text(
         "Palette, noise, texture and view size are on the left bar; recalibrate and capture on the right.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
     )
+    // For the owner's pick (2026-09-26); the chosen ones become the defaults and this goes.
+    Section("Compare, then tell Claude")
+    Choice("Rainbow", MainActivity.RAINBOW_NAMES, options.rainbowStyle.coerceIn(0, 2), note = "Its colors") {
+        onOptions(options.copy(rainbowStyle = it))
+    }
+    Choice("Auto contrast", MainActivity.CONTRAST_NAMES, options.contrast.coerceIn(0, 2), note = "How Auto spreads the colors") {
+        onOptions(options.copy(contrast = it))
+    }
     Section("On screen")
     SwitchRow("Frame rate and lag", "On the left bar", showStats, onShowStats)
     Section("More")
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NavTile("Image processing", "Stages and tuning", Modifier.weight(1f)) { open(Page.Image) }
-        NavTile("Camera & range", "Lockout, high range, start-up", Modifier.weight(1f)) { open(Page.Camera) }
+        NavTile("Image processing", "Tuning", Modifier.weight(1f)) { open(Page.Image) }
+        NavTile("Camera & range", "Lockout, high range", Modifier.weight(1f)) { open(Page.Camera) }
     }
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NavTile("Recording & replay", "Replay, logging", Modifier.weight(1f)) { open(Page.Recording) }
@@ -200,22 +212,11 @@ private fun MainPage(showStats: Boolean, onShowStats: (Boolean) -> Unit, open: (
 @Composable
 private fun ImagePage(options: DebugOptions, onOptions: (DebugOptions) -> Unit) {
     Text(
-        "The parts behind Noise and Texture on the left bar. Changing one here shows that setting as Custom.",
+        "Tuning behind Noise and Texture on the left bar (changing one here shows that setting as Custom). " +
+            "The stages that always help are always on.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
     )
-    Section("Stages")
-    SwitchRow("1  Shutter hold", "Holds the image through calibrations", options.shutterHold) {
-        onOptions(options.copy(shutterHold = it))
-    }
-    SwitchRow("2  Bad pixels", "Replaces the camera's known bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
-    SwitchRow("3  Drift and fixed stripes", "Between calibrations", options.drift) { onOptions(options.copy(drift = it)) }
-    SwitchRow("3c Flickering stripes", "Per-frame column and row noise (part of Noise)", options.stripes) {
-        onOptions(options.copy(stripes = it))
-    }
-    SwitchRow("4b Noise reduction", "The filter below (part of Noise)", options.nr) { onOptions(options.copy(nr = it)) }
-    SwitchRow("5  Tone mapping", "Automatic contrast", options.tone) { onOptions(options.copy(tone = it)) }
-    SwitchRow("6  Texture", "Mid-scale contrast", options.detail) { onOptions(options.copy(detail = it)) }
-    Section("Noise reduction (4b)")
+    Section("Noise reduction")
     Choice("Filter", listOf("Non-local means", "BM3D"), options.nrMethod.coerceIn(0, 1)) { onOptions(options.copy(nrMethod = it)) }
     Choice(
         "Strength",
@@ -230,8 +231,7 @@ private fun ImagePage(options: DebugOptions, onOptions: (DebugOptions) -> Unit) 
             MainActivity.NR_SEARCHES.indexOf(options.nrSearch).takeIf { it >= 0 },
         ) { onOptions(options.copy(nrSearch = MainActivity.NR_SEARCHES[it])) }
     }
-    SwitchRow("On the GPU", "Off: the CPU's non-local means, 5×5 search", options.gpuNr) { onOptions(options.copy(gpuNr = it)) }
-    Section("Texture (6)")
+    Section("Texture")
     Choice(
         "Strength",
         MainActivity.TEXTURE_STRENGTHS.map { "×%.1f".format(it) },
@@ -267,11 +267,6 @@ private fun CameraPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit,
     ActionRow("Range test", "Records 50 frames in each range, then switches back (M2)") {
         say("Range test: " + NativeBridge.readyCapture("range test", true))
     }
-    Section("Start-up (from the next connect)")
-    SwitchRow("Skip the start-up 0x8000", null, options.skipStartupShutter) { onOptions(options.copy(skipStartupShutter = it)) }
-    SwitchRow("Fallback start order", "0x8004 and 0x8020 before streaming", options.fallbackOrder) {
-        onOptions(options.copy(fallbackOrder = it))
-    }
 }
 
 @Composable
@@ -294,13 +289,7 @@ private fun RecordingPage(options: DebugOptions, onOptions: (DebugOptions) -> Un
 }
 
 @Composable
-private fun DiagnosticsPage(
-    options: DebugOptions,
-    onOptions: (DebugOptions) -> Unit,
-    say: (String) -> Unit,
-    ruler: Boolean,
-    onRuler: (Boolean) -> Unit,
-) {
+private fun DiagnosticsPage(say: (String) -> Unit) {
     var details by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
     LaunchedEffect(details) {
@@ -318,10 +307,6 @@ private fun DiagnosticsPage(
                 .background(Color(0x66000000), RoundedCornerShape(8.dp)).padding(8.dp),
         )
     }
-    Section("Screen")
-    SwitchRow("100 mm ruler", "PLAN M6's check of the view sizes: measure it with a ruler", ruler, onRuler)
-    Section("Performance")
-    SwitchRow("Processing on big cores", "Little cores are ~8× slower", options.bigCores) { onOptions(options.copy(bigCores = it)) }
     Section("Checks")
     ActionRow("Check GPU noise reduction", "Against the CPU; the result goes to the field log") {
         NativeBridge.requestNrCheck()

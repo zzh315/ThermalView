@@ -18,7 +18,9 @@ struct ToneOptions {
   float maxGain = 2.0f;          // display levels (of 255) per count at most: the gain cap (owner: 2.0)
   float linearShare = 0.2f;      // the curve's linear part; the rest is plateau equalization
   float plateauDown = 0.25f;     // occupied bins count at least this x the mean occupied bin...
-  // ...and at most the mean of the histogram's local maxima (the upper plateau).
+  // ...and at most the mean of the histogram's local maxima (the upper plateau) times this:
+  float plateauUp = 1.0f;
+  bool balance = false;          // what the cap leaves goes half below the scene's median, half above it
   float expandTauS = 0.1f;       // the range follows a wider scene this fast
   float contractTauS = 1.3f;     // and a narrower one this slowly
   float curveTauS = 2.0f;        // the curve's shape, smoothed over time (0.3 made a moving hand pump)

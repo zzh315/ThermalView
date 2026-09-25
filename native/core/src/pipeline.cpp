@@ -112,6 +112,12 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->toneOptions.maxGain = float(std::atof(value.c_str()));
     } else if (key == "toneLinear" && !value.empty()) {
       o->toneOptions.linearShare = float(std::atof(value.c_str()));
+    } else if (key == "tonePlateau" && !value.empty()) {
+      o->toneOptions.plateauDown = float(std::atof(value.c_str()));
+    } else if (key == "tonePlateauUp" && !value.empty()) {
+      o->toneOptions.plateauUp = float(std::atof(value.c_str()));
+    } else if (key == "toneBalance") {
+      o->toneOptions.balance = on;
     } else if (key == "toneLow" && !value.empty()) {
       o->toneOptions.lowPct = float(std::atof(value.c_str()));
     } else if (key == "toneHigh" && !value.empty()) {

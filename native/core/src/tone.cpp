@@ -152,7 +152,7 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
       ++peaks;
     }
   }
-  const double up = peaks ? peaksSum / peaks : 1.0;
+  const double up = options_.plateauUp * (peaks ? peaksSum / peaks : 1.0);
   const double down = occupied ? options_.plateauDown * occupiedSum / occupied : 0.0;
   // Per-bin rises: the plateau-clipped histogram, blended with a linear share, each capped.
   std::vector<float>& inc = work_;  // free again: the percentiles are done
@@ -171,21 +171,48 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
     inc[size_t(b)] = std::min(lin + (1.0f - options_.linearShare) * he, maxRise);
     rise += inc[size_t(b)];
   }
-  // What the cap cut off goes, evenly, to bins still under it (the gaps between a scene's zones), so
-  // separate zones spread apart; a flat scene's bins are all at the cap, so it stays a calm band.
-  for (int pass = 0; pass < 8 && rise < 1.0f - 1e-4f; ++pass) {
-    int room = 0;
-    for (int b = 0; b < kCurve; ++b) room += inc[size_t(b)] < maxRise;
-    if (!room) break;
-    const float add = (1.0f - rise) / float(room);
-    rise = 0;
-    for (int b = 0; b < kCurve; ++b) {
-      if (inc[size_t(b)] < maxRise) inc[size_t(b)] = std::min(inc[size_t(b)] + add, maxRise);
-      rise += inc[size_t(b)];
+  // Fill bins [b0, b1) toward a share of the output: what the cap cut off goes, evenly, to the bins
+  // still under it (the gaps between a scene's zones, so separate zones spread apart); a range already
+  // over its share is squeezed to it. A flat scene's bins are all at the cap, so it stays a calm band.
+  // Returns the range's rise.
+  const auto fill = [&](int b0, int b1, float share) {
+    float r = 0;
+    for (int b = b0; b < b1; ++b) r += inc[size_t(b)];
+    if (r > share && r > 0.0f) {
+      const float k = share / r;
+      for (int b = b0; b < b1; ++b) inc[size_t(b)] *= k;
+      return share;
     }
+    for (int pass = 0; pass < 8 && r < share - 1e-4f; ++pass) {
+      int room = 0;
+      for (int b = b0; b < b1; ++b) room += inc[size_t(b)] < maxRise;
+      if (!room) break;
+      const float add = (share - r) / float(room);
+      r = 0;
+      for (int b = b0; b < b1; ++b) {
+        if (inc[size_t(b)] < maxRise) inc[size_t(b)] = std::min(inc[size_t(b)] + add, maxRise);
+        r += inc[size_t(b)];
+      }
+    }
+    return r;
+  };
+  if (options_.balance) {
+    // The scene's median at the palette's middle: each half of the pixels gets half the output (the
+    // even share above hands most of it to a long sparse tail, pushing the scene's bulk to one end).
+    // A half the cap stops short leaves the rest to the other, so the palette is used where it can be.
+    uint64_t counted = 0;
+    for (int b = 0; b < kCurve; ++b) counted += hist_[size_t(b)];
+    int m = 0;
+    for (uint64_t cum = 0; m < kCurve && cum + hist_[size_t(m)] <= counted / 2; ++m) cum += hist_[size_t(m)];
+    float lower = fill(0, m, 0.5f), upper = fill(m, kCurve, 0.5f);
+    if (lower < 0.5f - 1e-4f) upper = fill(m, kCurve, 1.0f - lower);
+    else if (upper < 0.5f - 1e-4f) lower = fill(0, m, 1.0f - upper);
+    target_[0] = std::clamp(0.5f - lower, 0.0f, std::max(0.0f, 1.0f - lower - upper));
+  } else {
+    rise = fill(0, kCurve, 1.0f);
+    // The curve at the bin edges: cumulative, centred when the cap kept it below the full range.
+    target_[0] = 0.5f * (1.0f - rise);
   }
-  // The curve at the bin edges: cumulative, centred when the cap kept it below the full range.
-  target_[0] = 0.5f * (1.0f - rise);
   for (int b = 0; b < kCurve; ++b) target_[size_t(b + 1)] = target_[size_t(b)] + inc[size_t(b)];
   // The first frame takes its curve as it is: easing in from a neutral one would show a second or two
   // of harsh contrast at every start.

@@ -1,0 +1,30 @@
+{
+  "name": "rainbow_soft",
+  "space": "oklch",
+  "chroma": "lightness",
+  "chromaScale": 0.75,
+  "stops": [
+    [
+      0.0,
+      "#2E7D32"
+    ],
+    [
+      0.25,
+      "#7CB342"
+    ],
+    [
+      0.5,
+      "#FDD835"
+    ],
+    [
+      0.75,
+      "#FB8C00"
+    ],
+    [
+      1.0,
+      "#E53935"
+    ]
+  ],
+  "saturation": "#808080",
+  "note": "Soft: rainbow_hc's hues (cold green, mid yellow, hot red) with each stop's own lightness, a darker green at the cold end for depth, and chroma at 75% of what sRGB allows there (the owner found rainbow_hc over-saturated, 2026-09-26). A candidate for the owner's pick."
+}

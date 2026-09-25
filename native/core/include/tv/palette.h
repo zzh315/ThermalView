@@ -21,12 +21,14 @@ struct PaletteSpec {
   Space space = Space::OkLab;
   std::vector<std::pair<float, Rgb>> stops;  // positions ascending from 0 to 1
   bool maxChroma = true;                     // OKLCh: each hue at sRGB's most vivid ("chroma": "max")
+  bool stopLightness = false;                // OKLCh: lightness from the stops, chroma as vivid as sRGB allows there ("chroma": "lightness")
+  float chromaScale = 1.0f;                  // OKLCh: this share of that chroma ("chromaScale", 0..1)
   Rgb saturation{0.5f, 0.5f, 0.5f};          // pixels at the camera's clip (too hot to measure)
 };
 
 // Reads a palette file's text: {"name": ..., "space": "oklab" | "oklch", "chroma": "max" |
-// "interpolate", "stops": [[0.0, "#RRGGBB"], ...], "saturation": "#RRGGBB"}. Other keys are
-// ignored. False, with a reason, on anything else.
+// "interpolate" | "lightness", "chromaScale": 0..1, "stops": [[0.0, "#RRGGBB"], ...], "saturation":
+// "#RRGGBB"}. Other keys are ignored. False, with a reason, on anything else.
 bool parsePalette(const std::string& json, PaletteSpec* out, std::string* error);
 
 // The table: entry i is the color at intensity i / (n - 1), in 8-bit sRGB.

@@ -1,7 +1,5 @@
 package dev.thermalview
 
-import kotlin.math.max
-import kotlin.math.min
 
 /** The 4:3 view inside a w x h surface, in surface pixels, as the renderer draws it (renderer.cpp draw()). */
 data class ViewBox(val x: Float, val y: Float, val w: Float, val h: Float)
@@ -58,7 +56,4 @@ data class CamRect(val x: Float, val y: Float, val w: Float, val h: Float) {
     /** A camera point on the surface (pixel centers at +0.5). */
     fun toSurface(box: ViewBox, camX: Float, camY: Float) =
         Pair(box.x + (camX + 0.5f - x) / w * box.w, box.y + (camY + 0.5f - y) / h * box.h)
-
-    @Suppress("unused")
-    private fun clampInside(v: Float, lo: Float, hi: Float) = max(lo, min(hi, v))
 }

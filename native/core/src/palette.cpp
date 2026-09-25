@@ -119,8 +119,12 @@ Rgb paletteColor(const PaletteSpec& spec, float t) {
   const auto& stops = spec.stops;
   if (stops.empty()) return {t, t, t};
   t = std::clamp(t, 0.0f, 1.0f);
-  if (t <= stops.front().first) return stops.front().second;
-  if (t >= stops.back().first) return stops.back().second;
+  // (the ends are the stops themselves, except where the stops only give lightness and hue: there
+  // the ends go through the same construction as their neighbors)
+  const bool constructedEnds = spec.space == PaletteSpec::Space::OkLch && (spec.stopLightness || spec.chromaScale < 1.0f);
+  if (!constructedEnds && t <= stops.front().first) return stops.front().second;
+  if (!constructedEnds && t >= stops.back().first) return stops.back().second;
+  t = std::clamp(t, stops.front().first, stops.back().first);
   size_t k = 0;
   while (k + 2 < stops.size() && t > stops[k + 1].first) ++k;
   const float span = stops[k + 1].first - stops[k].first;
@@ -150,6 +154,11 @@ Rgb paletteColor(const PaletteSpec& spec, float t) {
     }
     return lo;
   };
+  const float cs = std::clamp(spec.chromaScale, 0.0f, 1.0f);
+  if (spec.stopLightness) {  // the stops' lightness, and at it the most chroma in gamut (scaled)
+    const float L = a[0] + u * (b[0] - a[0]);
+    return clip(at(L, cs * maxChroma(L)));
+  }
   if (spec.maxChroma) {
     // Chroma at the gamut's boundary is unimodal in lightness: golden-section search for its peak.
     float lo = 0.05f, hi = 0.999f;
@@ -171,10 +180,10 @@ Rgb paletteColor(const PaletteSpec& spec, float t) {
       }
     }
     const float L = 0.5f * (lo + hi);
-    return clip(at(L, maxChroma(L)));
+    return clip(at(L, cs * maxChroma(L)));
   }
   const float L = a[0] + u * (b[0] - a[0]);
-  const float c = ca + u * (cb - ca);
+  const float c = cs * (ca + u * (cb - ca));
   if (inGamut(at(L, c))) return clip(at(L, c));
   return clip(at(L, maxChroma(L)));
 }
@@ -208,8 +217,14 @@ bool parsePalette(const std::string& json, PaletteSpec* out, std::string* error)
         else if (text == "oklch") spec.space = PaletteSpec::Space::OkLch;
         else return fail("space: \"" + text + "\" (oklab or oklch)");
       } else if (key == "chroma") {
-        if (!c.string(&text) || (text != "max" && text != "interpolate")) return fail("chroma: \"max\" or \"interpolate\"");
+        if (!c.string(&text) || (text != "max" && text != "interpolate" && text != "lightness"))
+          return fail("chroma: \"max\", \"interpolate\" or \"lightness\"");
         spec.maxChroma = text == "max";
+        spec.stopLightness = text == "lightness";
+      } else if (key == "chromaScale") {
+        double v;
+        if (!c.number(&v) || !(v >= 0.0 && v <= 1.0)) return fail("chromaScale: a number from 0 to 1");
+        spec.chromaScale = float(v);
       } else if (key == "saturation") {
         if (!c.string(&text) || !parseHex(text, &spec.saturation)) return fail("saturation: not #RRGGBB");
       } else if (key == "stops") {

@@ -150,7 +150,7 @@ struct FrameMeta {
 // "destripeGate=X" and "destripeClamp=X" tune it; "denoise" / "denoise=0" switches stage 4,
 // "denoiseK=X", "denoiseLo=X" and "denoiseHi=X" tune it; "nr" / "nr=0" switches stage 4b,
 // "nrSearch=N", "nrPatch=N", "nrStrength=X" and "nrSigma=X" tune it; "tone" / "tone=0" switches stage 5,
-// "toneGain=X" (max gain), "toneLinear=X", "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
+// "toneGain=X" (max gain), "toneLinear=X", "tonePlateau=X" and "tonePlateauUp=X" (the plateaus), "toneBalance" / "toneBalance=0" (the median at the middle), "toneLow=X", "toneHigh=X" (percentiles), "toneExpand=X",
 // "toneContract=X" and "toneCurve=X" (time constants) tune it; "detail" / "detail=0" switches stage
 // 6, "detailRadius=N", "detailEps=X", "detailGain=X", "detailLimit=X", "detailNoiseLo=X",
 // "detailNoiseHi=X", "detailSmooth=X", "detailMid=X" (experimental gain), "detailMidRadius=N",

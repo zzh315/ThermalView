@@ -4,6 +4,35 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — Rainbow over-saturated, Auto's colors bunched (owner): candidates for the owner's pick
+
+**The owner, on a new recording** (`bench/rainbow`, Noise High, Texture High, Auto range): "the rainbow palette looks over saturated and the auto gradient is not good enough … everything is a bit red and there's not much contrast".
+
+**Why it's red:**
+- The display values bunch in the upper half. On frame 60 the median is 0.60, and the quarters of the display range hold 8 / 24 / 51 / 16% of the pixels.
+- Rainbow maps that half to yellow → orange → red.
+- White hot hides it: the same skew is just a light grey scene.
+
+**The cause (measured):** stage 5's gain cap (2 levels per count) binds on the room's dense bins. The output it cuts off was shared evenly among all bins under the cap, and a long, sparse cold tail holds most of those bins, so the tail took the range and pushed the bulk up.
+- **The plateaus and the linear share don't matter here.** A higher upper plateau, no lower plateau, no linear share: the same distribution while the cap binds.
+- **A higher cap alone costs too much.** Gain 8 with the upper plateau ×4 and linear 0.1 gives even quarters (21 / 28 / 29 / 22). But on `flat` its display noise is ×3.5 (0.84 → 2.96 levels), its fixed pattern ×3.7, and the step at a recalibration ×3.4 (8.3 → 28.5 levels).
+
+**New: `toneBalance`.** What the cap leaves goes half below the scene's median and half above it, so the median lands mid-palette where the cap allows.
+- **At the cap of 2:** the flat scenes are unchanged, but it barely moves this scene (median 0.56). The half above the median is the room's dense part plus a short hot tail, and capped it can't fill half the palette.
+- **With the cap at 3:** median 0.50, quarters 16 / 34 / 36 / 14.
+- **Cost of the cap at 3** (`bench/results/140242d-dirty+high_tex3_bal_g3.json` against `+high_tex3.json`, Noise High, Texture ×3): display noise ×1.5 on `flat` (0.84 → 1.25 levels), fixed pattern ×1.5, stripes ×1.5, recalibration step 8.3 → 12.5 levels, the box's detail ×1.5.
+- **That's about the noise the owner accepted before:** the old default (NLM Low, Texture ×1.5, gain 2) shows 1.01 levels on `flat` and 1.38 on `flat_aged`. Noise High with Texture ×1.5 and the cap at 3 shows 0.96 and 1.10 (`+low_tex15`, `+high_tex15_bal_g3`).
+
+**The palette:** rainbow_hc runs every hue at sRGB's most vivid (the cusp), so its lightness peaks at yellow.
+- **Only scaling its chroma** (80%, 65%) washes it out to pastel.
+- **New option:** `"chroma": "lightness"` takes each stop's own lightness at `chromaScale` of the chroma sRGB allows there. Candidates keep rainbow_hc's hues (green, yellow, red) with a darker cold green for depth: `rainbow_deep` (90% chroma) and `rainbow_soft` (75%).
+
+**To look at it:** Settings › Compare on the tablet, live:
+- Rainbow: Vivid (rainbow_hc) / Deep / Soft.
+- Auto contrast: Normal (as before) / Balanced (the balance, cap 2) / Stronger (the balance, cap 3).
+
+**Verdict:** pending the owner's pick. The chosen ones become the defaults and the comparison goes.
+
 ## 2026-09-26 — Quality first (owner): stage 1 without the crossfade; noise reduction High is BM3D
 
 **The owner:** "image quality, sharp image and better contrast that looks good to the eye should always take priority over frame rate and lag … leave the optimisation for lag and frame rate at the end. but make sure there's no ghosting or after image (it's ok to have sharp frame changes, no need to smooth frame if it produce after image)".
