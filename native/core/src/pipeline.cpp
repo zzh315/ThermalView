@@ -71,6 +71,12 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->stripeOptions.clamp = float(std::atof(value.c_str()));
     } else if (key == "stripesEdge" && !value.empty()) {
       o->stripeOptions.edge = float(std::atof(value.c_str()));
+    } else if (key == "stripesMaxMotion" && !value.empty()) {
+      o->stripeOptions.maxMotion = float(std::atof(value.c_str()));
+    } else if (key == "stripesCompensate") {
+      o->stripeOptions.compensate = on;
+    } else if (key == "stripesSignificance" && !value.empty()) {
+      o->stripeOptions.significance = float(std::atof(value.c_str()));
     } else if (key == "nrMethod" && !value.empty()) {
       o->nrMethod = value == "bm3d" || value == "1" ? 1 : 0;
     } else if (key == "bm3dStrength" && !value.empty()) {
@@ -200,7 +206,9 @@ Pipeline::Pipeline(const PipelineOptions& options)
       work_(kImagePixels),
       previous_(kImagePixels),
       held_(kImagePixels),
-      heldSignal_(kImagePixels) {}
+      heldSignal_(kImagePixels) {
+  stripes_.setOptions(options.stripeOptions);
+}
 
 void Pipeline::setOptions(const PipelineOptions& options) {
   options_ = options;
@@ -615,22 +623,44 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   // Stage 3b: this frame's correction now; its estimate for the next frames from this corrected
   // signal later, while stage 4b's GPU works (it changes nothing in this frame).
   if (options_.destripe) applyDestripe(sig);
-  // Stage 3c: this frame's column and row noise now; its reference's update later (like 3b's).
+  // Stage 3c: this frame's column and row noise now, on 3b's output (where the persistent pattern is
+  // gone, so a reference moved with the scene doesn't drag it along); its reference's update later,
+  // with 3b's (3b learns from its own output before 3c's correction, and each change it makes to its
+  // estimate goes into 3c's reference too).
   const bool stripesRan = options_.stripes;
-  if (stripesRan) stripes_.process(sig, noiseSigma());
+  if (stripesRan) {
+    after3b_.assign(sig, sig + kImagePixels);
+    stripes_.process(sig, noiseSigma());
+  }
+  bool patternChanged = false;
+  const auto learnDestripe = [&] {  // stage 3b's estimate update (and, with 3c on, what it changed)
+    if (stripesRan) {
+      colBefore_ = colOffset_;
+      rowBefore_ = rowOffset_;
+      patternChanged = true;
+    }
+    updateDestripe(stripesRan ? after3b_.data() : sig);
+  };
   bool destripePending = options_.destripe, stripesPending = stripesRan;
   const std::function<void()> sideWork = [&] {
     // (stage 3b learns the persistent pattern from the signal before 3c took this frame's part off:
     // fed 3c's output it would miss the fast share of the pattern's drift, and the two would chase
     // each other)
-    if (destripePending) updateDestripe(stripesRan ? stripes_.uncorrected() : sig);
+    if (destripePending) learnDestripe();
     destripePending = false;
-    if (stripesPending) stripes_.updateReference();
+    if (stripesPending) {
+      stripes_.updateReference();  // (toward this frame, which had 3b's old estimate taken off)
+      if (patternChanged) {        // then the change 3b just made, as the next frame will have it
+        for (size_t x = 0; x < colBefore_.size(); ++x) colBefore_[x] = colOffset_[x] - colBefore_[x];
+        for (size_t y = 0; y < rowBefore_.size(); ++y) rowBefore_[y] = rowOffset_[y] - rowBefore_[y];
+        stripes_.applyPatternChange(colBefore_, rowBefore_);
+      }
+    }
     stripesPending = false;
     once();
   };
   if (options_.denoise) {  // stage 4 (removed: off) changes sig in place, so the estimate goes first
-    if (destripePending) updateDestripe(stripesRan ? stripes_.uncorrected() : sig);
+    if (destripePending) learnDestripe();
     destripePending = false;
     denoise(sig);
   }

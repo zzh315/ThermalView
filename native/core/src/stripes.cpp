@@ -101,7 +101,8 @@ float medianOf(std::vector<float>& v) {
 // r = b(p + d) - a(p), and the step that the gradients of a say closes it.
 std::array<double, 2> lkLevel(const float* a, const float* b, int w, int h, std::array<double, 2> d, int iters,
                               double noiseFloor, std::vector<float>& scratch, std::vector<float>& gx,
-                              std::vector<float>& gy, std::vector<float>& bw, std::vector<float>& sample) {
+                              std::vector<float>& gy, std::vector<float>& bw, std::vector<float>& sample,
+                              double significance, double* stderror = nullptr) {
   const size_t n = size_t(w) * h;
   gx.resize(n);
   gy.resize(n);
@@ -121,7 +122,7 @@ std::array<double, 2> lkLevel(const float* a, const float* b, int w, int h, std:
       for (float& v : sample) v = std::fabs(v - med);
       inv = 1.0 / (4.685 * std::max(1.4826 * medianOf(sample), noiseFloor) + 1e-6);
     }
-    double axx = 0, axy = 0, ayy = 0, bx = 0, by = 0;
+    double axx = 0, axy = 0, ayy = 0, bx = 0, by = 0, rr = 0, ww = 0;
     for (int y = m; y < h - m; ++y) {
       const float* br = bw.data() + size_t(y) * w;
       const float* ar = a + size_t(y) * w;
@@ -136,6 +137,8 @@ std::array<double, 2> lkLevel(const float* a, const float* b, int w, int h, std:
           wt = (1.0 - u * u) * (1.0 - u * u);
         }
         const double ix = gxr[x], iy = gyr[x];
+        rr += wt * r * r;
+        ww += wt;
         axx += wt * ix * ix;
         axy += wt * ix * iy;
         ayy += wt * iy * iy;
@@ -144,7 +147,24 @@ std::array<double, 2> lkLevel(const float* a, const float* b, int w, int h, std:
       }
     }
     const double det = axx * ayy - axy * axy, tr = axx + ayy;
-    if (!(det > 1e-12 * tr * tr) || !(tr > 0)) break;  // (too little structure to tell)
+    if (!(det > 1e-12 * tr * tr) || !(tr > 0)) {  // (too little structure to tell)
+      if (stderror) *stderror = 1e9;
+      break;
+    }
+    if (stderror) {  // the estimate's standard error: residual variance x (H^-1), the larger axis
+      const double var = ww > 0 ? rr / ww : 0.0;
+      *stderror = std::sqrt(var * std::max(ayy, axx) / det);
+    }
+    // The first step is a score test: with no motion, its squared Mahalanobis length (b^T H^-1 b over
+    // the residuals' variance) is chi-square with 2 degrees of freedom. Unless it's significant, the
+    // level stays where it started. Iterating on noise walks to a random peak of the two images'
+    // correlation, half a pixel or more away at this level: on a scene with no structure left after the
+    // unstriping, jumps of several pixels a frame (PIPELINE_LOG).
+    if (it == 0 && significance > 0.0) {
+      const double var = ww > 0 ? rr / ww : 0.0;
+      const double m2 = (ayy * bx * bx - 2.0 * axy * bx * by + axx * by * by) / det;
+      if (!(m2 > significance * significance * var)) break;
+    }
     // r + grad a . delta = 0: delta = -(sum w g g^T)^-1 sum w g r
     const double dx = -(ayy * bx - axy * by) / det, dy = -(axx * by - axy * bx) / det;
     d[0] += dx;
@@ -217,7 +237,8 @@ std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<
 }
 
 std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<float>& scratch,
-                                    std::array<double, 2> guess, double noise) {
+                                    std::array<double, 2> guess, double noise, double* stderror,
+                                    double significance) {
   // At half resolution and below, each level less its column and row means so stripes can't read as
   // motion. Accurate to ~0.07 px at worst (Lucas-Kanade's ~0.035 px at its finest level, half the
   // frame's; measured with exact Fourier shifts): through a pan the stripe fix does as well with it as
@@ -244,8 +265,10 @@ std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<
   for (int l = kLevels - 1; l >= 0; --l) {
     // (each level's noise: the pyramid's blur takes it down ~2x a level; residuals carry two images')
     const double floor = noise * 1.4142 / double(2 << l);
+    double err = 0.0;
     d = lkLevel(pa[size_t(l)].data(), pb[size_t(l)].data(), ws[size_t(l)], hs[size_t(l)], d, l == 0 ? 6 : 5, floor,
-                scratch, gx, gy, bw, sample);
+                scratch, gx, gy, bw, sample, significance, &err);
+    if (l == 0 && stderror) *stderror = 2.0 * err;  // (level 0 is half the frame)
     d[0] *= 2.0;  // (each level is half the one below; level 0 is half the frame)
     d[1] *= 2.0;
   }
@@ -256,12 +279,15 @@ void FrameStripes::reset() {
   started_ = false;
   updatePending_ = false;
   cum_[0] = cum_[1] = 0.0;
+  moved_[0] = moved_[1] = 0.0;
   lastShift_ = {0.0f, 0.0f};
   lastMatched_ = 0.0f;
   lastCorrected_ = false;
 }
 
-void FrameStripes::process(float* sig, float sigma) {
+void FrameStripes::process(float* sig, float sigma) { process(sig, sig, sigma); }
+
+void FrameStripes::process(float* sig, const float* source, float sigma) {
   const StripeOptions& o = options_;
   ref_.resize(kImagePixels);
   refSensor_.resize(kImagePixels);
@@ -273,19 +299,41 @@ void FrameStripes::process(float* sig, float sigma) {
   lastCorrected_ = false;
   lastShift_ = {0.0f, 0.0f};
   updatePending_ = false;
-  uncorrected_.assign(sig, sig + kImagePixels);  // (stage 3b learns from it; the reference follows it)
+  uncorrected_.assign(source, source + kImagePixels);  // (the reference follows it: see updateReference)
   if (!started_) {  // the first frame (or after a restart): the reference begins here
-    std::copy(sig, sig + kImagePixels, ref_.begin());
+    std::copy(source, source + kImagePixels, ref_.begin());
     std::fill(age_.begin(), age_.end(), 0);
-    cum_[0] = cum_[1] = 0.0;
+    cum_[0] = cum_[1] = moved_[0] = moved_[1] = 0.0;
     started_ = true;
     lastMatched_ = 0.0f;
     return;
   }
   // Where the scene went on the sensor since the reference last saw it.
   shiftImage(ref_.data(), refSensor_.data(), W, H, cum_[0], cum_[1], tmp_);
-  const std::array<double, 2> delta = estimateShift(refSensor_.data(), sig, tmp_, {0.0, 0.0}, sigma);
-  if (std::max(std::fabs(delta[0]), std::fabs(delta[1])) > o.minShift) {
+  double stderror = 0.0;
+  const std::array<double, 2> delta =
+      estimateShift(refSensor_.data(), source, tmp_, {0.0, 0.0}, sigma, &stderror, o.significance);
+  lastStdError_ = float(stderror);
+  // The motion since the reference began: followed, the sum of the residual shifts (cum); not
+  // followed, the reference stayed put, so it's this frame's own shift.
+  if (o.compensate) {
+    if (std::max(std::fabs(delta[0]), std::fabs(delta[1])) > o.minShift) {
+      moved_[0] += delta[0];
+      moved_[1] += delta[1];
+    }
+  } else {
+    moved_[0] = delta[0];
+    moved_[1] = delta[1];
+  }
+  if (std::hypot(moved_[0], moved_[1]) > o.maxMotion) {  // too far from where the reference began
+    std::copy(source, source + kImagePixels, ref_.begin());
+    std::fill(age_.begin(), age_.end(), 0);
+    cum_[0] = cum_[1] = moved_[0] = moved_[1] = 0.0;
+    lastShift_ = {float(delta[0]), float(delta[1])};
+    lastMatched_ = 0.0f;
+    return;
+  }
+  if (o.compensate && std::max(std::fabs(delta[0]), std::fabs(delta[1])) > o.minShift) {
     cum_[0] += delta[0];
     cum_[1] += delta[1];
     lastShift_ = {float(delta[0]), float(delta[1])};
@@ -299,7 +347,7 @@ void FrameStripes::process(float* sig, float sigma) {
     shiftImage(ref_.data(), refSensor_.data(), W, H, cum_[0], cum_[1], tmp_);
   }
   shiftNearest(age_.data(), ageSensor_.data(), cum_[0], cum_[1]);
-  for (size_t i = 0; i < kImagePixels; ++i) diff_[i] = sig[i] - refSensor_[i];
+  for (size_t i = 0; i < kImagePixels; ++i) diff_[i] = source[i] - refSensor_[i];
   values_.clear();
   for (size_t i = 5; i < kImagePixels; i += 23) values_.push_back(diff_[i]);  // (a subsample: every column and row)
   const float med = medianOf(values_);
@@ -342,9 +390,9 @@ void FrameStripes::process(float* sig, float sigma) {
   }
   lastMatched_ = float(unchanged) / float(kImagePixels);
   if (lastMatched_ < o.lost) {  // can't follow the scene: start over from this frame
-    std::copy(sig, sig + kImagePixels, ref_.begin());
+    std::copy(source, source + kImagePixels, ref_.begin());
     std::fill(age_.begin(), age_.end(), 0);
-    cum_[0] = cum_[1] = 0.0;
+    cum_[0] = cum_[1] = moved_[0] = moved_[1] = 0.0;
     return;
   }
   // Each offset: its first mean, then again over the values within band x 1.4 sigma of it (a one-step
@@ -425,6 +473,25 @@ void FrameStripes::updateReference() {
     if (flagsScene_[i] == 1) ref_[i] += alpha * (scene_[i] - ref_[i]);
     else ref_[i] = scene_[i];
     age_[i] = flagsScene_[i] == 1 ? age_[i] + 1 : 0;
+  }
+}
+
+void FrameStripes::applyPatternChange(const std::vector<float>& dcol, const std::vector<float>& drow) {
+  if (!started_ || int(dcol.size()) != W || int(drow.size()) != H) return;
+  // Scene coordinate q holds the sensor's pixel q + cum.
+  auto at = [](const std::vector<float>& v, double pos) {
+    const int n = int(v.size());
+    pos = std::clamp(pos, 0.0, double(n - 1));
+    const int i = std::min(int(pos), n - 2);
+    const double f = pos - i;
+    return float((1.0 - f) * v[size_t(i)] + f * v[size_t(i + 1)]);
+  };
+  std::vector<float> col(W), row(H);
+  for (int x = 0; x < W; ++x) col[size_t(x)] = at(dcol, x + cum_[0]);
+  for (int y = 0; y < H; ++y) row[size_t(y)] = at(drow, y + cum_[1]);
+  for (int y = 0; y < H; ++y) {
+    float* r = ref_.data() + size_t(y) * W;
+    for (int x = 0; x < W; ++x) r[x] -= col[size_t(x)] + row[size_t(y)];
   }
 }
 

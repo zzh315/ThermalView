@@ -186,6 +186,7 @@ class Pipeline {
   };
   void setNoiseReducer(NoiseReducer reducer) { reducer_ = std::move(reducer); }
   bool lastNoiseReductionAccelerated() const { return nrAccelerated_; }
+  const StripeOptions& stripeOptionsInUse() const { return stripes_.options(); }  // (tests)
 
   // A new stream, replay start or range switch: forget every frame seen so far.
   void reset();
@@ -237,6 +238,8 @@ class Pipeline {
   void denoise(float* sig);
   int destripeFrames_ = 0;                    // frames since stage 3b last started over
   FrameStripes stripes_;                  // stage 3c
+  std::vector<float> after3b_;               // (3b learns from it: its output before 3c's correction)
+  std::vector<float> colBefore_, rowBefore_;  // (3b's estimate before its update: the change goes to 3c)
   void applyDestripe(float* sig);          // this frame's correction
   void updateDestripe(const float* sig);   // the estimate for the next frames, from the corrected signal
   void restartDestripe();
