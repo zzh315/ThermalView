@@ -174,6 +174,12 @@ Landscape-first, full-screen, minimal chrome. The controls live in the black mar
 
 **Acceptance:** every control works as specified, live and on replay; a 100 mm bar drawn using the verified density measures 100 mm with a ruler (the owner checks); the performance budget still holds with the box on and zoomed in.
 
+*Status (2026-09-26):*
+- **Built:** all the controls above, in the side bars.
+- **Checked live on the tablet:** palette, noise, texture, view size, zoom (over adb) and pan, the box, the range lock and its drags, Recalibrate and Capture's three modes.
+- **Performance:** with the box on at 4× zoom, 25 fps, latency p50 / p95 17.2 / 20.0 ms (Noise Low).
+- **Waiting on the owner:** the 100 mm ruler (Settings › Diagnostics › 100 mm ruler), and the controls on replay (a replay needs the camera unplugged).
+
 ## M7 — Final tuning and sign-off
 
 A final tuning pass on all benchmark scenes, at every view-size preset, then owner sign-off: in the owner's judgment, our output beats each scene's best reference app.
