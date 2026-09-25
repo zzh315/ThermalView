@@ -67,6 +67,8 @@ fun SettingsPanel(
     onOptions: (DebugOptions) -> Unit,
     showStats: Boolean,
     onShowStats: (Boolean) -> Unit,
+    ruler: Boolean = false,
+    onRuler: (Boolean) -> Unit = {},
 ) {
     var notice by remember { mutableStateOf("") }
     var choosingReplay by remember { mutableStateOf(false) }
@@ -102,7 +104,7 @@ fun SettingsPanel(
                     Page.Image -> ImagePage(options, onOptions)
                     Page.Camera -> CameraPage(options, onOptions, say)
                     Page.Recording -> RecordingPage(options, onOptions, say) { choosingReplay = true }
-                    Page.Diagnostics -> DiagnosticsPage(options, onOptions, say)
+                    Page.Diagnostics -> DiagnosticsPage(options, onOptions, say, ruler, onRuler)
                 }
                 Spacer(Modifier.height(6.dp))
             }
@@ -251,7 +253,13 @@ private fun RecordingPage(options: DebugOptions, onOptions: (DebugOptions) -> Un
 }
 
 @Composable
-private fun DiagnosticsPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit, say: (String) -> Unit) {
+private fun DiagnosticsPage(
+    options: DebugOptions,
+    onOptions: (DebugOptions) -> Unit,
+    say: (String) -> Unit,
+    ruler: Boolean,
+    onRuler: (Boolean) -> Unit,
+) {
     var details by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
     LaunchedEffect(details) {
@@ -269,6 +277,8 @@ private fun DiagnosticsPage(options: DebugOptions, onOptions: (DebugOptions) -> 
                 .background(Color(0x66000000), RoundedCornerShape(8.dp)).padding(8.dp),
         )
     }
+    Section("Screen")
+    SwitchRow("100 mm ruler", "PLAN M6's check of the view sizes: measure it with a ruler", ruler, onRuler)
     Section("Performance")
     SwitchRow("Processing on big cores", "Little cores are ~8× slower", options.bigCores) { onOptions(options.copy(bigCores = it)) }
     Section("Checks")

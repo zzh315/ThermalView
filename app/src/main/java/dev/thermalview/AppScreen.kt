@@ -65,6 +65,7 @@ fun AppScreen(
     var panelOpen by rememberSaveable { mutableStateOf(false) }
     var page by rememberSaveable { mutableStateOf(Page.Main) }
     var panelBounds by remember { mutableStateOf<Rect?>(null) }  // where the open panel covers the image
+    var ruler by rememberSaveable { mutableStateOf(false) }  // debug: PLAN M6's 100 mm check
     // Frames dropped in the last 10 s, from the stream's running count sampled every 250 ms.
     val droppedHistory = remember { ArrayDeque<Pair<Long, Long>>() }
     var recentDrops by remember { mutableStateOf(0L) }
@@ -238,8 +239,34 @@ fun AppScreen(
                     onOptions = onOptions,
                     showStats = showStats,
                     onShowStats = { showStats = it },
+                    ruler = ruler,
+                    onRuler = { ruler = it },
                 )
             }
+            if (ruler) Ruler(Modifier.fillMaxSize())
+        }
+    }
+}
+
+/**
+ * PLAN M6's check: a bar 100 mm long at the panel's verified density (DEVICE.md: 244.5 dpi), with
+ * ticks every 10 mm, for the owner to measure. The view sizes are defined through the same density.
+ */
+@Composable
+private fun Ruler(modifier: Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val pxPerMm = MainActivity.PANEL_DPI / 25.4f
+        val len = 100f * pxPerMm
+        val x0 = (size.width - len) / 2
+        val y = size.height * 0.78f  // (below the center marker)
+        val w = 2.dp.toPx()
+        drawRect(Color(0xE0000000), androidx.compose.ui.geometry.Offset(x0 - 16.dp.toPx(), y - 30.dp.toPx()),
+            androidx.compose.ui.geometry.Size(len + 32.dp.toPx(), 60.dp.toPx()))
+        drawLine(Color.White, androidx.compose.ui.geometry.Offset(x0, y), androidx.compose.ui.geometry.Offset(x0 + len, y), w)
+        for (mm in 0..100 step 10) {
+            val x = x0 + mm * pxPerMm
+            val tall = if (mm % 50 == 0) 18.dp.toPx() else 10.dp.toPx()
+            drawLine(Color.White, androidx.compose.ui.geometry.Offset(x, y - tall), androidx.compose.ui.geometry.Offset(x, y + tall), w)
         }
     }
 }

@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         setOptions(restored(options.value))  // the app's defaults and the kept settings, before any debug extras
+        NativeBridge.setRangeLock(false)  // each launch starts in Auto range (PLAN M6; the session outlives us)
         applyDebugExtras(intent)
         setContent {
             AppScreen(
@@ -293,6 +294,7 @@ class MainActivity : ComponentActivity() {
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val VIEW_WIDTHS = listOf(880, 1467, 0)
+        const val PANEL_DPI = 244.5f  // the panel's verified density (DEVICE.md: 244.52 x 244.45)
         val VIEW_NAMES = listOf("Phone", "Tablet", "Full")  // 4.5", 7.5" and 10.9" diagonals
     }
 }
