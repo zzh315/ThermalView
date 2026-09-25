@@ -122,7 +122,9 @@ def rise_10_90(mean, y0, y1, x0, x1):
 VARIANTS = {
     "none": None,
     "11x11 s1.1 (now)": dict(search=5, strength=1.1),
+    "11x11 s1.0": dict(search=5, strength=1.0),
     "11x11 s0.9": dict(search=5, strength=0.9),
+    "11x11 s0.8": dict(search=5, strength=0.8),
     "11x11 s0.7": dict(search=5, strength=0.7),
     "7x7 s1.2": dict(search=3, strength=1.2),
     "5x5 s1.4 (morning)": dict(search=2, strength=1.4),

@@ -67,10 +67,12 @@ struct PipelineOptions {
   // their difference (the camera's own temporal filter correlates them at ~0.72), a frame's reading
   // accepted only within 0.5-2x of the current one (so motion doesn't count) and smoothed over ~2 s;
   // nrSigma > 0 fixes it instead. The frames themselves are never mixed. Approved (owner,
-  // 2026-09-25) at an 11x11 search (the tablet's GPU; gpu_nlm.h) and strength 1.1.
+  // 2026-09-25) at an 11x11 search (the tablet's GPU; gpu_nlm.h); strength 0.8, the app's Low: at
+  // 1.1 the owner saw objects lose detail (PIPELINE_LOG), and the app's setting goes Off / Low 0.8 /
+  // Medium 0.9 / High 1.1.
   bool nr = true;
   int nrSearch = 5, nrPatch = 2;
-  float nrStrength = 1.1f;
+  float nrStrength = 0.8f;
   float nrSigma = 0.0f;
   float nrNominalSigma = 1.07f;  // the start value (M4: 1.06-1.10 counts on the still benchmark scenes)
   int nrFallbackSearch = 2;      // the CPU's search radius when an accelerator is set but fails

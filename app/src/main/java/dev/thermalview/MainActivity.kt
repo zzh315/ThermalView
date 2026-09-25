@@ -29,7 +29,7 @@ data class DebugOptions(
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val nr: Boolean = true,                 // M4 stage 4b (approved): spatial noise reduction, non-local means
-    val nrStrength: Float = 1.1f,           // its strength (h in noise sigmas) at the GPU's 11x11 search: NR_STRENGTHS
+    val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): NR_PRESETS' Low (owner, 2026-09-25)
     val nrSearch: Int = 5,                  // its search radius: 2 (5x5), 3 (7x7), 5 (11x11); NR_SEARCHES
     val gpuNr: Boolean = true,              // stage 4b on the GPU; off: the CPU at a 5x5 search (h scaled to match)
     val detail: Boolean = true,             // M4 stage 6 (approved): the mid-scale texture layer; a setting
@@ -201,6 +201,9 @@ class MainActivity : ComponentActivity() {
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
         val NR_STRENGTHS = listOf(0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas
         val NR_SEARCHES = listOf(2, 3, 5)  // stage 4b's search radius: 5x5, 7x7, 11x11
+        // Stage 4b's setting (owner, 2026-09-25; the detail it keeps: PIPELINE_LOG): name, on, strength.
+        val NR_PRESETS = listOf(Triple("Off", false, 0f), Triple("Low", true, 0.8f), Triple("Medium", true, 0.9f),
+                                Triple("High", true, 1.1f))
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val VIEW_WIDTHS = listOf(880, 1467, 0)

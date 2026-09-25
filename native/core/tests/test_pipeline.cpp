@@ -81,10 +81,10 @@ TEST_CASE("the defaults are the approved stages") {
   CHECK(o.drift);
   CHECK(o.destripe);
   CHECK_FALSE(o.denoise);  // stage 4 removed (owner, 2026-09-25: after-images on camera motion)
-  CHECK(o.nr);              // stage 4b as approved (2026-09-25): 11x11 search, 5x5 patches, strength 1.1
+  CHECK(o.nr);              // stage 4b as approved (2026-09-25): 11x11 search, 5x5 patches, the app's Low
   CHECK(o.nrSearch == 5);
   CHECK(o.nrPatch == 2);
-  CHECK(o.nrStrength == doctest::Approx(1.1f));
+  CHECK(o.nrStrength == doctest::Approx(0.8f));
   CHECK(o.tone);
   CHECK(o.detail);  // stage 6 as approved (2026-09-25): the mid-scale texture layer at x1.5 alone
   CHECK(o.detailMidGain == doctest::Approx(1.5f));
@@ -147,7 +147,7 @@ TEST_CASE("stage settings as text") {
   CHECK(tv::parseStages("denoise", &o));
   CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,denoise(k0.25)");
   CHECK(tv::parseStages("denoise=0,nr", &o));
-  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,nr(h1.10)");
+  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,nr(h0.80)");
   CHECK_FALSE(tv::parseStages("bogus", &o));
 }
 

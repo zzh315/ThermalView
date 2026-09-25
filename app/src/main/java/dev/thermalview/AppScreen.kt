@@ -203,12 +203,21 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
-                    Toggle("Stage 4b: noise reduction (non-local means)", options.nr) { onOptions(options.copy(nr = it)) }
+                    // Stage 4b's setting (owner, 2026-09-25): Off / Low / Medium / High, starting at Low (PLAN M6).
+                    Button(onClick = {
+                        val presets = MainActivity.NR_PRESETS
+                        val now = presets.indexOfFirst { (_, on, s) -> on == options.nr && (!on || s == options.nrStrength) }
+                        val (_, on, s) = presets[(now + 1).mod(presets.size)]
+                        onOptions(options.copy(nr = on, nrStrength = if (on) s else options.nrStrength))
+                    }) {
+                        val preset = MainActivity.NR_PRESETS.firstOrNull { (_, on, s) -> on == options.nr && (!on || s == options.nrStrength) }
+                        Text("Noise reduction: " + (preset?.first ?: "custom (strength ${options.nrStrength})"))
+                    }
                     Button(onClick = {
                         val s = MainActivity.NR_STRENGTHS
                         onOptions(options.copy(nrStrength = s[(s.indexOf(options.nrStrength) + 1).mod(s.size)]))
                     }) {
-                        Text("Noise reduction strength: " + options.nrStrength)
+                        Text("Noise reduction strength (debug): " + options.nrStrength)
                     }
                     Button(onClick = {
                         val s = MainActivity.NR_SEARCHES
