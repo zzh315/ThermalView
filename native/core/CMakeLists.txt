@@ -20,6 +20,7 @@ add_library(thermalcore STATIC
   src/readouts.cpp
   src/recalibration.cpp
   src/stats.cpp
+  src/stripes.cpp
   src/temperature.cpp
   src/tone.cpp
   src/upscale.cpp
@@ -46,6 +47,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_readouts.cpp
     tests/test_recalibration.cpp
     tests/test_stats.cpp
+    tests/test_stripes.cpp
     tests/test_temperature.cpp
     tests/test_tone.cpp
     tests/test_upscale.cpp

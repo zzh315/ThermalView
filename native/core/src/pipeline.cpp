@@ -59,6 +59,18 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->nrStrength = float(std::atof(value.c_str()));
     } else if (key == "nrSigma" && !value.empty()) {
       o->nrSigma = float(std::atof(value.c_str()));
+    } else if (key == "stripes") {
+      o->stripes = on;
+    } else if (key == "stripesTau" && !value.empty()) {
+      o->stripeOptions.tauFrames = float(std::atof(value.c_str()));
+    } else if (key == "stripesGate" && !value.empty()) {
+      o->stripeOptions.gate = float(std::atof(value.c_str()));
+    } else if (key == "stripesHighpass" && !value.empty()) {
+      o->stripeOptions.highpass = float(std::atof(value.c_str()));
+    } else if (key == "stripesClamp" && !value.empty()) {
+      o->stripeOptions.clamp = float(std::atof(value.c_str()));
+    } else if (key == "stripesEdge" && !value.empty()) {
+      o->stripeOptions.edge = float(std::atof(value.c_str()));
     } else if (key == "nrMethod" && !value.empty()) {
       o->nrMethod = value == "bm3d" || value == "1" ? 1 : 0;
     } else if (key == "bm3dStrength" && !value.empty()) {
@@ -161,6 +173,7 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.badPixels) add("badPixels");
   if (o.destripe) add("destripe");
   if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
+  if (o.stripes) add("stripes");
   if (o.nr && o.nrMethod == 1) add("bm3d(s" + std::to_string(o.bm3dStrength).substr(0, 4) + ")");
   else if (o.nr) add("nr(h" + std::to_string(o.nrStrength).substr(0, 4) + ")");
   if (o.tone) add("tone(g" + std::to_string(o.toneOptions.maxGain).substr(0, 4) + ")");
@@ -192,6 +205,7 @@ Pipeline::Pipeline(const PipelineOptions& options)
 void Pipeline::setOptions(const PipelineOptions& options) {
   options_ = options;
   tone_.setOptions(options.toneOptions);
+  stripes_.setOptions(options.stripeOptions);
 }
 
 void Pipeline::updateNoiseSigma(const uint16_t* image) {
@@ -267,6 +281,7 @@ void Pipeline::reset() {
   frozen_ = false;
   blendLeft_ = blendTotal_ = 0;
   restartDestripe();
+  stripes_.reset();
   haveFiltered_ = false;
   tone_.reset();
 }
@@ -562,7 +577,7 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   };
   const size_t bytes = kImagePixels * sizeof(uint16_t);
   const bool repeat = havePrevious_ && std::memcmp(image, previous_.data(), bytes) == 0;
-  if (options_.nr && havePrevious_ && !repeat && !frozen_) updateNoiseSigma(image);  // stage 4b's sigma
+  if ((options_.nr || options_.stripes) && havePrevious_ && !repeat && !frozen_) updateNoiseSigma(image);  // (4b, 3c)
   std::memcpy(previous_.data(), image, bytes);
   havePrevious_ = true;
 
@@ -581,6 +596,7 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   const bool resuming = frozen_;
   if (resuming) {
     restartDestripe();
+    stripes_.reset();  // (a calibration changed the pattern the reference holds)
     haveFiltered_ = false;  // stage 4 starts over from the fresh frame
   }
 
@@ -599,10 +615,15 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   // Stage 3b: this frame's correction now; its estimate for the next frames from this corrected
   // signal later, while stage 4b's GPU works (it changes nothing in this frame).
   if (options_.destripe) applyDestripe(sig);
-  bool destripePending = options_.destripe;
+  // Stage 3c: this frame's column and row noise now; its reference's update later (like 3b's).
+  const bool stripesRan = options_.stripes;
+  if (stripesRan) stripes_.process(sig, noiseSigma());
+  bool destripePending = options_.destripe, stripesPending = stripesRan;
   const std::function<void()> sideWork = [&] {
     if (destripePending) updateDestripe(sig);
     destripePending = false;
+    if (stripesPending) stripes_.updateReference();
+    stripesPending = false;
     once();
   };
   if (options_.denoise) {  // stage 4 (removed: off) changes sig in place, so the estimate goes first

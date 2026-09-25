@@ -13,6 +13,7 @@
 #include "tv/drift.h"
 #include "tv/bm3d.h"
 #include "tv/filters.h"
+#include "tv/stripes.h"
 #include "tv/frame.h"
 #include "tv/readouts.h"
 #include "tv/tone.h"
@@ -49,6 +50,11 @@ struct PipelineOptions {
   float destripeTauS = 4.0f;
   float destripeGate = 5.0f;   // counts
   float destripeClamp = 2.0f;  // counts
+
+  // Stage 3c (owner, 2026-09-25: the stripe fix, before BM3D; tv/stripes.h): the per-frame column
+  // and row noise, against a motion-compensated reference of the scene. Off until the owner approves.
+  bool stripes = false;
+  StripeOptions stripeOptions;
 
   // Stage 4: a per-pixel recursive filter, y += K (x - y), with K = kMin where nothing moves and 1
   // where it does. Motion is the 3x3 box of (x - y) against its own noise level (sigma, a robust
@@ -230,6 +236,7 @@ class Pipeline {
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
   void denoise(float* sig);
   int destripeFrames_ = 0;                    // frames since stage 3b last started over
+  FrameStripes stripes_;                  // stage 3c
   void applyDestripe(float* sig);          // this frame's correction
   void updateDestripe(const float* sig);   // the estimate for the next frames, from the corrected signal
   void restartDestripe();

@@ -3,6 +3,7 @@
 #include "tv/bm3d.h"
 #include "tv/filters.h"
 #include "tv/frame.h"
+#include "tv/stripes.h"
 
 extern "C" {
 
@@ -49,6 +50,27 @@ void tv_bm3d_cov(const float* src, float* dst, const float* cov, int radius, flo
   noise.radius = radius;
   noise.values.assign(cov, cov + size_t(2 * radius + 1) * size_t(2 * radius + 1));
   tv::bm3d(src, dst, noise, scale, o);
+}
+
+// Stage 3c over a sequence: frames (n x kImagePixels) corrected in place; per frame, the shift found
+// and the fraction matched go into shifts (2 n) and matched (n).
+void tv_stripes(float* frames, int n, float sigma, float tauFrames, float gate, float keep /* band */, float lost, float clamp,
+                float highpass, float* shifts, float* matched) {
+  tv::StripeOptions o;
+  o.tauFrames = tauFrames;
+  o.gate = gate;
+  o.band = keep;
+  o.lost = lost;
+  o.clamp = clamp;
+  o.highpass = highpass;
+  tv::FrameStripes stripes(o);
+  for (int t = 0; t < n; ++t) {
+    stripes.process(frames + size_t(t) * tv::kImagePixels, sigma);
+    stripes.updateReference();
+    shifts[2 * t] = stripes.lastShift()[0];
+    shifts[2 * t + 1] = stripes.lastShift()[1];
+    matched[t] = stripes.lastMatched();
+  }
 }
 
 // Stage 4b's shipped non-local means (tv/filters.h's fast version), h in src's units.
