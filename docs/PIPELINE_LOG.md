@@ -58,7 +58,7 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - **Low is unchanged:** NLM h 0.8. There the two filters are close (0.7 px texture −6 to 0 points, 1–2 px +2 to +8), and the owner couldn't tell them apart.
 - **Live cost, with 3c, on the tablet** (2026-09-26): 25 fps, no dropped frames, latency p50 / p95 25.4 / 30.5 ms. BM3D takes 11.9 / 13.4 ms of its own per frame.
 
-**Verdict:** pending the owner's look at High on the device.
+**Verdict:** the owner keeps Noise Off / Low / High, with High (BM3D) the default: "id keep noise high,low and off. But it should be default on and high" (2026-09-26).
 
 ## 2026-09-26 — Simple settings: noise reduction and texture Off / Low / High (owner)
 
