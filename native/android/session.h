@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 
+#include "gpu_bm3d.h"
 #include "gpu_nlm.h"
 #include "perf_hint.h"
 #include "renderer.h"
@@ -257,6 +258,11 @@ class Session {
   // Stage 4b on the GPU: the pipeline's noise reducer (processing thread only; its GL context is
   // current there, and released when the thread ends).
   GpuNlm gpuNlm_;
+  GpuBm3d gpuBm3d_;  // (stage 4b's other method; its own context, current whenever it runs)
+  int nrStartedMethod_ = -1;  // what start() set going: 0 non-local means, 1 BM3D, -1 nothing
+  bool bm3dUnavailableLogged_ = false;
+  struct { const float* src = nullptr; float sigma = 0; Bm3dOptions options; } bm3dStarted_;
+  void checkGpuBm3d(const float* src, const float* gpu, float sigma, const Bm3dOptions& options);
   bool gpuNr_ = true;
   std::atomic<bool> nrCheckRequested_{false};
   RollingWindow gpuNrMs_{250};

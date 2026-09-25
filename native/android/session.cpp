@@ -488,20 +488,44 @@ void Session::processLoop() {
     tick(nowNs());
   }
   gpuNlm_.release();  // its context is current on this thread; a new processing thread makes another
+  gpuBm3d_.release();
 }
 
 bool Session::startNoiseReductionOnGpu(const float* src, const Pipeline::NoiseRequest& request) {
-  if (request.method != 0) return false;  // BM3D: no GPU version yet (the CPU fallback is non-local means)
+  nrStartedMethod_ = -1;
+  if (request.method == 1) {  // BM3D (the CPU fallback, where the GPU can't, is non-local means)
+    if (!gpuNr_) return false;
+    const bool wasFailed = gpuBm3d_.failed();
+    const bool ok = gpuBm3d_.start(src, request.sigma, request.bm3d);
+    if (!ok && !wasFailed && !bm3dUnavailableLogged_) {
+      FLOG("stage 4b: BM3D on the GPU unavailable (%s), the CPU's non-local means takes over",
+           GpuBm3d::supports(request.bm3d) ? gpuBm3d_.status().c_str() : "options it doesn't do");
+      bm3dUnavailableLogged_ = true;
+    }
+    if (ok) nrStartedMethod_ = 1;
+    bm3dStarted_ = {src, request.sigma, request.bm3d};
+    return ok;
+  }
   const int searchRadius = request.searchRadius, patchRadius = request.patchRadius;
   const float h = request.h;
   const bool wasFailed = gpuNlm_.failed();
   const bool ok = gpuNr_ && gpuNlm_.start(src, searchRadius, patchRadius, h);
   if (!ok && gpuNr_ && !wasFailed) FLOG("stage 4b: GPU unavailable (%s), the CPU takes over", gpuNlm_.status().c_str());
   nrStarted_ = {src, searchRadius, patchRadius, h};  // the pipeline keeps src as it is until finish
+  if (ok) nrStartedMethod_ = 0;
   return ok;
 }
 
 bool Session::finishNoiseReductionOnGpu(float* dst) {
+  if (nrStartedMethod_ == 1) {
+    const bool wasFailed = gpuBm3d_.failed();
+    const bool ok = gpuBm3d_.finish(dst);
+    if (ok) gpuNrMs_.push(gpuBm3d_.lastMs());
+    if (!ok && !wasFailed) FLOG("stage 4b: BM3D read-back failed (%s), the CPU takes over", gpuBm3d_.status().c_str());
+    if (nrCheckRequested_.exchange(false))
+      checkGpuBm3d(bm3dStarted_.src, ok ? dst : nullptr, bm3dStarted_.sigma, bm3dStarted_.options);
+    return ok;
+  }
   const bool wasFailed = gpuNlm_.failed();
   const bool ok = gpuNlm_.finish(dst);
   if (ok) gpuNrMs_.push(gpuNlm_.lastMs());
@@ -510,6 +534,81 @@ bool Session::finishNoiseReductionOnGpu(float* dst) {
     checkGpuNoiseReduction(nrStarted_.src, ok ? dst : nullptr, nrStarted_.searchRadius, nrStarted_.patchRadius,
                            nrStarted_.h);
   return ok;
+}
+
+void Session::checkGpuBm3d(const float* src, const float* gpu, float sigma, const Bm3dOptions& options) {
+  if (!gpu) {
+    FLOG("stage 4b check (BM3D): no GPU result (%s)", gpuNr_ ? gpuBm3d_.status().c_str() : "the GPU is off");
+    return;
+  }
+  // The same input through native/core's reference (tv/bm3d.h): what the harness and the tests run.
+  std::vector<float> cpu(kImagePixels);
+  const int64_t t0 = nowNs();
+  bm3d(src, cpu.data(), sigma, options);
+  const double cpuMs = double(nowNs() - t0) / 1e6;
+  double maxDiff = 0, sumDiff = 0, sumChange = 0;
+  size_t worst = 0, over = 0;
+  for (size_t i = 0; i < kImagePixels; ++i) {
+    const double d = std::fabs(double(gpu[i]) - double(cpu[i]));
+    if (d > maxDiff) {
+      maxDiff = d;
+      worst = i;
+    }
+    sumDiff += d;
+    over += d > 0.01;
+    sumChange += std::fabs(double(cpu[i]) - double(src[i]));
+  }
+  const std::string dir = storageDir_ + "/nrcheck";
+  mkdir(dir.c_str(), 0770);
+  auto save = [&dir](const char* name, const float* data) {
+    if (FILE* f = std::fopen((dir + "/" + name).c_str(), "wb")) {
+      std::fwrite(data, sizeof(float), kImagePixels, f);
+      std::fclose(f);
+    }
+  };
+  save("bm3d_input.f32", src);
+  save("bm3d_gpu.f32", gpu);
+  save("bm3d_cpu.f32", cpu.data());
+  FLOG("stage 4b check (BM3D, sigma %.3f, search %d, groups %d, stride %d): |GPU - CPU| max %.2e counts at "
+       "(%zu,%zu), mean %.2e, over 0.01 counts %zu pixels; the filter moved pixels %.3f counts on average; GPU "
+       "%.2f ms (level + upload %.2f, dispatch %.2f, wait %.2f, copy %.2f), CPU reference %.0f ms (images in nrcheck/)",
+       sigma, options.search, options.group1, options.stride, maxDiff, worst % kFrameWidth, worst / kFrameWidth,
+       sumDiff / double(kImagePixels), over, sumChange / double(kImagePixels), gpuBm3d_.lastMs(),
+       gpuBm3d_.lastPhasesMs()[0], gpuBm3d_.lastPhasesMs()[1], gpuBm3d_.lastPhasesMs()[2], gpuBm3d_.lastPhasesMs()[3],
+       cpuMs);
+  // Back to back, the GPU's time from upload to read-back (its own, without the pipeline's work), and
+  // each pass on its own, for this shape and a few others (what the time goes with).
+  std::vector<float> out(kImagePixels);
+  auto median = [](std::vector<double> v) {
+    std::sort(v.begin(), v.end());
+    return v.empty() ? -1.0 : v[v.size() / 2];
+  };
+  std::vector<double> ms;
+  for (int k = 0; k < 15 && gpuBm3d_.run(src, out.data(), sigma, options); ++k) ms.push_back(gpuBm3d_.lastMs());
+  FLOG("stage 4b check (BM3D): back to back, upload to read-back %.2f ms (median of %zu)", median(ms), ms.size());
+  struct Variant {
+    int search, group, stride, ablate;
+  };
+  for (const Variant v : {Variant{options.search, options.group1, options.stride, 0},
+                          Variant{options.search, options.group1, options.stride, 1},
+                          Variant{options.search, options.group1, options.stride, 2},
+                          Variant{options.search, options.group1, options.stride, 3}, Variant{3, 8, 6, 0}}) {
+    Bm3dOptions o = options;
+    o.search = v.search;
+    o.group1 = o.group2 = v.group;
+    o.stride = v.stride;
+    std::vector<double> pass[4], total;
+    for (int k = 0; k < 7; ++k) {
+      double t[4];
+      if (!gpuBm3d_.profile(src, out.data(), sigma, o, t, v.ablate)) break;
+      for (int j = 0; j < 4; ++j) pass[j].push_back(t[j]);
+    }
+    for (int k = 0; k < 7 && v.ablate == 0 && gpuBm3d_.run(src, out.data(), sigma, o); ++k) total.push_back(gpuBm3d_.lastMs());
+    FLOG("stage 4b check (BM3D): search %d, groups %d, stride %d%s: run %.2f ms; passes alone: step 1 %.2f, gather %.2f, "
+         "step 2 %.2f, gather %.2f ms (medians)", v.search, v.group, v.stride,
+         v.ablate == 1 ? " (no ranking)" : v.ablate == 2 ? " (no distances)" : v.ablate == 3 ? " (neither)" : "",
+         median(total), median(pass[0]), median(pass[1]), median(pass[2]), median(pass[3]));
+  }
 }
 
 void Session::checkGpuNoiseReduction(const float* src, const float* gpu, int searchRadius, int patchRadius, float h) {
@@ -1272,8 +1371,10 @@ void Session::handleFrame(const RawFrame& frame) {
   if (!pipeline_.options().nr)
     s.nr.clear();
   else if (pipeline_.lastNoiseReductionAccelerated())
-    s.nr = format("stage 4b: %s, %.2f ms p50 / %.2f p95 of its own calls (the temperature work runs while it "
-                  "filters)", gpuNlm_.status().c_str(), gpuNrMs_.percentile(50), gpuNrMs_.percentile(95));
+    s.nr = format("stage 4b: %s %s, %.2f ms p50 / %.2f p95 of its own calls (the temperature work runs while it "
+                  "filters)", nrStartedMethod_ == 1 ? "BM3D" : "NLM",
+                  nrStartedMethod_ == 1 ? gpuBm3d_.status().c_str() : gpuNlm_.status().c_str(),
+                  gpuNrMs_.percentile(50), gpuNrMs_.percentile(95));
   else
     s.nr = format("stage 4b: CPU, search %dx%d (GPU: %s)", 2 * std::min(pipeline_.options().nrSearch, pipeline_.options().nrFallbackSearch) + 1,
                   2 * std::min(pipeline_.options().nrSearch, pipeline_.options().nrFallbackSearch) + 1,

@@ -57,6 +57,8 @@ target_link_libraries(uvc PUBLIC usb1)
 add_library(thermalview SHARED
   command_sender.cpp
   field_log.cpp
+  gpu_bm3d.cpp
+  gpu_bm3d_shader.cpp
   gpu_nlm.cpp
   gpu_nlm_shader.cpp
   jni_bridge.cpp

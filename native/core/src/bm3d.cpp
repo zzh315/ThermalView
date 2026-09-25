@@ -334,6 +334,9 @@ void bm3dCore(const float* image, float* dst, float sigma2, const NoiseTables* t
 
 }  // namespace
 
+std::vector<float> bm3dDctMatrix(int k) { return dctMatrix(k); }
+std::vector<float> bm3dKaiserWindow(int k, float beta) { return kaiserWindow(k, beta); }
+
 float NoiseCovariance::at(int dx, int dy) const {
   if (radius <= 0 || values.empty()) return 0.0f;
   dx = std::clamp(dx, -radius, radius);

@@ -214,6 +214,9 @@ private fun DebugPanel(
                         val preset = MainActivity.NR_PRESETS.firstOrNull { (_, on, s) -> on == options.nr && (!on || s == options.nrStrength) }
                         Text("Noise reduction: " + (preset?.first ?: "custom (strength ${options.nrStrength})"))
                     }
+                    Button(onClick = { onOptions(options.copy(nrMethod = 1 - options.nrMethod)) }) {
+                        Text("Noise reduction filter: " + if (options.nrMethod == 1) "BM3D (preview, same noise)" else "non-local means")
+                    }
                     Button(onClick = {
                         val s = MainActivity.NR_STRENGTHS
                         onOptions(options.copy(nrStrength = s[(s.indexOf(options.nrStrength) + 1).mod(s.size)]))

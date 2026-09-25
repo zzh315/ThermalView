@@ -33,6 +33,7 @@ data class DebugOptions(
     val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): NR_PRESETS' Low (owner, 2026-09-25)
     val nrSearch: Int = 5,                  // its search radius: 2 (5x5), 3 (7x7), 5 (11x11); NR_SEARCHES
     val gpuNr: Boolean = true,              // stage 4b on the GPU; off: the CPU at a 5x5 search (h scaled to match)
+    val nrMethod: Int = 0,                  // stage 4b's filter: 0 non-local means, 1 BM3D (preview, GPU only), same noise
     val detail: Boolean = true,             // M4 stage 6 (approved): the mid-scale texture layer; a setting
     val textureStrength: Float = 1.5f,      // stage 6's strength: owner, 1.5 by default, up to 3 (TEXTURE_STRENGTHS)
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
@@ -48,7 +49,11 @@ data class DebugOptions(
         "denoise=0", "tone=" + bit(tone), "detail=" + bit(detail),  // stage 4 removed (owner, 2026-09-25)
         "nr=" + bit(nr), "nrSearch=$nrSearch", "nrStrength=$nrStrength",  // (the CPU falls back to 5x5)
         "detailMid=" + textureStrength,
-    ).joinToString(",")
+    ).plus(if (nrMethod == 1) listOf(
+        // BM3D's real-time shape, at the strength that leaves the noise non-local means would (PIPELINE_LOG)
+        "nrMethod=bm3d", "bm3dStrength=" + MainActivity.bm3dStrengthFor(nrStrength), "bm3dBlock=8", "bm3dStride=6",
+        "bm3dSearch=5", "bm3dGroup1=8", "bm3dGroup2=8", "bm3dTau1=0", "bm3dTau2=0",
+    ) else emptyList()).joinToString(",")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
 }
@@ -126,7 +131,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
+     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch, nrMethod (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -159,6 +164,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("nrStrength")) o = o.copy(nrStrength = extras.getFloat("nrStrength"))
         if (extras.containsKey("gpuNr")) o = o.copy(gpuNr = extras.getBoolean("gpuNr"))
         if (extras.containsKey("nrSearch")) o = o.copy(nrSearch = extras.getInt("nrSearch"))
+        if (extras.containsKey("nrMethod")) o = o.copy(nrMethod = extras.getInt("nrMethod"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -207,6 +213,18 @@ class MainActivity : ComponentActivity() {
         // Stage 4b's setting (owner, 2026-09-25; the detail it keeps: PIPELINE_LOG): name, on, strength.
         val NR_PRESETS = listOf(Triple("Off", false, 0f), Triple("Low", true, 0.8f), Triple("Medium", true, 0.9f),
                                 Triple("High", true, 1.1f))
+        // BM3D's strength (sigma multiple) that leaves the noise non-local means leaves at each preset's h, on
+        // known texture through stage 3c (PIPELINE_LOG, 2026-09-26); between and beyond them, linear.
+        private val BM3D_MATCH = listOf(0.8f to 1.04f, 0.9f to 1.23f, 1.1f to 1.65f)
+        fun bm3dStrengthFor(h: Float): Float {
+            val i = when {
+                h <= BM3D_MATCH[1].first -> 0
+                else -> 1
+            }
+            val (x0, y0) = BM3D_MATCH[i]
+            val (x1, y1) = BM3D_MATCH[i + 1]
+            return y0 + (h - x0) * (y1 - y0) / (x1 - x0)
+        }
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val VIEW_WIDTHS = listOf(880, 1467, 0)

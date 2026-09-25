@@ -96,6 +96,9 @@ bool GpuNlm::start(const float* src, int searchRadius, int patchRadius, float h,
   started_ = false;
   if (failed_) return false;
   if (context_ == EGL_NO_CONTEXT && !init()) return false;
+  // (the GPU BM3D keeps a context of its own on this thread: after it ran, this one isn't current)
+  if (eglGetCurrentContext() != context_ && !eglMakeCurrent(display_, surface_, surface_, context_))
+    return fail("cannot make the context current");
   searchRadius = std::clamp(searchRadius, 1, 7);  // as the CPU's
   patchRadius = std::clamp(patchRadius, 0, 3);
   if (pixelsPerThread != 1 && pixelsPerThread != 2 && pixelsPerThread != 4) pixelsPerThread = kDefaultPixelsPerThread;
@@ -126,6 +129,8 @@ bool GpuNlm::start(const float* src, int searchRadius, int patchRadius, float h,
 bool GpuNlm::finish(float* dst) {
   if (!started_ || failed_) return false;
   started_ = false;
+  if (eglGetCurrentContext() != context_ && !eglMakeCurrent(display_, surface_, surface_, context_))
+    return fail("cannot make the context current");
   const double t2 = nowMs();
   const GLsizeiptr bytes = GLsizeiptr(kImagePixels * sizeof(float));
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, out_);

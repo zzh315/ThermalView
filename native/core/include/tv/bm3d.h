@@ -47,6 +47,11 @@ struct Bm3dOptions {
 // src -> dst, kFrameWidth x kImageRows; sigma: the noise's std, in src's units (sigma <= 0: a copy).
 void bm3d(const float* src, float* dst, float sigma, const Bm3dOptions& options);
 
+// The transforms' tables, as the filter uses them (and the GPU version bakes into its shaders): the
+// orthonormal DCT-II matrix c[u * k + x], and the k x k Kaiser aggregation window.
+std::vector<float> bm3dDctMatrix(int k);
+std::vector<float> bm3dKaiserWindow(int k, float beta);
+
 // Correlated noise (Makinen, Azzari and Foi, "Collaborative filtering of correlated noise: exact
 // transform-domain variance for improved shrinkage and patch matching", IEEE TIP 2020): this
 // sensor's per-frame column and row noise is the same along a column (a row), so block matching
