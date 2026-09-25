@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(thermalcore STATIC
   src/bad_pixels.cpp
+  src/bm3d.cpp
   src/command_gate.cpp
   src/display.cpp
   src/drift.cpp

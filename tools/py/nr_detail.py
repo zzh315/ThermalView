@@ -29,6 +29,7 @@ Input: stages 1-3's signal, as for nr_study.py (build/nr/in/<scene>/pipeline_s.f
 """
 
 import argparse
+import ctypes
 import json
 import pathlib
 import time
@@ -86,6 +87,30 @@ def nlm(x, search=5, patch=2, strength=1.1, spatial=0.0, cutoff=0.0, norm="l1", 
     return out.astype(np.float32)
 
 
+_LIB = []
+
+
+def native():
+    """native/core's filters through build/harness/libtvnr.dylib (tools/harness/src/nrlib.cpp)."""
+    if not _LIB:
+        lib = ctypes.CDLL(str(ROOT / "build" / "harness" / "libtvnr.dylib"))
+        f, i, ptr = ctypes.c_float, ctypes.c_int, ctypes.c_void_p
+        lib.tv_bm3d.argtypes = [ptr, ptr, f, i, i, i, i, i, f, f, f, i, f, i, f]
+        lib.tv_nlm.argtypes = [ptr, ptr, i, i, f]
+        _LIB.append(lib)
+    return _LIB[0]
+
+
+def bm3d(x, strength=1.0, block=8, stride=3, search=19, group1=16, group2=32, lam=3.0, tau1=4.0, tau2=0.64,
+         wiener=True, kaiser=2.0, all_blocks=True, mu2=0.4):
+    """native/core's BM3D (tv/bm3d.h) at sigma = strength x the camera's noise."""
+    x = np.ascontiguousarray(x, np.float32)
+    out = np.empty_like(x)
+    native().tv_bm3d(x.ctypes.data, out.ctypes.data, strength * SIGMA, block, stride, search, group1, group2, lam,
+                     tau1, tau2, int(wiener), kaiser, int(all_blocks), mu2)
+    return out
+
+
 def bands(img):
     g = [cv2.GaussianBlur(img.astype(np.float64), (0, 0), s, borderType=cv2.BORDER_REFLECT_101) for s in (0.7, 1.5, 3.0, 6.0)]
     return {"fine": g[0] - g[1], "mid": g[1] - g[2], "coarse": g[2] - g[3]}
@@ -138,6 +163,23 @@ VARIANTS = {
     "11x11 s1.1 addback 0.5": dict(search=5, strength=1.1, addback=0.5),
     "11x11 s1.1 addback 1.0": dict(search=5, strength=1.1, addback=1.0),
 }
+# BM3D variants: the IPOL parameters (block 8, stride 3, search radius 19, groups 16 / 32), then
+# the real-time sweep's.
+BM3D_VARIANTS = {
+    "BM3D ipol s1.0": dict(strength=1.0, lam=2.7, mu2=1.0),
+    "BM3D ipol s0.8": dict(strength=0.8, lam=2.7, mu2=1.0),
+    "BM3D full groups s1.0": dict(strength=1.0, lam=2.7, mu2=1.0, tau1=0, tau2=0),
+    "BM3D 2020 s1.0": dict(strength=1.0, tau1=0, tau2=0),
+    "BM3D 2020 s0.8": dict(strength=0.8, tau1=0, tau2=0),
+    "BM3D 2020 thr s1.0": dict(strength=1.0),
+}
+
+
+def filter_of(name):
+    if name in BM3D_VARIANTS:
+        return lambda x, p=BM3D_VARIANTS[name]: bm3d(x, **p)
+    params = VARIANTS[name]
+    return (lambda x: x) if params is None else (lambda x, p=params: nlm(x, **p))
 
 
 def texture_cases(seed=3):
@@ -151,16 +193,16 @@ def texture_cases(seed=3):
     return cases
 
 
-def synthetic(names):
+def synthetic(names, extra=None, every=3):
+    """The known-texture test for the named filters (VARIANTS, BM3D_VARIANTS), and extra: {name: callable}."""
     flat = load("flat", slice(125, 200))
-    frames = flat[::3]
+    frames = flat[::every]
     base_noise = residual(frames).std()
     cases = texture_cases()
     print(f"{'variant':26s} {'noise':>6s}  " + " ".join(f"{f'{s}px x{a}':>9s}" for s, a in cases))
     rows = []
-    for name in names:
-        params = VARIANTS[name]
-        f = (lambda x: x) if params is None else (lambda x: nlm(x, **params))
+    filters = [(name, filter_of(name)) for name in names] + list((extra or {}).items())
+    for name, f in filters:
         filtered = np.stack([f(x) for x in frames])
         noise = residual(filtered).std() / base_noise
         base = filtered.mean(0)

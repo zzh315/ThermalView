@@ -14,3 +14,9 @@ add_executable(harness src/main.cpp)
 target_link_libraries(harness PRIVATE thermalcore)
 target_compile_options(harness PRIVATE -Wall -Wextra)
 target_compile_definitions(harness PRIVATE TV_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+
+# native/core's noise filters for the Python tools (tools/py/nr_detail.py, via ctypes).
+set_property(TARGET thermalcore PROPERTY POSITION_INDEPENDENT_CODE ON)
+add_library(tvnr SHARED src/nrlib.cpp)
+target_link_libraries(tvnr PRIVATE thermalcore)
+target_compile_options(tvnr PRIVATE -Wall -Wextra)
