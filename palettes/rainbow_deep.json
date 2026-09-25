@@ -26,5 +26,7 @@
     ]
   ],
   "saturation": "#808080",
-  "note": "Deep: rainbow_hc's hues (cold green, mid yellow, hot red) with each stop's own lightness, a darker green at the cold end for depth, and chroma at 90% of what sRGB allows there (the owner found rainbow_hc over-saturated, 2026-09-26). A candidate for the owner's pick."
+  "note": "Deep: rainbow_hc's hues (cold green, mid yellow, hot red) with each stop's own lightness, a darker green at the cold end for depth, and chroma at 90% of what sRGB allows there (the owner found rainbow_hc over-saturated, 2026-09-26). A candidate for the owner's pick. lockedAbove / lockedBelow: with the range locked, pixels above and below it (grey, as Xtherm; the owner, 2026-09-26).",
+  "lockedAbove": "#C8C8C8",
+  "lockedBelow": "#555555"
 }

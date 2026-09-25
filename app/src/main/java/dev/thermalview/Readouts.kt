@@ -45,6 +45,7 @@ data class Readings(
     val scaleHiOver: Boolean,  // the mapping's top is over range
     val locked: Boolean,       // the range is locked (M6): the ends are the lock's, adjustable
     val marks: FloatArray = floatArrayOf(Float.NaN, Float.NaN, Float.NaN),  // high, low, center on the scale (intensity)
+    val curve: FloatArray = FloatArray(0),  // the mapping's intensity at even temperatures from scaleLoC to scaleHiC
 ) {
     /** "45.3 °C" ([unit] false: "45.3°"), "> 120 °C" over range, "--" without a reading. */
     fun text(s: Spot, unit: Boolean = true): String = when {
@@ -63,6 +64,7 @@ data class Readings(
                 scaleHiOver = a.getOrElse(15) { 0f } > 0.5f,
                 locked = a.getOrElse(16) { 0f } > 0.5f,
                 marks = FloatArray(3) { a.getOrElse(17 + it) { Float.NaN } },
+                curve = if (a.size >= 20 + 17) FloatArray(17) { a[20 + it] } else FloatArray(0),
             )
         }
     }

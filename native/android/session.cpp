@@ -189,6 +189,9 @@ struct Session::Snapshot {
   // Where the high, low and center readouts fall on the scale: their temperatures through the mapping
   // (NaN: no readout), in the order of Readouts' high, low, center.
   double scaleMark[3] = {NAN, NAN, NAN};
+  // The mapping as the scale bar draws it: its intensity at kScaleSamples even temperatures from
+  // scaleLoC to scaleHiC (NaN: no mapping).
+  double scaleCurve[Session::kScaleSamples] = {};
   double lastCycleMs = 0;
   uint64_t recalDue = 0;   // the recalibration policy's dry run: how often it would have asked
   double recalAgoS = -1;   // and how long ago it last would have
@@ -1378,9 +1381,20 @@ void Session::handleFrame(const RawFrame& frame) {
     } else if (const ToneMapper* tone = pipeline_.toneMapper()) {
       scaleLoC_ = celsiusAt(lut_, tone->lowCounts());
       scaleHiOver_ = tone->highCounts() >= clipRaw_;
-      scaleHiC_ = scaleHiOver_ ? NAN : celsiusAt(lut_, tone->highCounts());
+      // (over range: the clip's temperature, so the bar can still be drawn; its label says "> 120°")
+      scaleHiC_ = celsiusAt(lut_, scaleHiOver_ ? double(clipRaw_) - 1.0 : tone->highCounts());
     }
     out.arrivalNs = frame.arrivalNs;
+    // The range lock's marks for the display (for palettes that show them: the rainbow's grey).
+    if (const uint8_t* m = pipeline_.outsideMask()) {
+      out.locked = true;
+      for (size_t i = 0; i < kImagePixels; ++i) {
+        out.outside[2 * i] = m[i] == 1 ? 255 : 0;
+        out.outside[2 * i + 1] = m[i] == 2 ? 255 : 0;
+      }
+    } else {
+      out.locked = false;
+    }
     // The readouts on the scale bar: where their temperatures land through the mapping (so they agree
     // with its °C ends; the pixels themselves show noise reduction's smoothed values). Over range: the
     // top.
@@ -1395,6 +1409,10 @@ void Session::handleFrame(const RawFrame& frame) {
       scaleMark_[0] = at(shownReadouts_.high);
       scaleMark_[1] = at(shownReadouts_.low);
       scaleMark_[2] = at(shownReadouts_.center);
+      for (int k = 0; k < kScaleSamples; ++k) {
+        const double t = scaleLoC_ + (scaleHiC_ - scaleLoC_) * k / (kScaleSamples - 1);
+        scaleCurve_[k] = tone && std::isfinite(t) ? tone->intensityAt(float(countsAt(lut_, t))) : NAN;
+      }
     }
     renderer_.publishFrame();
     const int64_t workNs = nowNs() - t0;
@@ -1469,6 +1487,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.scaleHiOver = scaleHiOver_;
   s.scaleLocked = rangeLock_.held();
   for (int k = 0; k < 3; ++k) s.scaleMark[k] = scaleMark_[k];
+  for (int k = 0; k < kScaleSamples; ++k) s.scaleCurve[k] = scaleCurve_[k];
   s.lastCycleMs = lastCycleMs_;
   s.recalDue = recalDue_;
   s.recalAgoS = recalDueNs_ ? double(frame.arrivalNs - recalDueNs_) / 1e9 : -1.0;
@@ -1798,7 +1817,7 @@ std::string Session::setDisplay(int upscaler, const std::string& paletteJson) {
     if (!parsePalette(paletteJson, &spec, &error)) return "palette: " + error;
     lut = buildPaletteLut(spec);
   }
-  renderer_.setDisplay(upscaler, std::move(lut), spec.saturation);
+  renderer_.setDisplay(upscaler, std::move(lut), spec.saturation, spec.marksLocked, spec.lockedAbove, spec.lockedBelow);
   return "";
 }
 
@@ -1853,6 +1872,7 @@ std::vector<float> Session::readouts() {
   v.push_back(snapshot_->scaleHiOver ? 1.0f : 0.0f);
   v.push_back(snapshot_->scaleLocked ? 1.0f : 0.0f);
   for (double m : snapshot_->scaleMark) v.push_back(float(m));
+  for (double c : snapshot_->scaleCurve) v.push_back(float(c));
   return v;
 }
 

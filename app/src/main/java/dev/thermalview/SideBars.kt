@@ -4,10 +4,19 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -161,7 +170,8 @@ fun StatsLines(status: Status, recentDrops: Long) {
 fun RightBar(
     modifier: Modifier,
     readings: Readings?,
-    scaleColors: List<Color>,
+    palette: IntArray,      // the palette's colors, cold to hot (the scale bar)
+    marksLocked: Boolean,   // the palette marks pixels beyond a locked range (the rainbow's grey)
     live: Boolean,
     status: Status,
     panelOpen: Boolean,
@@ -181,7 +191,7 @@ fun RightBar(
                 LockGlyph(locked)
             }
         }
-        ScaleBar(readings, scaleColors, Modifier.weight(1f))
+        ScaleBar(readings, palette, marksLocked, Modifier.weight(1f))
         CalibrateTile(live)
         if (BuildConfig.DEBUG) CaptureTile(status, live)
         Tile(onClick = onPanel, color = if (panelOpen) Ui.TileActive else Ui.Tile) {
@@ -203,22 +213,24 @@ private fun ReadoutRow(marker: Color, textColor: Color, text: String?) {
 }
 
 /**
- * The palette with the temperatures at the ends of the mapping (PLAN M5: endpoints only, since
- * the curve isn't linear). The colors run from the mapping's top (hot) to its bottom. With the range
- * locked, a drag adjusts it: from the top part the hot end, from the bottom part the cold end, from
- * the middle both (the whole range slides). A drag across the bar's height moves by one span, or by
- * 4 °C for a narrower one (so a tight lock can still slide far).
+ * The scale bar (PLAN M6; owner, 2026-09-26: "for xtherm the 2 ranges can be dragged and altered
+ * separately"): a temperature axis spanning the scene and the color range, with a handle at each end
+ * of the range. Between the handles, the palette as the image uses it (the mapping's curve); beyond
+ * them, what the image shows there (the rainbow's grey marks when locked, else the palette's ends).
+ * Dragging a handle moves that end alone, locking the range first if it was Auto; the axis holds
+ * still while a finger is down. Ticks mark the high, center and low readouts at their temperatures.
  */
 @Composable
-private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifier) {
+private fun ScaleBar(readings: Readings?, palette: IntArray, marksLocked: Boolean, modifier: Modifier) {
     val locked = readings?.locked == true
+    val measurer = rememberTextMeasurer()
     // While dragging, and after it until the native side shows the same ends (at most 3 s), the ends
     // shown are ours. Unlocked, they're the native side's again at once.
     var ours by remember { mutableStateOf<Pair<Float, Float>?>(null) }
-    var dragging by remember { mutableStateOf(false) }
     var released by remember { mutableIntStateOf(0) }
+    var frozenAxis by remember { mutableStateOf<Pair<Float, Float>?>(null) }
     val native by rememberUpdatedState((readings?.scaleLoC ?: Float.NaN) to (readings?.scaleHiC ?: Float.NaN))
-    LaunchedEffect(locked) { if (!locked) ours = null }
+    LaunchedEffect(locked) { if (!locked && frozenAxis == null) ours = null }
     LaunchedEffect(released) {
         if (released == 0) return@LaunchedEffect
         val until = System.currentTimeMillis() + 3000
@@ -227,106 +239,119 @@ private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifie
             if (abs(native.first - o.first) < 0.05f && abs(native.second - o.second) < 0.05f) break
             delay(100)
         }
-        if (!dragging) ours = null
+        if (frozenAxis == null) ours = null
     }
-    val lo = ours?.first ?: readings?.scaleLoC ?: Float.NaN
-    val hi = ours?.second ?: readings?.scaleHiC ?: Float.NaN
-    val current by rememberUpdatedState(lo to hi)
-    val top = when {
-        readings == null -> ""
-        readings.scaleHiOver && ours == null -> "> 120°"
-        hi.isNaN() -> "--"
-        else -> "%.1f°".format(hi)
+    val lo = ours?.first ?: native.first
+    val hi = ours?.second ?: native.second
+    // The axis: the range and the scene's own extremes, with a margin (held while dragging).
+    val axis = frozenAxis ?: run {
+        val sceneLo = readings?.low?.takeIf { it.valid }?.tempC ?: lo
+        val sceneHi = readings?.high?.takeIf { it.valid }?.tempC ?: hi
+        val a0 = minOf(lo, sceneLo)
+        val a1 = maxOf(hi, sceneHi)
+        val pad = maxOf(0.06f * (a1 - a0), 0.3f)
+        (a0 - pad) to (a1 + pad)
     }
-    val bottom = when {
-        readings == null -> ""
-        lo.isNaN() -> "--"
-        else -> "%.1f°".format(lo)
-    }
-    val labelColor = if (locked) Ui.Accent else Ui.Text
-    Column(
-        modifier.fillMaxWidth().pointerInput(locked) {
-            if (!locked) return@pointerInput
-            var part = 0
-            var start = 0f to 0f
-            var moved = 0f
-            try {
-                detectVerticalDragGestures(
-                    onDragStart = { at ->
-                        part = when {
-                            at.y < size.height * 0.35f -> 1   // the hot end
-                            at.y > size.height * 0.65f -> -1  // the cold end
-                            else -> 0                          // both
-                        }
-                        start = current
-                        moved = 0f
-                        dragging = true
-                    },
-                    onDragEnd = { dragging = false; released += 1 },
-                    onDragCancel = { dragging = false; released += 1 },
-                ) { change, dy ->
-                    change.consume()
-                    val (l0, h0) = start
-                    if (l0.isNaN() || h0.isNaN()) return@detectVerticalDragGestures
-                    moved += dy
-                    val d = -moved / size.height * maxOf(h0 - l0, 4f)
-                    val minSpan = minOf(0.5f, h0 - l0)  // (RangeLock::kMinSpanC, or a narrower lock's own)
-                    val next = when (part) {
-                        1 -> l0 to maxOf(h0 + d, l0 + minSpan)
-                        -1 -> minOf(l0 + d, h0 - minSpan) to h0
-                        else -> (l0 + d) to (h0 + d)
+    val current by rememberUpdatedState(Triple(lo, hi, axis))
+    val labelStyle = TextStyle(fontSize = 13.sp, fontFeatureSettings = "tnum", color = if (locked) Ui.Accent else Ui.Text)
+    Box(
+        modifier.fillMaxWidth().pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                val (l0, h0, ax) = current
+                if (l0.isNaN() || h0.isNaN() || ax.first.isNaN()) return@awaitEachGesture
+                val barTop = 10.dp.toPx()
+                val barH = size.height - 2 * barTop
+                fun yOf(t: Float) = barTop + (ax.second - t) / (ax.second - ax.first) * barH
+                fun tOf(y: Float) = ax.second - (y - barTop) / barH * (ax.second - ax.first)
+                // The nearer handle takes the drag.
+                val hot = abs(down.position.y - yOf(h0)) <= abs(down.position.y - yOf(l0))
+                frozenAxis = ax
+                if (!locked) NativeBridge.setRangeLock(true)
+                val minSpan = minOf(0.5f, h0 - l0)
+                try {
+                    drag(down.id) { change ->
+                        change.consume()
+                        val t = tOf(change.position.y).coerceIn(ax.first, ax.second)
+                        val next = if (hot) l0 to maxOf(t, l0 + minSpan) else minOf(t, h0 - minSpan) to h0
+                        ours = next
+                        NativeBridge.setRangeEnds(next.first, next.second)
                     }
-                    ours = next
-                    NativeBridge.setRangeEnds(next.first, next.second)
-                }
-            } finally {  // (the gesture restarts, without an end or cancel, when the lock changes)
-                if (dragging) {
-                    dragging = false
+                } finally {
+                    frozenAxis = null
                     released += 1
                 }
             }
         },
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(top, color = labelColor, fontSize = 14.sp, style = Tabular, maxLines = 1)
-        Spacer(Modifier.height(4.dp))
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            if (locked) Grips(Modifier.fillMaxHeight())
-            Box(
-                Modifier.fillMaxHeight().width(16.dp)
-                    .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) }), RoundedCornerShape(8.dp))
-                    .drawWithContent {
-                        drawContent()
-                        // Where the readouts' temperatures fall on it through the mapping: 0.97 at the
-                        // top and 0.03 at the bottom (ToneOptions outHi / outLo).
-                        val marks = readings?.marks ?: return@drawWithContent
-                        for ((k, c) in listOf(1 to Ui.Cold, 2 to Ui.Center, 0 to Ui.Hot)) {
-                            val v = marks[k]
-                            if (v.isNaN()) continue
-                            val y = ((0.97f - v) / 0.94f).coerceIn(0f, 1f) * size.height
-                            val o = 3.dp.toPx()
-                            drawLine(Color(0xC0000000), Offset(-o, y), Offset(size.width + o, y), 4.dp.toPx())
-                            drawLine(c, Offset(-o + 1.dp.toPx(), y), Offset(size.width + o - 1.dp.toPx(), y), 2.dp.toPx())
-                        }
-                    },
-            )
-            if (locked) Grips(Modifier.fillMaxHeight())
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(bottom, color = labelColor, fontSize = 14.sp, style = Tabular, maxLines = 1)
-    }
-}
-
-/** Beside a locked scale bar: short ticks at its ends and middle, the three places to drag from. */
-@Composable
-private fun Grips(modifier: Modifier) {
-    Canvas(modifier.width(12.dp)) {
-        val w = 1.5.dp.toPx()
-        for (f in listOf(0.12f, 0.5f, 0.88f)) {
-            val y = size.height * f
-            for (k in -1..1) {
-                val yy = y + k * 4.dp.toPx()
-                drawLine(Ui.Accent, Offset(3.dp.toPx(), yy), Offset(size.width - 3.dp.toPx(), yy), w, StrokeCap.Round)
+        Canvas(Modifier.fillMaxSize()) {
+            val ax = axis
+            if (lo.isNaN() || hi.isNaN() || ax.first.isNaN() || palette.isEmpty()) return@Canvas
+            val barW = 16.dp.toPx()
+            val barX = size.width - barW - 10.dp.toPx()
+            val barTop = 10.dp.toPx()
+            val barH = size.height - 2 * barTop
+            fun yOf(t: Float) = barTop + (ax.second - t) / (ax.second - ax.first) * barH
+            fun color(i: Float) = Color(palette[(i.coerceIn(0f, 1f) * (palette.size - 1)).roundToInt()])
+            val curve = readings?.curve ?: FloatArray(0)
+            val above = if (marksLocked && locked) Color(0xFFC8C8C8) else color(0.97f)  // (palettes/rainbow_*.json)
+            val below = if (marksLocked && locked) Color(0xFF555555) else color(0.03f)
+            // The bar, row by row: the mapping between the ends, the marks or the palette's ends beyond.
+            val step = 2f
+            var y = barTop
+            while (y < barTop + barH) {
+                val t = ax.second - (y + step / 2 - barTop) / barH * (ax.second - ax.first)
+                val c = when {
+                    t > hi -> above
+                    t < lo -> below
+                    curve.size >= 2 && hi > lo -> {
+                        val f = (t - lo) / (hi - lo) * (curve.size - 1)
+                        val k = f.toInt().coerceIn(0, curve.size - 2)
+                        val v = curve[k] + (f - k) * (curve[k + 1] - curve[k])
+                        color(if (v.isNaN()) (t - lo) / (hi - lo) * 0.94f + 0.03f else v)
+                    }
+                    else -> color((t - lo) / (hi - lo) * 0.94f + 0.03f)
+                }
+                drawRect(c, Offset(barX, y), Size(barW, minOf(step, barTop + barH - y)))
+                y += step
+            }
+            drawRect(Color(0x80000000), Offset(barX, barTop), Size(barW, barH), style = Stroke(1.dp.toPx()))
+            // The readouts at their temperatures.
+            if (readings != null) {
+                for ((s, c) in listOf(readings.low to Ui.Cold, readings.center to Ui.Center, readings.high to Ui.Hot)) {
+                    val t = when {
+                        s.overRange -> ax.second
+                        s.valid -> s.tempC
+                        else -> continue
+                    }
+                    val ty = yOf(t.coerceIn(ax.first, ax.second))
+                    val o = 3.dp.toPx()
+                    drawLine(Color(0xC0000000), Offset(barX - o, ty), Offset(barX + barW + o, ty), 4.dp.toPx())
+                    drawLine(c, Offset(barX - o + 1.dp.toPx(), ty), Offset(barX + barW + o - 1.dp.toPx(), ty), 2.dp.toPx())
+                }
+            }
+            // The handles, and their temperatures beside them (pushed apart when they'd touch).
+            val yHi = yOf(hi)
+            val yLo = yOf(lo)
+            val hiText = measurer.measure(if (readings?.scaleHiOver == true && ours == null) "> 120°" else "%.1f°".format(hi), labelStyle)
+            val loText = measurer.measure("%.1f°".format(lo), labelStyle)
+            val gap = 2.dp.toPx()
+            var hiLabelY = yHi - hiText.size.height / 2f
+            var loLabelY = yLo - loText.size.height / 2f
+            val overlap = hiLabelY + hiText.size.height + gap - loLabelY
+            if (overlap > 0) {
+                hiLabelY -= overlap / 2
+                loLabelY += overlap / 2
+            }
+            hiLabelY = hiLabelY.coerceIn(0f, size.height - hiText.size.height)
+            loLabelY = loLabelY.coerceIn(0f, size.height - loText.size.height)
+            for ((hy, text, ly) in listOf(Triple(yHi, hiText, hiLabelY), Triple(yLo, loText, loLabelY))) {
+                val knob = Size(barW + 10.dp.toPx(), 8.dp.toPx())
+                val tl = Offset(barX - 5.dp.toPx(), hy - knob.height / 2)
+                drawRoundRect(Color(0xE0000000), tl - Offset(1.dp.toPx(), 1.dp.toPx()), Size(knob.width + 2.dp.toPx(), knob.height + 2.dp.toPx()),
+                    CornerRadius(4.dp.toPx()))
+                drawRoundRect(if (locked) Ui.Accent else Color.White, tl, knob, CornerRadius(3.dp.toPx()))
+                drawText(text, topLeft = Offset(barX - 8.dp.toPx() - text.size.width, ly))
             }
         }
     }

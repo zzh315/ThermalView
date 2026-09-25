@@ -305,7 +305,7 @@ bool writePpm(const std::string& path, int w, int h, const std::vector<uint8_t>&
 int render(int argc, char** argv) {
   if (argc < 3) return usage();
   const std::string path = argv[2];
-  std::string stages = "default", out, palettePath, kernelText = "bspline", clipPath;
+  std::string stages = "default", out, palettePath, kernelText = "bspline", clipPath, outsidePath;
   int frameIndex = 0, w = 0, h = 0;
   bool clamp = false, mirrorX = false, mirrorY = false;
   const bool fromIntensity = path.size() > 4 && path.compare(path.size() - 4, 4, ".f32") == 0;
@@ -324,6 +324,7 @@ int render(int argc, char** argv) {
     else if (a == "--clamp") clamp = true;
     else if (a == "--palette") palettePath = next();
     else if (a == "--clip") clipPath = next();
+    else if (a == "--outside") outsidePath = next();  // a locked range's marks: 1 above, 2 below (the readback's)
     else if (a == "--mirror-x") mirrorX = true;
     else if (a == "--mirror-y") mirrorY = true;
     else if (a == "--box") {
@@ -386,13 +387,34 @@ int render(int argc, char** argv) {
   // the GPU does with a filtered R8 mask.
   std::vector<float> maskUp(up.size());
   tv::upscale(mask, mask.data(), tv::Kernel::Bilinear, false, rect, w, h, maskUp.data());
+  // A locked range's marks, filtered like the over-range mask (the GPU's RG8 texture).
+  std::vector<float> aboveUp, belowUp;
+  if (!outsidePath.empty() && spec.marksLocked && !lut.empty()) {
+    std::vector<uint8_t> marks(tv::kImagePixels);
+    std::ifstream m(outsidePath, std::ios::binary);
+    m.read(reinterpret_cast<char*>(marks.data()), std::streamsize(marks.size()));
+    std::vector<float> above(tv::kImagePixels), below(tv::kImagePixels);
+    for (size_t i = 0; i < tv::kImagePixels; ++i) {
+      above[i] = marks[i] == 1 ? 1.0f : 0.0f;
+      below[i] = marks[i] == 2 ? 1.0f : 0.0f;
+    }
+    aboveUp.resize(up.size());
+    belowUp.resize(up.size());
+    tv::upscale(above, above.data(), tv::Kernel::Bilinear, false, rect, w, h, aboveUp.data());
+    tv::upscale(below, below.data(), tv::Kernel::Bilinear, false, rect, w, h, belowUp.data());
+  }
   if (mirrorX || mirrorY) {
-    std::vector<float> a = up, b = maskUp;
+    std::vector<float> a = up, b = maskUp, c = aboveUp, d = belowUp;
     for (int y = 0; y < h; ++y)
       for (int x = 0; x < w; ++x) {
         const size_t from = size_t(mirrorY ? h - 1 - y : y) * size_t(w) + size_t(mirrorX ? w - 1 - x : x);
-        up[size_t(y) * size_t(w) + size_t(x)] = a[from];
-        maskUp[size_t(y) * size_t(w) + size_t(x)] = b[from];
+        const size_t to = size_t(y) * size_t(w) + size_t(x);
+        up[to] = a[from];
+        maskUp[to] = b[from];
+        if (!c.empty()) {
+          aboveUp[to] = c[from];
+          belowUp[to] = d[from];
+        }
       }
   }
   std::vector<uint8_t> rgb(up.size() * 3);
@@ -403,6 +425,10 @@ int render(int argc, char** argv) {
       c[0] = c[1] = c[2] = v;
     } else if (maskUp[i] > 0.5f) {
       for (size_t k = 0; k < 3; ++k) c[k] = spec.saturation[k];
+    } else if (!aboveUp.empty() && aboveUp[i] > 0.5f) {
+      for (size_t k = 0; k < 3; ++k) c[k] = spec.lockedAbove[k];
+    } else if (!belowUp.empty() && belowUp[i] > 0.5f) {
+      for (size_t k = 0; k < 3; ++k) c[k] = spec.lockedBelow[k];
     } else {
       const auto& e = lut[size_t(std::lround(v * float(lut.size() - 1)))];
       for (size_t k = 0; k < 3; ++k) c[k] = float(e[k]) / 255.0f;

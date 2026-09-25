@@ -156,7 +156,12 @@ Landscape-first, full-screen, minimal chrome. The controls live in the black mar
 
 - **Left bar (how the image looks):** palette (a tap switches White hot ↔ Rainbow, with a swatch), Noise and Texture (a tap steps Off → Low → High), and View size (a tap cycles). Also the frame rate and lag (debug), and while zoomed in, the zoom factor (a tap goes back to 1×).
 - **Right bar (measuring and acting):** the high, center and low readouts; Range (Auto / Locked) above the scale bar with its °C endpoints; Recalibrate; Capture (debug); Settings (debug).
-- **Range lock (the Manual range below):** Locked holds the mapping on screen in °C: its ends and its curve's shape (`tv::RangeLock`). A color keeps meaning one temperature while the camera's warming moves the counts, since each frame's table converts it back. Locking doesn't change the picture (tested: under half a display level). On a locked scale bar, a vertical drag from its top part moves the hot end, from its bottom part the cold end, and from the middle the whole range; a drag across the bar's height moves by one span. Auto again snaps to the scene's own mapping from the next frame.
+- **Range lock (the Manual range below):**
+  - *The scale bar is a temperature axis* spanning the scene and the colour range, with a handle at each end of the range. Between the handles is the palette as the image uses it; the ticks mark the high, centre and low readings at their temperatures.
+  - *Dragging a handle moves that end alone* (owner, 2026-09-26: "for xtherm the 2 ranges can be dragged and altered separately"). It locks the range first if it was Auto, and the axis holds still while a finger is down.
+  - *Locked holds the mapping in °C* (`tv::RangeLock`): its ends and its curve's shape, so a colour keeps meaning one temperature while the camera's warming moves the counts. Locking doesn't change the picture (under half a display level).
+  - *Beyond a locked range,* the rainbow palettes paint pixels grey, as Xtherm does: light above, dark below (`lockedAbove` / `lockedBelow`). White hot just clips to black and white.
+  - *The Range tile* switches Auto ↔ Locked; Auto snaps to the scene's own mapping from the next frame.
 - **Over the image:** the markers, as crosshairs (red hottest, blue coldest, white center), each with its temperature. Labels never leave the image and never overlap each other, another marker, a banner or an open panel: each takes the first clear place around its marker and keeps it while it stays clear. Banners sit at the image's top or bottom edge, whichever is away from the markers.
 - **Controls:** palette toggle; Auto / Manual range (Manual = "lock current range" plus a range slider in °C); view size; Box on/off; Recalibrate (sends `0x8000` through the gate and stays disabled for 10 s).
 - **Settings** (owner, 2026-09-26: "simple presets that abstract settings into simple low and high effects"): each is Off / Low / High, default Low, kept across launches, and sets the stages underneath.
@@ -178,7 +183,7 @@ Landscape-first, full-screen, minimal chrome. The controls live in the black mar
 - **Built:** all the controls above, in the side bars.
 - **Checked live on the tablet:** palette, noise, texture, view size, zoom (over adb) and pan, the box, the range lock and its drags, Recalibrate and Capture's three modes.
 - **Performance:** with the box on at 4× zoom, 25 fps, latency p50 / p95 17.2 / 20.0 ms (Noise Low).
-- **Waiting on the owner:** the 100 mm ruler (Settings › Diagnostics › 100 mm ruler), and the controls on replay (a replay needs the camera unplugged).
+- **The owner's checks (2026-09-26):** the 100 mm bar measured spot on with a ruler (the ruler has since left Diagnostics), and replay plays.
 
 ## M7 — Final tuning and sign-off
 

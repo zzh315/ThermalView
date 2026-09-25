@@ -218,6 +218,8 @@ class Pipeline {
   // M6's range lock: stage 5 maps through [m] from the next frame (null: automatic again). The
   // caller builds it each frame from °C (RangeLock), since the counts a temperature reads at move.
   void setFixedMapping(const FixedMapping* m) { tone_.setFixed(m); }
+  // With it: the last frame's pixels above (1) or below (2) the locked range, else null.
+  const uint8_t* outsideMask() const { return tone_.fixed() && !tone_.outside().empty() ? tone_.outside().data() : nullptr; }
 
   // One 256x192 camera image in; display intensity in [0, 1] out (kImagePixels floats). signal, if
   // given, receives the value tone mapping started from, in raw counts (for the harness's °C metrics).

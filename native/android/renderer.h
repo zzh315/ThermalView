@@ -25,6 +25,9 @@ namespace tv {
 struct DisplayFrame {
   std::array<float, kImagePixels> intensity;  // [0, 1], from Pipeline::process
   std::array<uint8_t, kImagePixels> clipped;  // 255 where the pixel reads over range (> 120 °C)
+  // With the range locked (M6): per pixel, 255 above it (first byte) or below it (second byte).
+  std::array<uint8_t, 2 * kImagePixels> outside;
+  bool locked = false;
   int64_t arrivalNs = 0;                      // when the frame reached the capture callback
 };
 
@@ -52,7 +55,9 @@ class Renderer {
   // Any thread: the upscaler (0 nearest, 1 cardinal B-spline with the 2x2 clamp), the palette's
   // 1024-entry table (anything else: gray) and its saturation color, which marks pixels too hot to
   // measure (PLAN M4 stage 5; not drawn in gray), from the next frame drawn.
-  void setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation);
+  // With marksLocked, pixels above and below a locked range take those colors (PaletteSpec).
+  void setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation,
+                  bool marksLocked = false, std::array<float, 3> above = {}, std::array<float, 3> below = {});
 
   // The visible part of the frame in camera pixels (zoom and pan; the whole frame by default).
   void setViewRect(float x, float y, float w, float h);
@@ -102,8 +107,11 @@ class Renderer {
   EGLContext context_ = EGL_NO_CONTEXT;
   EGLSurface surface_ = EGL_NO_SURFACE;
   ANativeWindow* window_ = nullptr;
-  GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, clipTexture_ = 0, vao_ = 0;
+  GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, clipTexture_ = 0, outsideTexture_ = 0, vao_ = 0;
   GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1, uSaturation_ = -1, uRect_ = -1, uBox_ = -1, uDim_ = -1;
+  GLint uLocked_ = -1, uAbove_ = -1, uBelow_ = -1;
+  bool marksLocked_ = false;                         // under displayMutex_
+  std::array<float, 3> above_{}, below_{};           // under displayMutex_
   std::array<float, 4> rect_{0.0f, 0.0f, float(kFrameWidth), float(kImageRows)};  // under displayMutex_
   std::array<float, 4> box_{0.0f, 0.0f, 0.0f, 0.0f};  // under displayMutex_ (x0, y0, x1, y1; empty: none)
   float dim_ = 0.5f;                                  // under displayMutex_

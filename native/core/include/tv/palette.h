@@ -24,11 +24,16 @@ struct PaletteSpec {
   bool stopLightness = false;                // OKLCh: lightness from the stops, chroma as vivid as sRGB allows there ("chroma": "lightness")
   float chromaScale = 1.0f;                  // OKLCh: this share of that chroma ("chromaScale", 0..1)
   Rgb saturation{0.5f, 0.5f, 0.5f};          // pixels at the camera's clip (too hot to measure)
+  // With the range locked (M6), pixels above and below it, for palettes that mark them ("lockedAbove",
+  // "lockedBelow"; the owner, 2026-09-26: grey in the rainbow, as Xtherm; white hot just clips).
+  bool marksLocked = false;
+  Rgb lockedAbove{0.78f, 0.78f, 0.78f}, lockedBelow{0.33f, 0.33f, 0.33f};
 };
 
 // Reads a palette file's text: {"name": ..., "space": "oklab" | "oklch", "chroma": "max" |
 // "interpolate" | "lightness", "chromaScale": 0..1, "stops": [[0.0, "#RRGGBB"], ...], "saturation":
-// "#RRGGBB"}. Other keys are ignored. False, with a reason, on anything else.
+// "#RRGGBB", "lockedAbove": "#RRGGBB", "lockedBelow": "#RRGGBB"}. Other keys are ignored. False, with a
+// reason, on anything else.
 bool parsePalette(const std::string& json, PaletteSpec* out, std::string* error);
 
 // The table: entry i is the color at intensity i / (n - 1), in 8-bit sRGB.

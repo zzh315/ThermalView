@@ -93,8 +93,7 @@ fun AppScreen(
         onDispose { view.keepScreenOn = false }
     }
 
-    // The palette's colors: the swatch (left to right, cold to hot) and the scale bar (top to bottom,
-    // from the mapping's top at 0.97 to its bottom at 0.03: ToneOptions outHi / outLo).
+    // The palette's colors: the swatch (left to right, cold to hot) and the scale bar's table.
     val swatches = remember(options.rainbowStyle) { HashMap<Int, List<Color>>() }
     val swatch = { p: Int ->
         swatches.getOrPut(p) {
@@ -102,14 +101,7 @@ fun AppScreen(
             if (argb.isEmpty()) listOf(Color.Black, Color.White) else (0 until 16).map { Color(argb[it * (argb.size - 1) / 15]) }
         }
     }
-    val scaleColors = remember(options.palette, options.rainbowStyle) {
-        val argb = paletteColors(options.palette)
-        if (argb.isEmpty()) {
-            listOf(Color(0xFFF7F7F7), Color(0xFF080808))
-        } else {
-            (0 until 24).map { i -> Color(argb[((0.97f - 0.94f * i / 23f) * (argb.size - 1)).roundToInt()]) }
-        }
-    }
+    val scaleLut = remember(options.palette, options.rainbowStyle) { paletteColors(options.palette) }
 
     // Zoom and pan (PLAN M6): pinch zooms 1x-8x around the fingers, a drag pans, a double tap goes
     // back to 1x. Display-only: the pipeline still processes the whole frame, but the auto range and
@@ -213,7 +205,8 @@ fun AppScreen(
             RightBar(
                 modifier = Modifier.align(Alignment.TopEnd),
                 readings = readings,
-                scaleColors = scaleColors,
+                palette = scaleLut,
+                marksLocked = options.palette == 2,  // (the rainbow palettes' lockedAbove / lockedBelow)
                 live = live,
                 status = status,
                 panelOpen = panelOpen,

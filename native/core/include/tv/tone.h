@@ -61,6 +61,9 @@ class ToneMapper {
   // with null, which goes back to the automatic mapping: the scene's own from the next frame.
   void setFixed(const FixedMapping* m);
   bool fixed() const { return fixed_; }
+  // With a fixed mapping, each pixel of the last frame mapped: 1 above its range, 2 below it, 0 in it
+  // (the display marks them for palettes that ask: PaletteSpec::lockedAbove / lockedBelow).
+  const std::vector<uint8_t>& outside() const { return outside_; }
 
   // The statistics' region changed (the box moved or resized, zoom, pan): for the next seconds the
   // range and the curve follow the new statistics at once, with no deadband, converging within
@@ -82,6 +85,7 @@ class ToneMapper {
   ToneOptions options_;
   std::vector<float> previous_, work_, curve_, target_;
   std::vector<uint32_t> hist_;
+  std::vector<uint8_t> outside_;
   bool havePrevious_ = false, haveRange_ = false, haveCurve_ = false;
   bool fixed_ = false;  // setFixed()
   float offset_ = 0.0f;  // tracked global offset, counts

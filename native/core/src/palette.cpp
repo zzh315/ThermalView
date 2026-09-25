@@ -227,6 +227,10 @@ bool parsePalette(const std::string& json, PaletteSpec* out, std::string* error)
         spec.chromaScale = float(v);
       } else if (key == "saturation") {
         if (!c.string(&text) || !parseHex(text, &spec.saturation)) return fail("saturation: not #RRGGBB");
+      } else if (key == "lockedAbove" || key == "lockedBelow") {
+        if (!c.string(&text) || !parseHex(text, key == "lockedAbove" ? &spec.lockedAbove : &spec.lockedBelow))
+          return fail(key + ": not #RRGGBB");
+        spec.marksLocked = true;
       } else if (key == "stops") {
         if (!c.eat('[')) return fail("stops: not an array");
         do {

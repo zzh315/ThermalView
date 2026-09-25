@@ -9,5 +9,7 @@
     [1.0,  "#FF0000"]
   ],
   "saturation": "#808080",
-  "note": "A continuous rainbow: cold green, mid yellow, hot red, sweeping through every hue between along the OKLCh hue arc with chroma as high as sRGB allows (docs/PLAN.md M5). The owner tunes hues and stop positions by eye; the order stays green, yellow, red. saturation: pixels at the camera's clip."
+  "lockedAbove": "#C8C8C8",
+  "lockedBelow": "#555555",
+  "note": "A continuous rainbow: cold green, mid yellow, hot red, sweeping through every hue between along the OKLCh hue arc with chroma as high as sRGB allows (docs/PLAN.md M5). The owner tunes hues and stop positions by eye; the order stays green, yellow, red. saturation: pixels at the camera's clip. lockedAbove / lockedBelow: with the range locked, pixels above and below it (grey, as Xtherm; the owner, 2026-09-26)."
 }

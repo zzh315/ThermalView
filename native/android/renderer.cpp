@@ -44,6 +44,10 @@ uniform vec3 uSaturation;  // the palette's color for those pixels
 uniform vec4 uRect;        // the visible part of the frame, camera pixels: x, y, w, h (zoom and pan)
 uniform int uMode;         // 0 nearest, 1 cardinal B-spline
 uniform int uPalette;      // 0 gray, 1 uLut (and uSaturation)
+uniform sampler2D uOutside;  // RG8: 1 above (R) or below (G) a locked range (M6); filtered like uClip
+uniform int uLocked;         // 1: mark those with uAbove / uBelow (the palette's; the rainbow's grey)
+uniform vec3 uAbove;
+uniform vec3 uBelow;
 uniform vec4 uBox;         // M6's box, camera pixels x0, y0, x1, y1 (x1 <= x0: none)
 uniform float uDim;        // outside it, this much of the brightness
 in vec2 vUV;
@@ -85,6 +89,11 @@ void main() {
   g = clamp(g, 0.0, 1.0);
   if (uPalette == 1) {
     vec3 c = texture(uLut, vec2((g * 1023.0 + 0.5) / 1024.0, 0.5)).rgb;
+    if (uLocked == 1) {
+      vec2 o = texture(uOutside, cam / vec2(size)).rg;
+      if (o.r > 0.5) c = uAbove;
+      else if (o.g > 0.5) c = uBelow;
+    }
     outColor = vec4(texture(uClip, cam / vec2(size)).r > 0.5 ? uSaturation : c, 1.0);
   } else {
     outColor = vec4(vec3(g), 1.0);
@@ -176,12 +185,16 @@ void Renderer::clear() {
   wake_.notify_one();
 }
 
-void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation) {
+void Renderer::setDisplay(int upscaler, std::vector<std::array<uint8_t, 3>> lut, std::array<float, 3> saturation,
+                          bool marksLocked, std::array<float, 3> above, std::array<float, 3> below) {
   std::lock_guard lock(displayMutex_);
   upscaler_ = upscaler;
   pendingLut_ = std::move(lut);
   lutPending_ = true;
   saturation_ = saturation;
+  marksLocked_ = marksLocked;
+  above_ = above;
+  below_ = below;
 }
 
 void Renderer::setViewRect(float x, float y, float w, float h) {
@@ -215,6 +228,18 @@ void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix
       .write(reinterpret_cast<const char*>(frame.intensity.data()), std::streamsize(sizeof(float) * kImagePixels));
   std::ofstream(prefix + "_clip.u8", std::ios::binary | std::ios::trunc)
       .write(reinterpret_cast<const char*>(frame.clipped.data()), std::streamsize(kImagePixels));
+  bool marksLocked;
+  {
+    std::lock_guard lock(displayMutex_);
+    marksLocked = marksLocked_;
+  }
+  const bool markLocked = marksLocked && frame.locked;
+  if (markLocked) {  // (1 above, 2 below, per pixel: the harness's --outside)
+    std::vector<uint8_t> marks(kImagePixels);
+    for (size_t i = 0; i < kImagePixels; ++i) marks[i] = frame.outside[2 * i] ? 1 : frame.outside[2 * i + 1] ? 2 : 0;
+    std::ofstream(prefix + "_outside.u8", std::ios::binary | std::ios::trunc)
+        .write(reinterpret_cast<const char*>(marks.data()), std::streamsize(kImagePixels));
+  }
   std::array<float, 4> rect, box;
   float dim;
   {
@@ -226,10 +251,11 @@ void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix
   char json[512];
   std::snprintf(json, sizeof json,
                 "{\"width\": %d, \"height\": %d, \"upscaler\": \"%s\", \"palette\": \"%s\", \"mirror_x\": %s, "
-                "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f], \"box\": [%.0f, %.0f, %.0f, %.0f], \"dim\": %.3f}\n",
+                "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f], \"box\": [%.0f, %.0f, %.0f, %.0f], \"dim\": %.3f, "
+                "\"locked\": %s}\n",
                 w, h, upscaler == 1 ? "bspline" : "nearest", palette.c_str(), mirrorX_.load() < 0 ? "true" : "false",
                 mirrorY_.load() < 0 ? "true" : "false", rect[0], rect[1], rect[2], rect[3], box[0], box[1], box[2],
-                box[3], dim);
+                box[3], dim, markLocked ? "true" : "false");
   std::ofstream(prefix + ".json", std::ios::trunc) << json;
   LOGI("renderer: readback saved to %s (%dx%d)", prefix.c_str(), w, h);
 }
@@ -406,6 +432,10 @@ bool Renderer::initGl() {
   glUniform1i(glGetUniformLocation(program_, "uCoeffs"), 1);
   glUniform1i(glGetUniformLocation(program_, "uLut"), 2);
   glUniform1i(glGetUniformLocation(program_, "uClip"), 3);
+  glUniform1i(glGetUniformLocation(program_, "uOutside"), 4);
+  uLocked_ = glGetUniformLocation(program_, "uLocked");
+  uAbove_ = glGetUniformLocation(program_, "uAbove");
+  uBelow_ = glGetUniformLocation(program_, "uBelow");
   uSaturation_ = glGetUniformLocation(program_, "uSaturation");
   uRect_ = glGetUniformLocation(program_, "uRect");
   uBox_ = glGetUniformLocation(program_, "uBox");
@@ -431,6 +461,13 @@ bool Renderer::initGl() {
   glGenTextures(1, &clipTexture_);
   glBindTexture(GL_TEXTURE_2D, clipTexture_);
   glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, kFrameWidth, kImageRows);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glGenTextures(1, &outsideTexture_);
+  glBindTexture(GL_TEXTURE_2D, outsideTexture_);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RG8, kFrameWidth, kImageRows);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -468,6 +505,8 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   std::array<float, 3> saturation;
   std::array<float, 4> rect, box;
   float dim;
+  bool marksLocked;
+  std::array<float, 3> above, below;
   {
     std::lock_guard lock(displayMutex_);
     upscaler = upscaler_;
@@ -475,6 +514,9 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
     rect = rect_;
     box = box_;
     dim = dim_;
+    marksLocked = marksLocked_;
+    above = above_;
+    below = below_;
     if (lutPending_) {
       havePalette_ = pendingLut_.size() == 1024;
       if (havePalette_) {
@@ -509,6 +551,12 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glBindTexture(GL_TEXTURE_2D, clipTexture_);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_UNSIGNED_BYTE, frame.clipped.data());
+  const bool markLocked = marksLocked && palette && frame.locked;
+  if (markLocked) {
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, outsideTexture_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RG, GL_UNSIGNED_BYTE, frame.outside.data());
+  }
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glUseProgram(program_);
   glUniform3f(uSaturation_, saturation[0], saturation[1], saturation[2]);
@@ -518,6 +566,9 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
   glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
   glUniform1i(uPalette_, palette ? 1 : 0);
+  glUniform1i(uLocked_, markLocked ? 1 : 0);
+  glUniform3f(uAbove_, above[0], above[1], above[2]);
+  glUniform3f(uBelow_, below[0], below[1], below[2]);
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }

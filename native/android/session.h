@@ -210,6 +210,8 @@ class Session {
   double scaleLoC_ = NAN, scaleHiC_ = NAN;  // the scale bar's endpoints (processing thread)
   bool scaleHiOver_ = false;
   double scaleMark_[3] = {NAN, NAN, NAN};  // the readouts on the scale bar, as intensities (processing thread)
+  static constexpr int kScaleSamples = 17;
+  double scaleCurve_[kScaleSamples] = {};  // the mapping's intensity at even temperatures from its low to high end
   // The range lock (processing thread), and the UI's requests for it.
   RangeLock rangeLock_;
   FixedMapping fixedMapping_;

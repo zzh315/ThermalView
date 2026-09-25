@@ -49,6 +49,9 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
     // tracking carries on from here when the lock ends.
     std::copy(signal, signal + kImagePixels, previous_.begin());
     havePrevious_ = true;
+    outside_.resize(kImagePixels);
+    const float lo = lo_ + offset_, hi = lo_ + offset_ + std::max(hi_ - lo_, 1.0f);
+    for (size_t i = 0; i < kImagePixels; ++i) outside_[i] = signal[i] > hi ? 1 : signal[i] < lo ? 2 : 0;
     apply(signal, out, detail);
     return;
   }
