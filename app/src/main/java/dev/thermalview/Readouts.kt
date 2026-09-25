@@ -82,7 +82,15 @@ private class Marker(val at: Offset, val arm: Float, val gap: Float, val color: 
  * when there's no image). [covered]: a part of the image under a panel, which labels keep out of.
  */
 @Composable
-fun ImageOverlay(readings: Readings?, box: ViewBox, rect: CamRect, banner: String, live: Boolean, covered: Rect? = null) {
+fun ImageOverlay(
+    readings: Readings?,
+    box: ViewBox,
+    rect: CamRect,
+    banner: String,
+    live: Boolean,
+    covered: Rect? = null,
+    camBox: CamBox? = null,
+) {
     val measurer = rememberTextMeasurer()
     val last = remember { IntArray(4) { -1 } }  // the place each label (and the banner) took last time
     val lastAt = remember { Array(3) { Offset.Unspecified } }  // where each marker was then
@@ -179,6 +187,7 @@ fun ImageOverlay(readings: Readings?, box: ViewBox, rect: CamRect, banner: Strin
         }
 
         clipRect(view.left, view.top, view.right, view.bottom) {
+            if (camBox != null) measuringBox(camBox, rect, box)
             for (m in markers) if (m != null) crosshair(m.at, m.arm, m.gap, m.color)
         }
         markers.forEachIndexed { k, m ->
@@ -234,6 +243,23 @@ private fun overlap(a: Rect, b: Rect): Float {
     val w = min(a.right, b.right) - max(a.left, b.left)
     val h = min(a.bottom, b.bottom) - max(a.top, b.top)
     return if (w > 0f && h > 0f) w * h else 0f
+}
+
+/** The box's outline and its eight handles (the image outside is dimmed by the renderer). */
+private fun DrawScope.measuringBox(b: CamBox, rect: CamRect, box: ViewBox) {
+    val l = box.x + (b.x - rect.x) / rect.w * box.w
+    val t = box.y + (b.y - rect.y) / rect.h * box.h
+    val r = box.x + (b.right - rect.x) / rect.w * box.w
+    val bt = box.y + (b.bottom - rect.y) / rect.h * box.h
+    val size = Size(r - l, bt - t)
+    drawRect(Color(0xB0000000), Offset(l, t), size, style = androidx.compose.ui.graphics.drawscope.Stroke(3.5.dp.toPx()))
+    drawRect(Color.White, Offset(l, t), size, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+    val hs = 4.dp.toPx()
+    for (p in listOf(Offset(l, t), Offset(r, t), Offset(l, bt), Offset(r, bt),
+                     Offset((l + r) / 2, t), Offset((l + r) / 2, bt), Offset(l, (t + bt) / 2), Offset(r, (t + bt) / 2))) {
+        drawRect(Color(0xB0000000), Offset(p.x - hs - 1.dp.toPx(), p.y - hs - 1.dp.toPx()), Size(2 * hs + 2.dp.toPx(), 2 * hs + 2.dp.toPx()))
+        drawRect(Color.White, Offset(p.x - hs, p.y - hs), Size(2 * hs, 2 * hs))
+    }
 }
 
 /** A crosshair with an open center, outlined in black so it reads on any part of the palette. */

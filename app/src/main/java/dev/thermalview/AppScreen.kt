@@ -4,7 +4,6 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -29,6 +28,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
@@ -125,6 +125,15 @@ fun AppScreen(
         zoomCx = CamRect.FRAME_W / 2
         zoomCy = CamRect.FRAME_H / 2
     }
+    // The box (PLAN M6): where it was last, off at each launch; the measurement region and the dimming.
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE) }
+    var boxOn by rememberSaveable { mutableStateOf(false) }
+    var camBox by rememberSaveable(stateSaver = CamBox.Saver) { mutableStateOf(CamBox.load(prefs)) }
+    LaunchedEffect(boxOn, camBox) {
+        NativeBridge.setBox(boxOn, camBox.x, camBox.y, camBox.w, camBox.h)
+        if (boxOn) camBox.save(prefs)
+    }
     LaunchedEffect(zoomRequest) {
         zoomRequest?.let {
             val r = CamRect.of(it.zoom, it.cx, it.cy)
@@ -151,9 +160,15 @@ fun AppScreen(
                 Modifier.offset { IntOffset(box.x.roundToInt(), box.y.roundToInt()) }
                     .size(with(density) { box.w.toDp() }, with(density) { box.h.toDp() })
                     .pointerInput(viewWidthPx, box) {
-                        detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                            // (in this box's coordinates: the view starts at 0, 0)
-                            val local = ViewBox(0f, 0f, box.w, box.h)
+                        // (in this layer's coordinates: the view starts at 0, 0)
+                        val local = ViewBox(0f, 0f, box.w, box.h)
+                        imageGestures(
+                            boxAt = { if (boxOn) camBox else null },
+                            rect = { CamRect.of(zoom, zoomCx, zoomCy) },
+                            viewW = box.w,
+                            viewH = box.h,
+                            onBox = { camBox = it },
+                        ) { centroid, pan, gestureZoom ->
                             val r = CamRect.of(zoom, zoomCx, zoomCy)
                                 .transformed(local, centroid.x, centroid.y, pan.x, pan.y, gestureZoom)
                             zoom = r.zoom
@@ -170,7 +185,11 @@ fun AppScreen(
             )
             // A replay runs without the camera, so the "plug in" prompt doesn't apply then.
             val banner = status.banner.ifEmpty { if (status.replay.isNotEmpty()) "" else message }
-            ImageOverlay(readings, box, camRect, banner, live, covered = if (panelOpen) panelBounds else null)
+            ImageOverlay(
+                readings, box, camRect, banner, live,
+                covered = if (panelOpen) panelBounds else null,
+                camBox = if (boxOn) camBox else null,
+            )
 
             // Each bar's column hugs the screen's outer edge (and is at most BarMaxWidth wide).
             Box(Modifier.align(Alignment.TopStart).width(leftBar).fillMaxHeight()) {
@@ -184,6 +203,8 @@ fun AppScreen(
                 } else null,
                 zoom = zoom,
                 onResetZoom = resetZoom,
+                boxOn = boxOn,
+                onBox = { boxOn = it },
                 replay = if (BuildConfig.DEBUG) status.replay else "",
                 onStopReplay = { NativeBridge.stopReplay() },
             )

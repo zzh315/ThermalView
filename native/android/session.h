@@ -6,6 +6,7 @@
 
 #include <android/native_window.h>
 
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -88,6 +89,8 @@ class Session {
   // Zoom and pan (PLAN M6): the visible part of the frame, camera pixels. The renderer draws it; the
   // tone mapping and the readouts measure it (the processing thread applies it with the next frame).
   void setViewRect(float x, float y, float w, float h);
+  // M6's box, camera pixels (x, y, w, h), and whether it's on: the measurement region and the dimming.
+  void setBox(bool on, int x, int y, int w, int h);
 
   // Debug: the renderer saves its next frame for M5's GPU-vs-CPU check (Renderer::requestReadback).
   void requestReadback(const std::string& prefix, const std::string& paletteName) {
@@ -257,6 +260,10 @@ class Session {
   ArrivalTracker arrivals_;
   RollingWindow procMs_{250};
   std::mutex viewMutex_;
+  std::array<float, 4> view_{0.0f, 0.0f, float(kFrameWidth), float(kImageRows)};  // under viewMutex_
+  bool boxOn_ = false;                // under viewMutex_: M6's box and whether it's on
+  Region box_;                        // under viewMutex_
+  void updateRegion();                // viewMutex_ held: the region from the view and the box
   Region pendingRegion_;              // under viewMutex_
   std::atomic<bool> regionPending_{false};
   Region region_;                     // processing thread: the measurement region in use

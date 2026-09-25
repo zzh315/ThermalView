@@ -58,6 +58,9 @@ def main():
         cmd.append("--clamp")  # the shader always clamps its B-spline
     if info["palette"] != "gray":
         cmd += ["--palette", ROOT / "palettes" / f"{info['palette']}.json"]
+    box = info.get("box", [0, 0, 0, 0])
+    if box[2] > box[0]:  # M6's box: the image outside it dimmed
+        cmd += ["--box", f"{box[0]:.0f},{box[1]:.0f},{box[2] - box[0]:.0f},{box[3] - box[1]:.0f}", "--dim", f"{info.get('dim', 0.5)}"]
     if info["mirror_x"]:
         cmd.append("--mirror-x")
     if info["mirror_y"]:

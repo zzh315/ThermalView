@@ -44,6 +44,8 @@ uniform vec3 uSaturation;  // the palette's color for those pixels
 uniform vec4 uRect;        // the visible part of the frame, camera pixels: x, y, w, h (zoom and pan)
 uniform int uMode;         // 0 nearest, 1 cardinal B-spline
 uniform int uPalette;      // 0 gray, 1 uLut (and uSaturation)
+uniform vec4 uBox;         // M6's box, camera pixels x0, y0, x1, y1 (x1 <= x0: none)
+uniform float uDim;        // outside it, this much of the brightness
 in vec2 vUV;
 out vec4 outColor;
 int mirror(int k, int n) {  // whole-sample symmetric; one reflection covers the taps' reach
@@ -87,6 +89,8 @@ void main() {
   } else {
     outColor = vec4(vec3(g), 1.0);
   }
+  if (uBox.z > uBox.x && (cam.x < uBox.x || cam.x >= uBox.z || cam.y < uBox.y || cam.y >= uBox.w))
+    outColor.rgb *= uDim;
 }
 )";
 
@@ -185,6 +189,12 @@ void Renderer::setViewRect(float x, float y, float w, float h) {
   rect_ = {x, y, w, h};
 }
 
+void Renderer::setBox(float x0, float y0, float x1, float y1, float dim) {
+  std::lock_guard lock(displayMutex_);
+  box_ = {x0, y0, x1, y1};
+  dim_ = dim;
+}
+
 void Renderer::requestReadback(std::string prefix, std::string paletteName) {
   std::lock_guard lock(displayMutex_);
   readbackPrefix_ = std::move(prefix);
@@ -205,17 +215,21 @@ void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix
       .write(reinterpret_cast<const char*>(frame.intensity.data()), std::streamsize(sizeof(float) * kImagePixels));
   std::ofstream(prefix + "_clip.u8", std::ios::binary | std::ios::trunc)
       .write(reinterpret_cast<const char*>(frame.clipped.data()), std::streamsize(kImagePixels));
-  std::array<float, 4> rect;
+  std::array<float, 4> rect, box;
+  float dim;
   {
     std::lock_guard lock(displayMutex_);
     rect = rect_;
+    box = box_;
+    dim = dim_;
   }
-  char json[384];
+  char json[512];
   std::snprintf(json, sizeof json,
                 "{\"width\": %d, \"height\": %d, \"upscaler\": \"%s\", \"palette\": \"%s\", \"mirror_x\": %s, "
-                "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f]}\n",
+                "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f], \"box\": [%.0f, %.0f, %.0f, %.0f], \"dim\": %.3f}\n",
                 w, h, upscaler == 1 ? "bspline" : "nearest", palette.c_str(), mirrorX_.load() < 0 ? "true" : "false",
-                mirrorY_.load() < 0 ? "true" : "false", rect[0], rect[1], rect[2], rect[3]);
+                mirrorY_.load() < 0 ? "true" : "false", rect[0], rect[1], rect[2], rect[3], box[0], box[1], box[2],
+                box[3], dim);
   std::ofstream(prefix + ".json", std::ios::trunc) << json;
   LOGI("renderer: readback saved to %s (%dx%d)", prefix.c_str(), w, h);
 }
@@ -394,6 +408,8 @@ bool Renderer::initGl() {
   glUniform1i(glGetUniformLocation(program_, "uClip"), 3);
   uSaturation_ = glGetUniformLocation(program_, "uSaturation");
   uRect_ = glGetUniformLocation(program_, "uRect");
+  uBox_ = glGetUniformLocation(program_, "uBox");
+  uDim_ = glGetUniformLocation(program_, "uDim");
 
   for (GLuint* t : {&texture_, &coeffTexture_}) {
     glGenTextures(1, t);
@@ -450,12 +466,15 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   int upscaler;
   bool palette;
   std::array<float, 3> saturation;
-  std::array<float, 4> rect;
+  std::array<float, 4> rect, box;
+  float dim;
   {
     std::lock_guard lock(displayMutex_);
     upscaler = upscaler_;
     saturation = saturation_;
     rect = rect_;
+    box = box_;
+    dim = dim_;
     if (lutPending_) {
       havePalette_ = pendingLut_.size() == 1024;
       if (havePalette_) {
@@ -494,6 +513,8 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glUseProgram(program_);
   glUniform3f(uSaturation_, saturation[0], saturation[1], saturation[2]);
   glUniform4f(uRect_, rect[0], rect[1], rect[2], rect[3]);
+  glUniform4f(uBox_, box[0], box[1], box[2], box[3]);  // (the fallback shader has neither: -1, ignored)
+  glUniform1f(uDim_, dim);
   glUniform2f(uMirror_, mirrorX_.load(), mirrorY_.load());
   glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
   glUniform1i(uPalette_, palette ? 1 : 0);

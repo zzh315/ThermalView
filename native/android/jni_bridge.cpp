@@ -83,6 +83,11 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setViewRect(JNIEnv*, jo
   session().setViewRect(float(x), float(y), float(w), float(h));
 }
 
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setBox(JNIEnv*, jobject, jboolean on, jint x, jint y, jint w,
+                                                                jint h) {
+  session().setBox(bool(on), int(x), int(y), int(w), int(h));
+}
+
 JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setViewWidth(JNIEnv*, jobject, jint px) {
   session().setViewWidth(int(px));
 }

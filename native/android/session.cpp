@@ -1713,17 +1713,44 @@ void Session::setOptions(const Options& options) {
 
 void Session::setViewRect(float x, float y, float w, float h) {
   renderer_.setViewRect(x, y, w, h);
-  // The measurement region: every camera pixel the view shows, at least partly.
+  std::lock_guard lock(viewMutex_);
+  view_ = {x, y, w, h};
+  updateRegion();
+}
+
+void Session::setBox(bool on, int x, int y, int w, int h) {
+  std::lock_guard lock(viewMutex_);
+  boxOn_ = on;
+  box_.x0 = std::clamp(x, 0, kFrameWidth - 1);
+  box_.y0 = std::clamp(y, 0, kImageRows - 1);
+  box_.x1 = std::clamp(x + w, box_.x0 + 1, kFrameWidth);
+  box_.y1 = std::clamp(y + h, box_.y0 + 1, kImageRows);
+  updateRegion();
+}
+
+void Session::updateRegion() {
+  // The measurement region (PLAN M6): every camera pixel the view shows, at least partly...
   Region r;
-  r.x0 = std::clamp(int(std::floor(x)), 0, kFrameWidth - 1);
-  r.y0 = std::clamp(int(std::floor(y)), 0, kImageRows - 1);
-  r.x1 = std::clamp(int(std::ceil(x + w)), r.x0 + 1, kFrameWidth);
-  r.y1 = std::clamp(int(std::ceil(y + h)), r.y0 + 1, kImageRows);
-  {
-    std::lock_guard lock(viewMutex_);
-    pendingRegion_ = r;
+  r.x0 = std::clamp(int(std::floor(view_[0])), 0, kFrameWidth - 1);
+  r.y0 = std::clamp(int(std::floor(view_[1])), 0, kImageRows - 1);
+  r.x1 = std::clamp(int(std::ceil(view_[0] + view_[2])), r.x0 + 1, kFrameWidth);
+  r.y1 = std::clamp(int(std::ceil(view_[1] + view_[3])), r.y0 + 1, kImageRows);
+  // ...within the box when it's on: the box's hottest, coldest and center points, its colors. A box
+  // entirely out of view is ignored (and nothing is dimmed) until it's back.
+  bool boxShown = false;
+  if (boxOn_) {
+    const Region b{std::max(r.x0, box_.x0), std::max(r.y0, box_.y0), std::min(r.x1, box_.x1), std::min(r.y1, box_.y1)};
+    if (b.x1 > b.x0 && b.y1 > b.y0) {
+      r = b;
+      boxShown = true;
+    }
   }
+  pendingRegion_ = r;
   regionPending_ = true;
+  if (boxShown)
+    renderer_.setBox(float(box_.x0), float(box_.y0), float(box_.x1), float(box_.y1));
+  else
+    renderer_.setBox(0, 0, 0, 0);
 }
 
 std::string Session::setDisplay(int upscaler, const std::string& paletteJson) {

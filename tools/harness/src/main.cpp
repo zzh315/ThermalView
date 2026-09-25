@@ -20,7 +20,7 @@
 // tools/py/bench.py turns these into metrics, contact sheets and clips.
 //
 //   harness render DUMP --frame N --size WxH [--pipeline STAGES] [--rect X,Y,W,H] [--kernel K]
-//                  [--clamp] [--palette FILE.json] [--box X,Y,W,H] --out FILE.ppm
+//                  [--clamp] [--palette FILE.json] [--box X,Y,W,H [--dim F]] --out FILE.ppm
 //
 // The display path at on-screen size (docs/PLAN.md M5's CPU reference): the pipeline runs over
 // frames 0..N (its filters need the history), then frame N's intensity is upscaled with kernel K
@@ -311,6 +311,8 @@ int render(int argc, char** argv) {
   const bool fromIntensity = path.size() > 4 && path.compare(path.size() - 4, 4, ".f32") == 0;
   tv::ViewRect rect;
   tv::Region box;
+  bool haveBox = false;
+  float dim = 0.5f;
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -328,7 +330,9 @@ int render(int argc, char** argv) {
       int x, y, bw, bh;
       if (std::sscanf(next().c_str(), "%d,%d,%d,%d", &x, &y, &bw, &bh) != 4 || bw <= 0 || bh <= 0) return usage();
       box = {x, y, x + bw, y + bh};
+      haveBox = true;
     }
+    else if (a == "--dim") dim = float(std::atof(next().c_str()));
     else if (a == "--out") out = next();
     else return usage();
   }
@@ -394,14 +398,24 @@ int render(int argc, char** argv) {
   std::vector<uint8_t> rgb(up.size() * 3);
   for (size_t i = 0; i < up.size(); ++i) {
     const float v = std::clamp(up[i], 0.0f, 1.0f);
+    float c[3];
     if (lut.empty()) {
-      rgb[3 * i] = rgb[3 * i + 1] = rgb[3 * i + 2] = uint8_t(std::lround(255.0f * v));
+      c[0] = c[1] = c[2] = v;
     } else if (maskUp[i] > 0.5f) {
-      for (size_t k = 0; k < 3; ++k) rgb[3 * i + k] = uint8_t(std::lround(255.0f * spec.saturation[k]));
+      for (size_t k = 0; k < 3; ++k) c[k] = spec.saturation[k];
     } else {
-      const auto& c = lut[size_t(std::lround(v * float(lut.size() - 1)))];
-      std::copy(c.begin(), c.end(), rgb.begin() + std::ptrdiff_t(3 * i));
+      const auto& e = lut[size_t(std::lround(v * float(lut.size() - 1)))];
+      for (size_t k = 0; k < 3; ++k) c[k] = float(e[k]) / 255.0f;
     }
+    // M6's box, as the shader dims it: by the camera coordinate of the (unmirrored) pixel's center.
+    if (haveBox) {
+      const int x = int(i % size_t(w)), y = int(i / size_t(w));
+      const float cx = rect.x + (float(mirrorX ? w - 1 - x : x) + 0.5f) * rect.w / float(w);
+      const float cy = rect.y + (float(mirrorY ? h - 1 - y : y) + 0.5f) * rect.h / float(h);
+      if (cx < float(box.x0) || cx >= float(box.x1) || cy < float(box.y0) || cy >= float(box.y1))
+        for (float& k : c) k *= dim;
+    }
+    for (size_t k = 0; k < 3; ++k) rgb[3 * i + k] = uint8_t(std::lround(255.0f * std::clamp(c[k], 0.0f, 1.0f)));
   }
   if (!writePpm(out, w, h, rgb)) {
     std::fprintf(stderr, "harness: cannot write %s\n", out.c_str());

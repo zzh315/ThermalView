@@ -28,6 +28,7 @@ object NativeBridge {
     external fun requestReadback(prefix: String, palette: String)  // debug: M5's GPU-vs-CPU check
     external fun setViewWidth(px: Int)  // the view's width in panel pixels; 0: the largest 4:3 fit
     external fun setViewRect(x: Float, y: Float, w: Float, h: Float)  // zoom and pan: camera pixels shown
+    external fun setBox(on: Boolean, x: Int, y: Int, w: Int, h: Int)  // M6's box, camera pixels
 
     /** Stage 3's drift map for a camera serial: the bundled native/core/data/drift_<serial>.f32. */
     external fun registerDriftMap(serial: String, data: ByteArray)

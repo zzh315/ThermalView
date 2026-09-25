@@ -87,6 +87,8 @@ fun LeftBar(
     stats: (@Composable () -> Unit)?,
     zoom: Float,
     onResetZoom: () -> Unit,
+    boxOn: Boolean,
+    onBox: (Boolean) -> Unit,
     replay: String,
     onStopReplay: () -> Unit,
 ) {
@@ -108,6 +110,14 @@ fun LeftBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Value(MainActivity.VIEW_NAMES.getOrElse(options.viewSize) { "?" }, Modifier.weight(1f))
                 ViewGlyph(options.viewSize)
+            }
+        }
+        // The box (PLAN M6): the readouts and the colors come from inside it; drag it, its edges or corners.
+        Tile(onClick = { onBox(!boxOn) }, color = if (boxOn) Ui.TileActive else Ui.Tile) {
+            Caption("Box")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Value(if (boxOn) "On" else "Off", Modifier.weight(1f))
+                BoxGlyph(boxOn)
             }
         }
         Spacer(Modifier.weight(1f))
@@ -468,6 +478,18 @@ private fun Chevron(color: Color) {
         val w = 1.6.dp.toPx()
         drawLine(color, Offset(w / 2, w / 2), Offset(size.width / 2, size.height - w / 2), w, StrokeCap.Round)
         drawLine(color, Offset(size.width / 2, size.height - w / 2), Offset(size.width - w / 2, w / 2), w, StrokeCap.Round)
+    }
+}
+
+/** A measuring box: a dashed frame in a frame. */
+@Composable
+private fun BoxGlyph(on: Boolean) {
+    Canvas(Modifier.size(width = 20.dp, height = 15.dp)) {
+        val c = if (on) Ui.Accent else Ui.Subtle
+        val w = 1.5.dp.toPx()
+        drawRect(c.copy(alpha = 0.45f), Offset.Zero, this.size, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+        val inset = androidx.compose.ui.geometry.Size(this.size.width * 0.5f, this.size.height * 0.5f)
+        drawRect(c, Offset(this.size.width * 0.25f, this.size.height * 0.25f), inset, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
     }
 }
 
