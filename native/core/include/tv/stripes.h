@@ -48,6 +48,8 @@ class FrameStripes {
   // stage 4b's GPU works).
   void process(float* sig, float sigma);
   void updateReference();
+  // The last frame as it came in, before this stage's correction (what stage 3b learns from).
+  const float* uncorrected() const { return uncorrected_.data(); }
 
   // The last frame: the scene's motion on the sensor since the frame before (px), the fraction of
   // pixels that matched the reference, and whether a correction was applied.

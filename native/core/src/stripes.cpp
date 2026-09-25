@@ -273,6 +273,7 @@ void FrameStripes::process(float* sig, float sigma) {
   lastCorrected_ = false;
   lastShift_ = {0.0f, 0.0f};
   updatePending_ = false;
+  uncorrected_.assign(sig, sig + kImagePixels);  // (stage 3b learns from it; the reference follows it)
   if (!started_) {  // the first frame (or after a restart): the reference begins here
     std::copy(sig, sig + kImagePixels, ref_.begin());
     std::fill(age_.begin(), age_.end(), 0);
@@ -397,7 +398,6 @@ void FrameStripes::process(float* sig, float sigma) {
   zeroMean(rowOff_);
   highPass(colOff_, o.highpass / 2.0);
   highPass(rowOff_, o.highpass / 2.0);
-  uncorrected_.assign(sig, sig + kImagePixels);  // (the reference follows the frame itself: see updateReference)
   gateUsed_ = g;
   updatePending_ = true;
   for (int y = 0; y < H; ++y)

@@ -203,6 +203,7 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
+                    Toggle("Stage 3c: per-frame stripe fix (preview)", options.stripes) { onOptions(options.copy(stripes = it)) }
                     // Stage 4b's setting (owner, 2026-09-25): Off / Low / Medium / High, starting at Low (PLAN M6).
                     Button(onClick = {
                         val presets = MainActivity.NR_PRESETS

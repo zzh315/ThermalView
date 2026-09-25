@@ -620,14 +620,17 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   if (stripesRan) stripes_.process(sig, noiseSigma());
   bool destripePending = options_.destripe, stripesPending = stripesRan;
   const std::function<void()> sideWork = [&] {
-    if (destripePending) updateDestripe(sig);
+    // (stage 3b learns the persistent pattern from the signal before 3c took this frame's part off:
+    // fed 3c's output it would miss the fast share of the pattern's drift, and the two would chase
+    // each other)
+    if (destripePending) updateDestripe(stripesRan ? stripes_.uncorrected() : sig);
     destripePending = false;
     if (stripesPending) stripes_.updateReference();
     stripesPending = false;
     once();
   };
   if (options_.denoise) {  // stage 4 (removed: off) changes sig in place, so the estimate goes first
-    if (destripePending) updateDestripe(sig);
+    if (destripePending) updateDestripe(stripesRan ? stripes_.uncorrected() : sig);
     destripePending = false;
     denoise(sig);
   }

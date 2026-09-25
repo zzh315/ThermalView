@@ -27,6 +27,7 @@ data class DebugOptions(
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
+    val stripes: Boolean = false,           // M4 stage 3c (preview): the per-frame column/row noise, motion-compensated
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val nr: Boolean = true,                 // M4 stage 4b (approved): spatial noise reduction, non-local means
     val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): NR_PRESETS' Low (owner, 2026-09-25)
@@ -43,6 +44,7 @@ data class DebugOptions(
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
         "shutter=" + bit(shutterHold), "badPixels=" + bit(badPixels), "drift=" + bit(drift), "destripe=" + bit(drift),
+        "stripes=" + bit(stripes),
         "denoise=0", "tone=" + bit(tone), "detail=" + bit(detail),  // stage 4 removed (owner, 2026-09-25)
         "nr=" + bit(nr), "nrSearch=$nrSearch", "nrStrength=$nrStrength",  // (the CPU falls back to 5x5)
         "detailMid=" + textureStrength,
@@ -124,7 +126,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
+     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -144,6 +146,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("shutterHold")) o = o.copy(shutterHold = extras.getBoolean("shutterHold"))
         if (extras.containsKey("badPixels")) o = o.copy(badPixels = extras.getBoolean("badPixels"))
         if (extras.containsKey("drift")) o = o.copy(drift = extras.getBoolean("drift"))
+        if (extras.containsKey("stripes")) o = o.copy(stripes = extras.getBoolean("stripes"))
         if (extras.containsKey("tone")) o = o.copy(tone = extras.getBoolean("tone"))
         if (extras.containsKey("detail")) o = o.copy(detail = extras.getBoolean("detail"))
         if (extras.containsKey("bigCores")) o = o.copy(bigCores = extras.getBoolean("bigCores"))
