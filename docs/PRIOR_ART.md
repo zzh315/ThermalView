@@ -124,6 +124,16 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 - **Source:** every open-source viewer checked (ht301_hacklib, IR-Py-Thermal, InfiCam/InfiCamPlus, thermal-cat, p3-ir-camera, thermal-camera-viewer, GetThermal, and others). None lets a user-drawn box drive the color range; boxes only feed markers or stats. FLIR's firmware AGC does — only ROI pixels build the histogram. InfiCam and InfiCamPlus, when zoomed and unlocked, take the auto range and min/max from the visible area.
 - **Verdict:** adopt FLIR's model for the box and InfiCam's visible-area rule for zoom (PLAN M4 stage 5, M6). Store the box in camera coordinates (thermal-camera-viewer's widget-coordinate box is the pitfall).
 
+### M6 controls: the range lock and the box's gestures (2026-09-26)
+
+- **Manual range (pass 2 item 6), the choice:** a lock that holds the current mapping (InfiCamPlus's lock, thermal-camera-android's scale lock) and adjusts it on the scale bar itself. The shape is Xtherm's draggable scale bar, but locking rather than limiting.
+- **Drags:** from the bar's top part the hot end, from its bottom part the cold end, from the middle the whole range. This answers the pass's open questions at once: min + max and center + span are both there, and each end moves on its own (p2pro-rs's separate pins). It works one-handed; one bar height = one span.
+- **Held in °C, not counts:** the camera's warming moves the counts a temperature reads at (`tv::RangeLock`). The equalized curve's shape is kept, so locking doesn't change the picture.
+- **Not adopted:** InfiCam's two-thumb slider and 1 °C steps (a separate control away from the scale); ht301_hacklib's keys.
+- **Out-of-range pixels (M0's open item):** locked, they clip at the palette ends, as in InfiCamPlus. Xtherm paints them grey instead; for the owner to decide.
+- **Box gestures:** the croppers' model (Compose-Cropper, Android-Image-Cropper, uCrop). Hit regions stay large on a small box: well inside moves; otherwise the nearest corner within 28 dp, then an edge. The minimum is 4×4 camera pixels, and the renderer dims the outside.
+- **Box storage:** camera coordinates, avoiding thermal-camera-viewer's pitfall. A second finger turns an edit into a zoom, and pan and zoom otherwise keep p2pro-rs's model (the anchor under the fingers, re-baselined on finger changes).
+
 ### Reference apps' measurement UX (M0 matrix, 2026-09-24)
 
 - **Box:** Hti Image (point, line, box) and Xtherm (point, line, box, grid) both have one, and neither changes the color range. They only confine readouts: Hti Image shows hottest, coldest and center; Xtherm shows max, avg and min. This confirms the design finding above.
