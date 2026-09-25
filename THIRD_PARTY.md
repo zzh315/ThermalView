@@ -22,6 +22,7 @@ Everything here is used for personal use only. Revisit these licenses before eve
 | ht301_hacklib (github.com/stawel/ht301_hacklib @ `2f1498d`) | GPL-3.0 | `tools/py/vendor/ht301_hacklib.py` (vendored unmodified, with `LICENSE-ht301_hacklib`) | The M2 temperature oracle, `CameraEmulator` only (`tools/py/oracle.py`); golden tables in `native/core/tests/golden` |
 | opencv-python-headless | 5.0.0.93 | Apache-2.0 | `tools/py/requirements.txt` | Imported by the vendored oracle; the Gaussian blur behind `tools/py/bench.py`'s `detail` metric |
 | FFmpeg | 8.1.2 (Homebrew build on the dev Mac) | GPL-3.0-or-later (this build: `--enable-gpl --enable-version3`) | External command, not vendored or linked | `tools/py/bench.py` renders the side-by-side benchmark clips with it |
+| bm3d (Tampere University, Mäkinen et al.), with bm4d | 4.0.3 | Free for non-commercial use | A throwaway venv under `build/` for one experiment; not in `tools/py/requirements.txt`, nothing vendored or shipped | The reference BM3D against stage 4b's non-local means on known texture (PIPELINE_LOG, 2026-09-25) |
 
 ## Approaches adapted (ideas, no code copied)
 

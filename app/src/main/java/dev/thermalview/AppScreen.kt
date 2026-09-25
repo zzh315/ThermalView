@@ -210,6 +210,13 @@ private fun DebugPanel(
                     }) {
                         Text("Noise reduction strength: " + options.nrStrength)
                     }
+                    Button(onClick = {
+                        val s = MainActivity.NR_SEARCHES
+                        onOptions(options.copy(nrSearch = s[(s.indexOf(options.nrSearch) + 1).mod(s.size)]))
+                    }) {
+                        val side = 2 * options.nrSearch + 1
+                        Text("Noise reduction search: ${side}x$side")
+                    }
                     Toggle("Stage 5: tone mapping", options.tone) { onOptions(options.copy(tone = it)) }
                     Toggle("Stage 6: texture (mid-scale contrast)", options.detail) { onOptions(options.copy(detail = it)) }
                     Button(onClick = {

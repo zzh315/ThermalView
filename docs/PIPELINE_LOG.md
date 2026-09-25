@@ -4,6 +4,36 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 4b loses subtle detail (owner); measured on known texture
+
+**The owner, live on the keyboard:** "Stage 4B does reduce the noise, but it makes the objects loses some details. (Even at 1.1 strength)".
+
+**Why the study missed it:**
+- Its texture metric (`keys`: the time-mean's detail inside the keys ROI) kept 98%. But that's the key gaps, far stronger than the noise, which non-local means keeps.
+- A band-wise version on the still scenes doesn't separate the two either (`tools/py/nr_detail.py`: the time-mean of one half of the frames against filtered frames from the other half, subtle pixels only). In the fine band, a still scene's time-mean is mostly the sensor's fixed pattern, which a filter within one frame can't tell from noise. Every variant keeps it in step with the noise it keeps.
+
+**Measured on known texture** (`tools/py/nr_detail.py --synthetic`):
+- **Method:** random texture (white noise blurred by 0.7, 1 or 2 px) at 0.5, 1 and 2× the noise amplitude, added to `flat`'s real frames (real noise and fixed pattern).
+- **kept:** the fraction of the texture's contrast in the filtered time-mean.
+- **noise:** the temporal noise left, relative to none.
+
+| Filter | Noise | 0.7 px ×0.5 / ×1 / ×2 | 1 px ×0.5 / ×1 / ×2 | 2 px ×0.5 / ×1 / ×2 |
+|---|---|---|---|---|
+| NLM 11×11, strength 1.1 (the default) | 0.31 | 0.32 / 0.44 / 0.79 | 0.41 / 0.54 / 0.81 | 0.67 / 0.74 / 0.88 |
+| NLM 11×11, 0.9 | 0.46 | 0.51 / 0.67 / 0.94 | 0.58 / 0.73 / 0.94 | 0.77 / 0.84 / 0.94 |
+| NLM 11×11, 0.7 | 0.78 | 0.83 / 0.93 / 1.00 | 0.85 / 0.93 / 0.99 | 0.92 / 0.96 / 0.99 |
+| NLM 5×5, 1.4 (the morning's preview) | 0.37 | 0.41 / 0.49 / 0.74 | 0.57 / 0.63 / 0.79 | 0.84 / 0.86 / 0.90 |
+| NLM 11×11, squared distance less 2σ², 0.7 | 0.66 | 0.69 / 0.86 / 0.99 | 0.74 / 0.87 / 0.99 | 0.87 / 0.92 / 0.98 |
+| BM3D, σ ×1.0 (reference implementation, offline) | 0.52 | 0.65 / 0.80 / 0.93 | 0.76 / 0.87 / 0.96 | 0.91 / 0.96 / 0.98 |
+| BM3D, σ ×0.8 | 0.75 | 0.83 / 0.90 / 0.96 | 0.88 / 0.94 / 0.98 | 0.96 / 0.98 / 0.99 |
+
+- **At the default:** texture as strong as the noise keeps only about half its contrast. That's what the owner sees.
+- **The variants are no way out:** a weight cutoff, spatial weighting of the search, the squared distance, adding back the removed signal's smooth part, and a 5×5 or 7×7 search all fall on about the same noise-for-texture trade-off as lowering the strength.
+- **Why:** at this signal-to-noise ratio, a 5×5 patch's distance barely tells texture of the noise's size from noise. Identical patches weigh only ~2× what patches 1σ apart do, and a large search gathers many of the latter.
+- **BM3D** (the reference code, 0.43 s a frame on the Mac's CPU) does better at moderate strength: at about half the noise left, ~10 points more texture. At light strength it's about equal. A real-time GPU version would be a large project, and its simplifications would give some of that back.
+
+**Now:** the debug panel sets the search size (5×5 / 7×7 / 11×11) and strengths 0.6–1.4 for the owner's live pick. Verdict pending.
+
 ## 2026-09-25 — Stage 4b: spatial noise reduction, a study, then non-local means (approved; on the GPU, `d25e430+default`)
 
 **Why:** with stage 4 removed, the owner found tone mapping showed more noise. They asked for noise reduction within each frame, so nothing can ghost, but only after the best method was found (`tools/py/nr_study.py`).
