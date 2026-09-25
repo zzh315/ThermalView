@@ -7,6 +7,7 @@
 #include <android/native_window.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <map>
@@ -137,7 +138,7 @@ class Session {
   void writeCsvRow(const RawFrame& frame, const FrameView& view, const ImageStats& stats,
                    uint32_t flags, bool frozen, int hotPixels, const Readouts* readouts);
   bool bannerIs(const std::string& text);
-  void captureSetBanner(const std::string& text);  // a banner the capture may clear again
+  void captureSetBanner(const std::string& text);  // the capture's step ("": none)
   void openCsv();
   void closeCsv();
   void replayLoop();
@@ -196,8 +197,10 @@ class Session {
   std::atomic<bool> capturePairRequested_{false};
   bool capturePair_ = false;
   int captureGapMs_ = 60000;
-  std::string captureBanner_;  // the last banner the capture showed
+  std::string captureBanner_;  // the capture's step, for its button (under snapshotMutex_)
   CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
+  double scaleLoC_ = NAN, scaleHiC_ = NAN;  // the scale bar's endpoints (processing thread)
+  bool scaleHiOver_ = false;
   int64_t capturePhaseNs_ = 0;
   int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's
 
@@ -301,6 +304,7 @@ class Session {
 
   // Dump capture (processing thread fills, a writer thread saves).
   std::atomic<int> dumpWanted_{0};
+  std::atomic<int> dumpDone_{0}, dumpTotal_{0};  // (the on-screen progress: frames written of the dump's total)
   std::vector<uint16_t> dumpFrames_;
   DumpInfo dumpInfo_;
   std::string dumpBase_;

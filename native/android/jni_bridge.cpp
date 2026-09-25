@@ -8,6 +8,7 @@
 
 #include "field_log.h"
 #include "session.h"
+#include "tv/palette.h"
 
 namespace {
 
@@ -140,6 +141,22 @@ JNIEXPORT jfloatArray JNICALL Java_dev_thermalview_NativeBridge_readouts(JNIEnv*
   const std::vector<float> v = session().readouts();
   jfloatArray a = env->NewFloatArray(jsize(v.size()));
   if (a) env->SetFloatArrayRegion(a, 0, jsize(v.size()), v.data());
+  return a;
+}
+
+// The UI's scale bar and palette swatches: n colors (0xAARRGGBB) of a palette file, the same table
+// the display uses (empty if the file doesn't parse).
+JNIEXPORT jintArray JNICALL Java_dev_thermalview_NativeBridge_paletteColors(JNIEnv* env, jobject, jstring json,
+                                                                           jint n) {
+  tv::PaletteSpec spec;
+  std::string error;
+  std::vector<jint> argb;
+  if (tv::parsePalette(toString(env, json), &spec, &error)) {
+    for (const auto& c : tv::buildPaletteLut(spec, n < 2 ? 2 : int(n)))
+      argb.push_back(jint(0xFF000000u | uint32_t(c[0]) << 16 | uint32_t(c[1]) << 8 | uint32_t(c[2])));
+  }
+  jintArray a = env->NewIntArray(jsize(argb.size()));
+  if (a && !argb.empty()) env->SetIntArrayRegion(a, 0, jsize(argb.size()), argb.data());
   return a;
 }
 

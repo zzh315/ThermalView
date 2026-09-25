@@ -24,7 +24,7 @@ data class DebugOptions(
     val rangePairOnReady: Boolean = false,  // Ready captures the scene in both ranges (M2 iron session)
     val lockoutEnabled: Boolean = true,     // off only for tests with hot objects within the sensor's rating
     val rangeSettleMs: Int = 500,           // wait between a range command and its 0x8000 (M2 settling test)
-    val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
+    val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles (no crossfade: owner, 2026-09-26)
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
     val stripes: Boolean = true,            // M4 stage 3c: the per-frame column/row noise; part of NR_LEVELS' Low and High
@@ -39,7 +39,7 @@ data class DebugOptions(
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
     val perfHint: Boolean = true,           // ADPF: ask for the clock the frame budget needs
     val upscaler: Int = 1,                  // M5 preview: 0 nearest (M1), 1 cardinal B-spline + 2x2 clamp
-    val palette: Int = 0,                   // M5 preview: 0 gray (as before), 1 white_hot, 2 rainbow_hc
+    val palette: Int = 1,                   // M5: 1 white_hot, 2 rainbow_hc (0: the old plain gray, adb only)
     val viewSize: Int = 2,                  // M6 presets, debug until then: 0 Phone, 1 Small tablet, 2 Full
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var camera: UsbCamera
     private val message = mutableStateOf("")
     private val options = mutableStateOf(DebugOptions())
+    private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) camera.connect() else message.value = "The camera permission is needed to use a USB camera."
@@ -81,7 +82,7 @@ class MainActivity : ComponentActivity() {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        setOptions(options.value)  // the app's defaults, before any debug extras (native keeps its own until told)
+        setOptions(restored(options.value))  // the app's defaults and the kept settings, before any debug extras
         applyDebugExtras(intent)
         setContent {
             AppScreen(
@@ -89,6 +90,7 @@ class MainActivity : ComponentActivity() {
                 dumpsDir = "${storageDir()}/dumps",
                 options = options.value,
                 onOptions = ::setOptions,
+                paletteColors = { NativeBridge.paletteColors(paletteJson(it), 256) },
             )
         }
     }
@@ -112,18 +114,40 @@ class MainActivity : ComponentActivity() {
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) camera.connect()
     }
 
+    /**
+     * PLAN M6's persistence: the palette, the view size and the noise and texture settings are kept
+     * across launches (a custom setting from the debug pages isn't: the next launch starts from its
+     * preset). Everything else starts from the defaults.
+     */
+    private fun restored(o: DebugOptions): DebugOptions {
+        var r = o.copy(
+            palette = prefs.getInt("palette", o.palette).coerceIn(1, PALETTES.size),
+            viewSize = prefs.getInt("viewSize", o.viewSize).coerceIn(0, VIEW_WIDTHS.size - 1),
+        )
+        prefs.getInt("nrLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withNrLevel(r, it) }
+        prefs.getInt("textureLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withTextureLevel(r, it) }
+        return r
+    }
+
+    private fun keep(o: DebugOptions) {
+        prefs.edit().apply {
+            if (o.palette in 1..PALETTES.size) putInt("palette", o.palette)
+            putInt("viewSize", o.viewSize)
+            nrLevelOf(o)?.let { putInt("nrLevel", it) }
+            textureLevelOf(o)?.let { putInt("textureLevel", it) }
+        }.apply()
+    }
+
     private fun setOptions(value: DebugOptions) {
         options.value = value
+        keep(value)
         NativeBridge.setOptions(
             value.skipStartupShutter, value.statsCsv, value.fallbackOrder, value.dumpOnLockout,
             value.autoRange, value.highMathInfiCam, value.lockoutEnabled, value.rangeSettleMs, value.bigCores,
             value.perfHint, value.gpuNr,
         )
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
-        val palette = PALETTES.getOrNull(value.palette - 1)?.let { name ->
-            runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
-        } ?: ""
-        NativeBridge.setDisplay(value.upscaler, palette).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
+        NativeBridge.setDisplay(value.upscaler, paletteJson(value.palette)).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
         NativeBridge.setViewWidth(VIEW_WIDTHS.getOrElse(value.viewSize) { 0 })
     }
 
@@ -197,6 +221,11 @@ class MainActivity : ComponentActivity() {
 
     private fun storageDir() = (getExternalFilesDir(null) ?: filesDir).absolutePath
 
+    /** A palette file's text ("" for 0, the plain gray). */
+    private fun paletteJson(palette: Int): String = PALETTES.getOrNull(palette - 1)?.let { name ->
+        runCatching { assets.open("$name.json").bufferedReader().use { it.readText() } }.getOrDefault("")
+    } ?: ""
+
     /** Stage 3: every bundled drift map (assets/drift_<serial>.f32, from native/core/data). */
     private fun registerDriftMaps() {
         val names = assets.list("")?.filter { it.startsWith("drift_") && it.endsWith(".f32") } ?: return
@@ -215,13 +244,15 @@ class MainActivity : ComponentActivity() {
         // The simple settings (owner, 2026-09-26: "simple presets that abstract settings into simple low
         // and high effects"): each level sets the stages underneath, and a setting changed by hand in the
         // debug panel shows as "custom". Noise reduction is stage 3c (the per-frame stripes) with stage
-        // 4b's non-local means at the owner's Low (0.8) or High (1.1) strength. BM3D stays a debug option:
-        // the owner couldn't see a big difference, and it doesn't fit the latency budget yet (PIPELINE_LOG).
+        // 4b at the owner's Low or High strength: Low is non-local means at h 0.8; High is BM3D at the
+        // strength that leaves NLM 1.1's noise, where it keeps 6-16 points more texture (PIPELINE_LOG).
+        // It costs latency (p95 ~31 ms), which the owner's rule puts after image quality (2026-09-26).
+        // (nrStrength stays 1.1: the CPU's non-local means takes over if the GPU can't run BM3D.)
         val LEVELS = listOf("Off", "Low", "High")
         fun withNrLevel(o: DebugOptions, level: Int): DebugOptions = when (level) {
             0 -> o.copy(nr = false, stripes = false)
             1 -> o.copy(nr = true, nrMethod = 0, nrStrength = 0.8f, nrSearch = 5, stripes = true)
-            else -> o.copy(nr = true, nrMethod = 0, nrStrength = 1.1f, nrSearch = 5, stripes = true)
+            else -> o.copy(nr = true, nrMethod = 1, nrStrength = 1.1f, nrSearch = 5, stripes = true)
         }
         fun nrLevelOf(o: DebugOptions): Int? = LEVELS.indices.firstOrNull { withNrLevel(o, it) == o }
         // Texture (stage 6's mid-scale contrast; PLAN M6's setting): its strength x1.5 (Low, the default)
@@ -247,6 +278,6 @@ class MainActivity : ComponentActivity() {
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
         val VIEW_WIDTHS = listOf(880, 1467, 0)
-        val VIEW_NAMES = listOf("Phone 4.5\"", "Small tablet 7.5\"", "Full 10.9\"")
+        val VIEW_NAMES = listOf("Phone", "Tablet", "Full")  // 4.5", 7.5" and 10.9" diagonals
     }
 }

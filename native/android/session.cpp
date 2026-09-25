@@ -182,6 +182,10 @@ struct Session::Snapshot {
   bool pipelineFrozen = false, pipelineBlending = false, driftMap = false;
   double driftC = 0;
   double camMaxC = NAN, camMinC = NAN, camCenterC = NAN;  // Block A through our table
+  // The scale bar (PLAN M5): the temperatures at the ends of stage 5's range (NaN: no mapping), and
+  // whether the top one is over range.
+  double scaleLoC = NAN, scaleHiC = NAN;
+  bool scaleHiOver = false;
   double lastCycleMs = 0;
   uint64_t recalDue = 0;   // the recalibration policy's dry run: how often it would have asked
   double recalAgoS = -1;   // and how long ago it last would have
@@ -359,6 +363,7 @@ bool Session::startStreaming() {
   lockoutPeekHot_ = false;
   lastFreezeEndNs_ = 0;
   capturePhase_ = CapturePhase::None;
+  captureSetBanner("");
   lastShutterNs_ = 0;
   rangeWindow_.clear();
   arrivals_.reset();
@@ -799,13 +804,13 @@ void Session::tickCapture(int64_t now) {
     captureGapMs_ = capturePair_ ? kPairGapMs : kCaptureGapMs;
     FLOG("capture: requested%s", capturePair_ ? " (range test: normal, then high)" : "");
   }
-  const char* leg = !capturePair_ ? "Capture" : range_ == TempRange::High ? "Range test 2/2 (high)"
-                                                                          : "Range test 1/2 (normal)";
+  // The steps show on the Capture button (short: it sits in the side bar); the range test's legs
+  // are numbered.
+  const std::string leg = !capturePair_ ? "" : range_ == TempRange::High ? "2/2 " : "1/2 ";
   if (state != State::Running && state != State::ShutterHold && state != State::RangeSwitch) {
     FLOG("capture: aborted (%s)", stateName(state));
     capturePhase_ = CapturePhase::None;
-    // Only clear our own banner: a lockout that aborts the capture has just set its own (M2).
-    if (bannerIs(captureBanner_)) setBanner("");
+    captureSetBanner("");
     return;
   }
   switch (capturePhase_) {
@@ -813,13 +818,12 @@ void Session::tickCapture(int64_t now) {
       if (state != State::Running) break;
       const int64_t gap = since(std::max(lastShutterNs_, lastFreezeEndNs_));
       if (gap < captureGapMs_) {
-        captureSetBanner(format("%s: waiting %" PRId64 " s for the shutter to cool…", leg,
-                                (captureGapMs_ - gap) / 1000 + 1));
+        captureSetBanner(format("%swait %" PRId64 " s", leg.c_str(), (captureGapMs_ - gap) / 1000 + 1));
         break;
       }
       if (command(kCmdShutter) != CommandResult::Sent) break;  // retried on the next tick
       FLOG("capture: recalibrating");
-      captureSetBanner(format("%s: recalibrating…", leg));
+      captureSetBanner(leg + "calibrating");
       capturePhase_ = CapturePhase::Recalibrating;
       beginHold(now);
       break;
@@ -828,12 +832,13 @@ void Session::tickCapture(int64_t now) {
       if (state == State::Running) {
         capturePhase_ = CapturePhase::Settle;
         capturePhaseNs_ = now;
-        captureSetBanner(format("%s: recording, keep still…", leg));
+        captureSetBanner(leg + "keep still");
       }
       break;
     case CapturePhase::Settle:
       if (since(capturePhaseNs_) >= (capturePair_ ? kPairSettleMs : kCaptureSettleMs)) {
         FLOG("capture: recording %s", startDump(capturePair_ ? kPairFrames : kCaptureFrames).c_str());
+        captureSetBanner(leg + "recording");
         capturePhase_ = CapturePhase::Recording;
       }
       break;
@@ -841,18 +846,18 @@ void Session::tickCapture(int64_t now) {
       if (dumpWanted_.load() != 0) break;
       if (capturePair_ && range_ == TempRange::Normal) {
         FLOG("capture: normal leg done, switching to the high range");
-        captureSetBanner("Range test: switching to the high range…");
+        captureSetBanner("to high range");
         capturePhase_ = CapturePhase::SwitchHigh;
         break;
       }
       if (capturePair_) {
         FLOG("capture: high leg done, switching back");
-        captureSetBanner("Range test: switching back…");
+        captureSetBanner("back to normal");
         capturePhase_ = CapturePhase::SwitchBack;
         break;
       }
       FLOG("capture: done");
-      captureSetBanner("Capture done: measure again now");
+      captureSetBanner("done");
       capturePhase_ = CapturePhase::Done;
       capturePhaseNs_ = now;
       break;
@@ -865,7 +870,7 @@ void Session::tickCapture(int64_t now) {
       if (state != State::Running) break;  // still switching (the switch recalibrates)
       capturePhase_ = CapturePhase::Settle;
       capturePhaseNs_ = now;
-      captureSetBanner(format("%s: recording, keep still…", leg));
+      captureSetBanner(leg + "keep still");
       break;
     case CapturePhase::SwitchBack:
       if (range_ != TempRange::Normal) {
@@ -874,13 +879,13 @@ void Session::tickCapture(int64_t now) {
       }
       if (state != State::Running) break;
       FLOG("capture: range test done");
-      captureSetBanner("Range test done");
+      captureSetBanner("done");
       capturePhase_ = CapturePhase::Done;
       capturePhaseNs_ = now;
       break;
     case CapturePhase::Done:
       if (since(capturePhaseNs_) >= 5000) {
-        if (bannerIs(captureBanner_)) setBanner("");
+        captureSetBanner("");
         capturePhase_ = CapturePhase::None;
       }
       break;
@@ -1318,6 +1323,23 @@ void Session::handleFrame(const RawFrame& frame) {
     pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()}, temperatureWork);
     const int64_t tPipe1 = nowNs();
     pipelineFed_ = true;
+    // The scale bar's endpoints: stage 5's range in counts, through this frame's table. The stages
+    // before it take out patterns, not the level (the drift map and the stripe offsets are zero-mean),
+    // so the signal's counts are the camera's own.
+    scaleLoC_ = scaleHiC_ = NAN;
+    scaleHiOver_ = false;
+    if (const ToneMapper* tone = pipeline_.toneMapper()) {
+      const auto celsius = [&](double counts) {
+        if (!std::isfinite(counts)) return double(NAN);
+        const double c = std::clamp(counts, 0.0, double(TemperatureLut::kSize - 2));
+        const auto i = uint16_t(c);
+        if (!lut_.valid(i) || !lut_.valid(uint16_t(i + 1))) return double(NAN);
+        return lut_[i] + (c - i) * (lut_[uint16_t(i + 1)] - lut_[i]);
+      };
+      scaleLoC_ = celsius(tone->lowCounts());
+      scaleHiOver_ = tone->highCounts() >= clipRaw_;
+      scaleHiC_ = scaleHiOver_ ? NAN : celsius(tone->highCounts());
+    }
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
     const int64_t workNs = nowNs() - t0;
@@ -1387,6 +1409,9 @@ void Session::handleFrame(const RawFrame& frame) {
   s.camMaxC = lut_.valid(view.maxRaw()) ? lut_[view.maxRaw()] : NAN;
   s.camMinC = lut_.valid(view.minRaw()) ? lut_[view.minRaw()] : NAN;
   s.camCenterC = lut_.valid(view.centerRaw()) ? lut_[view.centerRaw()] : NAN;
+  s.scaleLoC = scaleLoC_;
+  s.scaleHiC = scaleHiC_;
+  s.scaleHiOver = scaleHiOver_;
   s.lastCycleMs = lastCycleMs_;
   s.recalDue = recalDue_;
   s.recalAgoS = recalDueNs_ ? double(frame.arrivalNs - recalDueNs_) / 1e9 : -1.0;
@@ -1440,6 +1465,8 @@ std::string Session::startDump(int frames) {
     std::lock_guard lock(snapshotMutex_);
     dumpStatus_ = "capturing " + std::to_string(frames) + " frames";
   }
+  dumpDone_ = 0;
+  dumpTotal_ = std::max(1, frames);
   dumpWanted_.store(std::max(1, frames), std::memory_order_release);
   FLOG("dump requested: %d frames -> %s", frames, dumpBase_.c_str());
   return dumpBase_.substr(dumpBase_.find_last_of('/') + 1);
@@ -1457,6 +1484,7 @@ void Session::captureForDump(const RawFrame& frame) {
   dumpFrames_.insert(dumpFrames_.end(), frame.data.begin(), frame.data.end());
   dumpInfo_.timestampsNs.push_back(frame.arrivalNs);
   dumpInfo_.sequence.push_back(frame.sequence);
+  dumpDone_ = int(dumpInfo_.timestampsNs.size());
   if (int(dumpInfo_.timestampsNs.size()) >= wanted) finishDump();
 }
 
@@ -1701,8 +1729,9 @@ std::string Session::setPipeline(const std::string& stages) {
 }
 
 void Session::captureSetBanner(const std::string& text) {
+  // (on the Capture button, from the status line: a banner would sit over the middle of the image)
+  std::lock_guard lock(snapshotMutex_);
   captureBanner_ = text;
-  setBanner(text);
 }
 
 bool Session::bannerIs(const std::string& text) {
@@ -1720,6 +1749,9 @@ std::vector<float> Session::readouts() {
     v.push_back(float((std::isfinite(spot->tempC) ? 1 : 0) | (spot->overRange ? 2 : 0)));
   }
   v.push_back(snapshot_->rangeHigh ? 1.0f : 0.0f);
+  v.push_back(float(snapshot_->scaleLoC));
+  v.push_back(float(snapshot_->scaleHiC));
+  v.push_back(snapshot_->scaleHiOver ? 1.0f : 0.0f);
   return v;
 }
 
@@ -1741,10 +1773,15 @@ std::string Session::statusLine() {
   std::replace(banner.begin(), banner.end(), ';', ',');
   std::string dump = dumpStatus_;
   std::replace(dump.begin(), dump.end(), ';', ',');
+  std::string captureText = captureBanner_;
+  std::replace(captureText.begin(), captureText.end(), ';', ',');
   // (the on-screen summary: frame rate, lag, and frames that never made it to the screen)
   return std::string("state=") + stateName(state) + ";streaming=" + (streaming ? "1" : "0") +
          ";banner=" + banner + ";dump=" + dump + ";replay=" + (replayRun_ ? replayName_ : "") +
-         format(";fps=%.2f;lat50=%.1f;lat95=%.1f;dropped=%" PRIu64, snap.fps, p50, p95, snap.seqGaps + snap.overruns);
+         format(";fps=%.2f;lat50=%.1f;lat95=%.1f;dropped=%" PRIu64, snap.fps, p50, p95, snap.seqGaps + snap.overruns) +
+         format(";dumpDone=%d;dumpTotal=%d", dumpWanted_.load() > 0 ? dumpDone_.load() : 0,
+                dumpWanted_.load() > 0 ? dumpTotal_.load() : 0) +
+         ";capture=" + captureText;
 }
 
 std::string Session::overlayText() {

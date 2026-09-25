@@ -1,0 +1,38 @@
+{
+  "label": "2b5f031+default",
+  "commit": "2b5f031",
+  "dirty": false,
+  "date": "2026-09-26T02:48:13+10:00",
+  "stages": [
+    "baseline",
+    "pipeline"
+  ],
+  "pipeline": "default",
+  "upscale": "bicubic",
+  "scenes": {
+    "shutter": {
+      "environment": {
+        "emissivity": 0.98,
+        "reflected_c": 25.0,
+        "air_c": 25.0,
+        "humidity": 0.45,
+        "distance": 0,
+        "fpa_c": 31.97
+      },
+      "baseline": {
+        "shutter": {
+          "freeze_frames": 31,
+          "max_step_levels": 43.68,
+          "total_change_levels": 49.07
+        }
+      },
+      "pipeline": {
+        "shutter": {
+          "freeze_frames": 31,
+          "max_step_levels": 9.0,
+          "total_change_levels": 10.01
+        }
+      }
+    }
+  }
+}

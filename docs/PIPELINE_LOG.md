@@ -4,6 +4,33 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — Quality first (owner): stage 1 without the crossfade; noise reduction High is BM3D
+
+**The owner:** "image quality, sharp image and better contrast that looks good to the eye should always take priority over frame rate and lag … leave the optimisation for lag and frame rate at the end. but make sure there's no ghosting or after image (it's ok to have sharp frame changes, no need to smooth frame if it produce after image)".
+
+**Stage 1 (`2b5f031`, `ad496a6`):** the 8-frame crossfade after a shutter cycle is gone.
+- **Why:** it blended the frame from before the cycle into the new ones for 0.3 s, so anything that moved during the ~1.2 s freeze left an afterimage.
+- **What replaces it:** a plain cut. Dropping the crossfade alone uncovered the camera's first fresh frame, whose strong column streaks (see the stage 1 entry) then showed for one frame.
+- **So:** stage 1 now holds that frame over as well (`shutterSkipFrames` 1). This applies only to cycles the pipeline sees in the frames. After the app's own `0x8000`, the session already waits out 10 fresh frames before it feeds the pipeline again.
+
+| `shutter` | Crossfade 8 (before) | No crossfade | No crossfade, first fresh frame held (now) |
+|---|---|---|---|
+| Biggest frame-to-frame display change in the second after the freeze | 1.93 levels | 9.0 levels | 8.25 levels |
+| Total change the NUC brings | 10.0 levels | 10.0 levels | 10.0 levels |
+| The first fresh frame | streaks diluted | strong column streaks, 1 frame | held over |
+
+- **Sources:** `bench/results/2b5f031+default_shutterBlend-8.json`, `2b5f031+default.json`, `ad496a6+default.json`.
+- **Sheet:** frames 89–92, each way: `bench/results/ad496a6+default/shutter_resume.jpg`.
+- **The one step is the sharp change the owner accepts:** ~8 levels, a 3% brightness shift, in one frame instead of 0.3 s. The other seven scenes have no cycle, so they're unchanged.
+
+**Noise reduction High (the side bar's setting):** now BM3D at ×1.65, the strength that leaves the noise NLM leaves at h 1.1.
+- **Why:** BM3D's gain is largest at that noise, +6–16 points of texture kept at 1–2 px (the BM3D entry below), and the latency budget no longer rules it out.
+- **The fallback:** if the GPU can't run BM3D, the CPU's non-local means takes over at h 1.1, as before.
+- **Low is unchanged:** NLM h 0.8. There the two filters are close (0.7 px texture −6 to 0 points, 1–2 px +2 to +8), and the owner couldn't tell them apart.
+- **Live cost, with 3c, on the tablet** (2026-09-26): 25 fps, no dropped frames, latency p50 / p95 25.4 / 30.5 ms. BM3D takes 11.9 / 13.4 ms of its own per frame.
+
+**Verdict:** pending the owner's look at High on the device.
+
 ## 2026-09-26 — Simple settings: noise reduction and texture Off / Low / High (owner)
 
 **The owner, after trying BM3D and 3c on the tablet:** "could not tell big difference, maybe have simple presets that abstract settings into simple low and high effects so that it's more intuitive", and on the trade-offs, "do what you think is best for performance".
@@ -542,7 +569,7 @@ The other seven scenes are identical to the baseline, since none of them contain
 
 **Clip:** `bench/out/clips/shutter.mp4` (local): baseline left, stage 1 right; the switch comes at ~3.6 s.
 
-**Verdict:** approved by the owner (2026-09-25): keep the 0.3 s crossfade. Stage 1 is on by default (`PipelineOptions`), and later "pipeline" columns include it.
+**Verdict:** approved by the owner (2026-09-25): keep the 0.3 s crossfade. Stage 1 is on by default (`PipelineOptions`), and later "pipeline" columns include it. The crossfade was superseded on 2026-09-26 (no afterimages): see the quality-first entry.
 
 ## 2026-09-24 — M1 baseline (`31051f5`)
 

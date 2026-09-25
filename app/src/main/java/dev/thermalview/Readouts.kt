@@ -1,114 +1,239 @@
 package dev.thermalview
 
-import android.graphics.Paint
-import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 /** One readout as the native side reports it (camera pixels). */
-private data class Spot(val tempC: Float, val x: Float, val y: Float, val flags: Int, val high: Boolean) {
-    val valid get() = flags and 1 != 0
+data class Spot(val tempC: Float, val x: Float, val y: Float, val flags: Int) {
+    val valid get() = flags and 1 != 0 && !tempC.isNaN()
     val overRange get() = flags and 2 != 0
-    fun label(): String = when {
-        overRange -> if (high) "> max" else "> 120 °C"  // the high range's ceiling is measured in M2
-        valid && !tempC.isNaN() -> "%.1f °C".format(tempC)
+    val placed get() = !x.isNaN() && !y.isNaN()
+}
+
+/** The readouts and the scale bar's endpoints, as [NativeBridge.readouts] reports them. */
+data class Readings(
+    val high: Spot,
+    val low: Spot,
+    val center: Spot,
+    val highRange: Boolean,
+    val scaleLoC: Float,     // the temperatures at the ends of the color mapping (NaN: none yet)
+    val scaleHiC: Float,
+    val scaleHiOver: Boolean,  // the mapping's top is over range
+) {
+    /** "45.3 °C" ([unit] false: "45.3°"), "> 120 °C" over range, "--" without a reading. */
+    fun text(s: Spot, unit: Boolean = true): String = when {
+        s.overRange -> if (highRange) "> max" else if (unit) "> 120 °C" else "> 120°"
+        s.valid -> "%.1f".format(s.tempC) + if (unit) " °C" else "°"
         else -> "--"
     }
+
+    companion object {
+        fun parse(a: FloatArray): Readings? {
+            if (a.size < 13) return null
+            fun spot(i: Int) = Spot(a[4 * i], a[4 * i + 1], a[4 * i + 2], a[4 * i + 3].toInt())
+            return Readings(
+                high = spot(0), low = spot(1), center = spot(2), highRange = a[12] > 0.5f,
+                scaleLoC = a.getOrElse(13) { Float.NaN }, scaleHiC = a.getOrElse(14) { Float.NaN },
+                scaleHiOver = a.getOrElse(15) { 0f } > 0.5f,
+            )
+        }
+    }
 }
 
-private fun parse(a: FloatArray): List<Spot>? =
-    if (a.size < 13) null else (0 until 3).map { i ->
-        Spot(a[4 * i], a[4 * i + 1], a[4 * i + 2], a[4 * i + 3].toInt(), high = a[12] > 0.5f)
-    }
+private val labelStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")
+private val bannerStyle = TextStyle(fontSize = 15.sp, color = Color.White, textAlign = TextAlign.Center)
+
+private class Marker(val at: Offset, val arm: Float, val gap: Float, val color: Color, val label: TextLayoutResult)
 
 /**
- * Low / high / center readouts over the image (M2; M6 refines the UI). Marker positions follow
- * the renderer's 4:3 view (renderer.cpp draw(); viewBox) and the zoom (rect: the camera pixels
- * shown): image row 0 at the top, no mirroring. The readouts themselves come from the visible area.
+ * What's drawn over the image (PLAN M5/M6): crosshairs at the hottest (red) and coldest (blue)
+ * points and at the center (white), each with its temperature, and the banner. Marker positions
+ * follow the renderer's 4:3 view (renderer.cpp draw(); [viewBox]) and the zoom ([rect]: the camera
+ * pixels shown). Nothing leaves the view: the crosshairs are clipped to it, and each label takes the
+ * first place around its marker that stays inside and clear of the other markers, the labels placed
+ * before it and the banner, keeping its last place while that still works so labels don't hop. The
+ * banner sits at the top or the bottom of the image, whichever is clear of the markers (the middle
+ * when there's no image). [covered]: a part of the image under a panel, which labels keep out of.
  */
 @Composable
-fun ReadoutOverlay(active: Boolean, viewWidthPx: Int = 0, rect: CamRect = CamRect.of(1f, 128f, 96f)) {
-    var spots by remember { mutableStateOf<List<Spot>?>(null) }
-    LaunchedEffect(active) {
-        while (active) {
-            spots = parse(NativeBridge.readouts())
-            delay(100)
+fun ImageOverlay(readings: Readings?, box: ViewBox, rect: CamRect, banner: String, live: Boolean, covered: Rect? = null) {
+    val measurer = rememberTextMeasurer()
+    val last = remember { IntArray(4) { -1 } }  // the place each label (and the banner) took last time
+    val lastAt = remember { Array(3) { Offset.Unspecified } }  // where each marker was then
+    Canvas(Modifier.fillMaxSize()) {
+        val view = Rect(box.x, box.y, box.x + box.w, box.y + box.h)
+        val inner = view.deflate(6.dp.toPx())
+        val px = box.w / rect.w  // one camera pixel on screen
+
+        val markers = ArrayList<Marker?>(3)
+        if (readings != null) {
+            fun marker(s: Spot, color: Color, textColor: Color, arm: Float): Marker? {
+                if (!s.placed || !rect.contains(s.x, s.y)) return null
+                val (x, y) = rect.toSurface(box, s.x, s.y)
+                // The gap keeps the marked pixel itself visible, however far zoomed in.
+                val gap = max(3.dp.toPx(), 0.6f * px)
+                val text = measurer.measure(readings.text(s), labelStyle.copy(color = textColor))
+                return Marker(Offset(x, y), gap + arm, gap, color, text)
+            }
+            // The center first: it's always there, and the others work around it.
+            markers += marker(readings.center, Ui.Center, Color.White, 13.dp.toPx())
+            markers += marker(readings.high, Ui.Hot, Ui.HotText, 10.dp.toPx())
+            markers += marker(readings.low, Ui.Cold, Ui.ColdText, 10.dp.toPx())
         }
-    }
-    val s = spots
-    if (!active || s == null) return
-    val (high, low, center) = s
-    Box(Modifier.fillMaxSize()) {
-        Canvas(Modifier.fillMaxSize()) {
-            val box = viewBox(size.width.toInt(), size.height.toInt(), viewWidthPx)
-            fun map(x: Float, y: Float) = rect.toSurface(box, x, y).let { Offset(it.first, it.second) }
-            val px = box.w / rect.w  // one camera pixel on screen
-            if (!high.x.isNaN() && rect.contains(high.x, high.y)) marker(map(high.x, high.y), Color(0xFFFF3B30), up = true, px, high.label())
-            if (!low.x.isNaN() && rect.contains(low.x, low.y)) marker(map(low.x, low.y), Color(0xFF30A0FF), up = false, px, low.label())
-            crosshair(map(center.x, center.y), px, center.label())
+        val squares = markers.map { m -> m?.let { Rect(it.at, it.arm + 2.dp.toPx()) } }
+
+        // The banner, away from the hot and cold markers (and the room their labels need).
+        var bannerRect: Rect? = null
+        var bannerText: TextLayoutResult? = null
+        if (banner.isNotEmpty()) {
+            val maxW = min(box.w - 48.dp.toPx(), 520.dp.toPx()).toInt().coerceAtLeast(1)
+            val t = measurer.measure(banner, bannerStyle, constraints = Constraints(maxWidth = maxW))
+            val size = Size(t.size.width + 28.dp.toPx(), t.size.height + 18.dp.toPx())
+            val left = box.x + (box.w - size.width) / 2
+            val choices = if (!live) {
+                listOf(Rect(Offset(left, box.y + (box.h - size.height) / 2), size))
+            } else {
+                listOf(
+                    Rect(Offset(left, inner.top + 6.dp.toPx()), size),
+                    Rect(Offset(left, inner.bottom - 6.dp.toPx() - size.height), size),
+                )
+            }
+            val room = 70.dp.toPx()
+            val keepClear = squares.drop(1).filterNotNull().map { it.inflate(room) }
+            val pick = choices.indices.minBy { i ->
+                keepClear.sumOf { overlap(choices[i], it).toDouble() } - if (i == last[3]) 1.0 else 0.0
+            }
+            last[3] = pick
+            bannerRect = choices[pick]
+            bannerText = t
         }
-        Row(
-            Modifier.align(Alignment.TopEnd).padding(8.dp).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 6.dp),
-        ) {
-            val badge = if (high.high) "HIGH RANGE   " else ""
-            Text("$badge▲ ${high.label()}   ▼ ${low.label()}   ✛ ${center.label()}", color = Color.White,
-                fontFamily = FontFamily.Monospace, fontSize = 16.sp)
+
+        // The labels.
+        val pad = Size(6.dp.toPx(), 3.dp.toPx())
+        val placed = ArrayList<Rect>()
+        val labels = markers.mapIndexed { k, m ->
+            if (m == null) return@mapIndexed null
+            val size = Size(m.label.size.width + 2 * pad.width, m.label.size.height + 2 * pad.height)
+            val armW = 3.dp.toPx()
+            val ownArms = listOf(
+                Rect(m.at.x - m.arm, m.at.y - armW, m.at.x + m.arm, m.at.y + armW),
+                Rect(m.at.x - armW, m.at.y - m.arm, m.at.x + armW, m.at.y + m.arm),
+            )
+            val obstacles = squares.filterIndexed { j, s -> j != k && s != null }.map { it!! } +
+                listOfNotNull(bannerRect, covered) + placed + ownArms
+            val candidates = labelPlaces(m.at, m.arm, 4.dp.toPx(), size)
+            // A marker that jumped (a new extreme elsewhere) starts from the best place again.
+            if (!lastAt[k].isSpecified || (lastAt[k] - m.at).getDistance() > 40.dp.toPx()) last[k] = -1
+            lastAt[k] = m.at
+            var best = 0
+            var bestCost = Float.MAX_VALUE
+            var bestRect = Rect.Zero
+            candidates.forEachIndexed { i, topLeft ->
+                val wanted = Rect(topLeft, size)
+                val r = clampInto(wanted, inner)
+                val moved = abs(r.left - wanted.left) + abs(r.top - wanted.top)
+                var cost = obstacles.sumOf { overlap(r, it).toDouble() }.toFloat() + 0.5f * moved + 0.01f * i
+                if (i == last[k]) cost -= 2.dp.toPx()  // tolerate a few dp of clamping before hopping
+                if (cost < bestCost) {
+                    bestCost = cost
+                    best = i
+                    bestRect = r
+                }
+            }
+            last[k] = best
+            placed += bestRect
+            bestRect
+        }
+
+        clipRect(view.left, view.top, view.right, view.bottom) {
+            for (m in markers) if (m != null) crosshair(m.at, m.arm, m.gap, m.color)
+        }
+        markers.forEachIndexed { k, m ->
+            val r = labels[k] ?: return@forEachIndexed
+            if (m == null) return@forEachIndexed
+            drawRoundRect(Ui.LabelBack, r.topLeft, r.size, CornerRadius(6.dp.toPx()))
+            drawText(m.label, topLeft = Offset(r.left + pad.width, r.top + pad.height))
+        }
+        if (bannerRect != null && bannerText != null) {
+            drawRoundRect(Color(0xE0101418), bannerRect.topLeft, bannerRect.size, CornerRadius(10.dp.toPx()))
+            drawText(
+                bannerText,
+                topLeft = Offset(
+                    bannerRect.left + (bannerRect.width - bannerText.size.width) / 2,
+                    bannerRect.top + (bannerRect.height - bannerText.size.height) / 2,
+                ),
+            )
         }
     }
 }
 
-private val labelPaint = Paint().apply {
-    isAntiAlias = true
-    textSize = 34f
-    typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-    color = Color.White.toArgb()
-    setShadowLayer(4f, 0f, 0f, Color.Black.toArgb())
+/** Where a label may go around its marker, best first: beside, then diagonal, then above and below. */
+private fun labelPlaces(at: Offset, arm: Float, d: Float, size: Size): List<Offset> {
+    val q = arm * 0.62f
+    val (w, h) = size.width to size.height
+    return listOf(
+        Offset(at.x + arm + d, at.y - h / 2),      // right
+        Offset(at.x - arm - d - w, at.y - h / 2),  // left
+        Offset(at.x + q + d, at.y - q - d - h),    // up right
+        Offset(at.x + q + d, at.y + q + d),        // down right
+        Offset(at.x - q - d - w, at.y - q - d - h),  // up left
+        Offset(at.x - q - d - w, at.y + q + d),    // down left
+        Offset(at.x - w / 2, at.y - arm - d - h),  // above
+        Offset(at.x - w / 2, at.y + arm + d),      // below
+    )
 }
 
-private fun DrawScope.marker(at: Offset, color: Color, up: Boolean, px: Float, label: String) {
-    val r = maxOf(10f, 2.5f * px)
-    val tri = Path().apply {
-        if (up) {
-            moveTo(at.x, at.y - r); lineTo(at.x - r, at.y + r * 0.7f); lineTo(at.x + r, at.y + r * 0.7f)
-        } else {
-            moveTo(at.x, at.y + r); lineTo(at.x - r, at.y - r * 0.7f); lineTo(at.x + r, at.y - r * 0.7f)
-        }
-        close()
+private fun clampInto(r: Rect, bounds: Rect): Rect {
+    val dx = when {
+        r.left < bounds.left -> bounds.left - r.left
+        r.right > bounds.right -> bounds.right - r.right
+        else -> 0f
     }
-    drawPath(tri, color)
-    drawPath(tri, Color.Black, style = Stroke(width = 2f))
-    drawContext.canvas.nativeCanvas.drawText(label, at.x + r + 6f, at.y + 12f, labelPaint)
+    val dy = when {
+        r.top < bounds.top -> bounds.top - r.top
+        r.bottom > bounds.bottom -> bounds.bottom - r.bottom
+        else -> 0f
+    }
+    return r.translate(dx, dy)
 }
 
-private fun DrawScope.crosshair(at: Offset, px: Float, label: String) {
-    val r = maxOf(14f, 3f * px)
-    for (c in listOf(Color.Black to 5f, Color.White to 2f)) {
-        drawLine(c.first, Offset(at.x - r, at.y), Offset(at.x + r, at.y), strokeWidth = c.second)
-        drawLine(c.first, Offset(at.x, at.y - r), Offset(at.x, at.y + r), strokeWidth = c.second)
+private fun overlap(a: Rect, b: Rect): Float {
+    val w = min(a.right, b.right) - max(a.left, b.left)
+    val h = min(a.bottom, b.bottom) - max(a.top, b.top)
+    return if (w > 0f && h > 0f) w * h else 0f
+}
+
+/** A crosshair with an open center, outlined in black so it reads on any part of the palette. */
+internal fun DrawScope.crosshair(at: Offset, arm: Float, gap: Float, color: Color, width: Float = 2.dp.toPx()) {
+    val outline = width + 2.5.dp.toPx()
+    for ((c, w) in listOf(Color(0xB0000000) to outline, color to width)) {
+        drawLine(c, Offset(at.x - arm, at.y), Offset(at.x - gap, at.y), w, StrokeCap.Round)
+        drawLine(c, Offset(at.x + gap, at.y), Offset(at.x + arm, at.y), w, StrokeCap.Round)
+        drawLine(c, Offset(at.x, at.y - arm), Offset(at.x, at.y - gap), w, StrokeCap.Round)
+        drawLine(c, Offset(at.x, at.y + gap), Offset(at.x, at.y + arm), w, StrokeCap.Round)
     }
-    drawContext.canvas.nativeCanvas.drawText(label, at.x + r + 6f, at.y - 8f, labelPaint)
 }
