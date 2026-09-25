@@ -166,21 +166,8 @@ fun ImageOverlay(
             // A marker that jumped (a new extreme elsewhere) starts from the best place again.
             if (!lastAt[k].isSpecified || (lastAt[k] - m.at).getDistance() > 40.dp.toPx()) last[k] = -1
             lastAt[k] = m.at
-            var best = 0
-            var bestCost = Float.MAX_VALUE
-            var bestRect = Rect.Zero
-            candidates.forEachIndexed { i, topLeft ->
-                val wanted = Rect(topLeft, size)
-                val r = clampInto(wanted, inner)
-                val moved = abs(r.left - wanted.left) + abs(r.top - wanted.top)
-                var cost = obstacles.sumOf { overlap(r, it).toDouble() }.toFloat() + 0.5f * moved + 0.01f * i
-                if (i == last[k]) cost -= 2.dp.toPx()  // tolerate a few dp of clamping before hopping
-                if (cost < bestCost) {
-                    bestCost = cost
-                    best = i
-                    bestRect = r
-                }
-            }
+            // (a few dp of clamping are tolerated before a label hops from where it was)
+            val (best, bestRect) = placeLabel(candidates, size, inner, obstacles, last[k], stickiness = 2.dp.toPx())
             last[k] = best
             placed += bestRect
             bestRect
@@ -209,8 +196,39 @@ fun ImageOverlay(
     }
 }
 
+/**
+ * The label's place (its index among [candidates], top-left corners, and its rectangle), kept inside
+ * [inner]: the one overlapping [obstacles] least, then moved least by the clamp into [inner], then
+ * earliest; [remembered] (the last place) wins ties by up to [stickiness] px of clamping.
+ */
+internal fun placeLabel(
+    candidates: List<Offset>,
+    size: Size,
+    inner: Rect,
+    obstacles: List<Rect>,
+    remembered: Int,
+    stickiness: Float,
+): Pair<Int, Rect> {
+    var best = 0
+    var bestCost = Float.MAX_VALUE
+    var bestRect = Rect.Zero
+    candidates.forEachIndexed { i, topLeft ->
+        val wanted = Rect(topLeft, size)
+        val r = clampInto(wanted, inner)
+        val moved = abs(r.left - wanted.left) + abs(r.top - wanted.top)
+        var cost = obstacles.sumOf { overlap(r, it).toDouble() }.toFloat() + 0.5f * moved + 0.01f * i
+        if (i == remembered) cost -= stickiness
+        if (cost < bestCost) {
+            bestCost = cost
+            best = i
+            bestRect = r
+        }
+    }
+    return best to bestRect
+}
+
 /** Where a label may go around its marker, best first: beside, then diagonal, then above and below. */
-private fun labelPlaces(at: Offset, arm: Float, d: Float, size: Size): List<Offset> {
+internal fun labelPlaces(at: Offset, arm: Float, d: Float, size: Size): List<Offset> {
     val q = arm * 0.62f
     val (w, h) = size.width to size.height
     return listOf(
@@ -225,7 +243,7 @@ private fun labelPlaces(at: Offset, arm: Float, d: Float, size: Size): List<Offs
     )
 }
 
-private fun clampInto(r: Rect, bounds: Rect): Rect {
+internal fun clampInto(r: Rect, bounds: Rect): Rect {
     val dx = when {
         r.left < bounds.left -> bounds.left - r.left
         r.right > bounds.right -> bounds.right - r.right
@@ -239,7 +257,7 @@ private fun clampInto(r: Rect, bounds: Rect): Rect {
     return r.translate(dx, dy)
 }
 
-private fun overlap(a: Rect, b: Rect): Float {
+internal fun overlap(a: Rect, b: Rect): Float {
     val w = min(a.right, b.right) - max(a.left, b.left)
     val h = min(a.bottom, b.bottom) - max(a.top, b.top)
     return if (w > 0f && h > 0f) w * h else 0f

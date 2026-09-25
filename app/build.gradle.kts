@@ -47,4 +47,5 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
+    testImplementation(libs.junit)  // the UI's pure logic on the Mac: ./gradlew :app:testDebugUnitTest
 }

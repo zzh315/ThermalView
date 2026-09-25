@@ -16,6 +16,7 @@ Everything here is used for personal use only. Revisit these licenses before eve
 | Component | Version | License | Where | Use |
 |---|---|---|---|---|
 | doctest | v2.5.3 (`2d0a935`) | MIT | `native/third_party/doctest` (submodule) | `native/core` unit tests |
+| JUnit | 4.13.2 (with its dependency Hamcrest Core 1.3, BSD-3-Clause) | EPL-1.0 | `gradle/libs.versions.toml`, `testImplementation` only (never in the APK) | The app's JVM unit tests (`app/src/test`: label placement, the box's edits and hit-testing) |
 | pyusb | 1.3.1 | BSD-3-Clause | `tools/py/requirements.txt` | Read-only descriptor dump |
 | numpy | 2.5.3 | BSD-3-Clause | `tools/py/requirements.txt` | Analysis tools |
 | Pillow | 12.3.0 | MIT-CMU (HPND) | `tools/py/requirements.txt` | Screenshot analysis, benchmark crops and contact sheets |
