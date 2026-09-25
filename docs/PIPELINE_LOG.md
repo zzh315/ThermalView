@@ -15,7 +15,9 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 **Why non-local means, not BM3D:** the owner couldn't see a big difference, and BM3D doesn't fit the latency budget yet. Live, with 3c: latency p50 / p95 28.4 / 30.9 ms with BM3D (after the faster shaders, `8043c8a`), 18.4 / 20.5 ms with non-local means. On known texture, BM3D's gain is largest at High's noise (+6–16 points at 1–2 px), so it would come in there first if it fits the budget.
 
-**The budget with the new default:** p95 20.5 ms, just over. Stages 5–6 (~7 ms live) are next.
+**The budget with the new default:** p95 20.5 ms at first, just over. Then 3b's learning and the tone mapper got cheaper (`05c3cc6`): live p50 / p95 17.2–17.8 / 19.4–19.8 ms, just within.
+- **Tried and dropped** (measured on the tablet): 4-row interleaving in the box filters (2%), and running extremes for the halo guard (9% slower).
+- **Also dropped:** stages 5–6 on two threads. Their p50 fell 6.8 → 6.3 ms, but latency p95 rose to 24–25 ms: the helper's wake-ups and its competition for the 2–3 active big cores.
 
 ## 2026-09-25 — Stage 4b: BM3D against NLM at matched noise, on stage 3c's output (evidence; awaiting the owner)
 
