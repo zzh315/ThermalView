@@ -304,6 +304,11 @@ bool Session::openCamera(int fd, const std::string& manufacturer, const std::str
   startOrderNote_.clear();
   cameraOpen_ = true;
   setBanner("");
+  if (replayRun_) {  // (a replay is on: the live stream starts when it ends)
+    liveResume_ = true;
+    FLOG("camera open during a replay: its stream starts after it");
+    return true;
+  }
   ring_->clear();
   if (!startStreaming()) {
     cameraOpen_ = false;
@@ -316,7 +321,10 @@ bool Session::openCamera(int fd, const std::string& manufacturer, const std::str
 }
 
 void Session::closeCamera() {
-  stopProcessing();  // first: the processing thread may take streamMutex_ to restart a stream
+  // First: the processing thread may take streamMutex_ to restart a stream (a replay keeps it: the
+  // camera's stream is paused then, and nothing is left to resume).
+  liveResume_ = false;
+  if (!replayRun_) stopProcessing();
   std::lock_guard lock(streamMutex_);
   if (!cameraOpen_) return;
   stopStreaming();
@@ -334,8 +342,10 @@ void Session::closeCamera() {
   libusb_exit(usb_);
   usb_ = nullptr;
   cameraOpen_ = false;
-  enter(State::Idle, nowNs());
-  renderer_.clear();
+  if (!replayRun_) {
+    enter(State::Idle, nowNs());
+    renderer_.clear();
+  }
   FLOG("camera closed");
 }
 
@@ -799,6 +809,24 @@ void Session::fail(const std::string& reason) {
 void Session::tickCapture(int64_t now) {
   const auto since = [now](int64_t t) { return (now - t) / kMs; };
   const State state = state_.load();
+  if (cancelRequested_.exchange(false)) {
+    // The owner's cancel (a Record or Recal pressed by mistake): the capture's steps stop, and the
+    // frames recorded so far are dropped (a dump already being written is kept).
+    const bool recording = dumpWanted_.load() > 0;
+    if (capturePhase_ != CapturePhase::None || recording) {
+      FLOG("capture cancelled%s", recording ? " (the frames so far dropped)" : "");
+      capturePhase_ = CapturePhase::None;
+      captureRequested_ = false;
+      captureSetBanner("");
+      if (recording) {
+        dumpWanted_ = 0;
+        dumpFrames_.clear();
+        dumpInfo_ = DumpInfo{};
+        std::lock_guard lock(snapshotMutex_);
+        dumpStatus_ = "cancelled";
+      }
+    }
+  }
   if (capturePhase_ == CapturePhase::None) {
     if (!captureRequested_.exchange(false)) return;
     if (state != State::Running) {
@@ -1653,14 +1681,27 @@ void Session::writeCsvRow(const RawFrame& frame, const FrameView& view, const Im
 // --- Replay (debug) ------------------------------------------------------------------------------
 
 std::string Session::startReplay(const std::string& base) {
-  {
-    std::lock_guard lock(streamMutex_);
-    if (cameraOpen_) return "a camera is connected; unplug it first";
-  }
-  stopReplay();
+  const bool wasReplaying = replayRun_;
   LoadedDump dump;
   std::string error;
   if (!loadDump(base, &dump, &error)) return error;
+  if (wasReplaying) {  // (another recording: straight on, the live stream stays paused)
+    replayRun_ = false;
+    replayThread_.join();
+    stopProcessing();
+  } else {
+    // A live camera pauses (the owner, 2026-09-26: "just replay the recording and have option to exit
+    // replay and back to the normal camera mode"): its stream stops, the camera stays open, and the
+    // stream starts again, with the start sequence, when the replay ends.
+    stopProcessing();  // (it may take streamMutex_ to restart a stream)
+    std::lock_guard lock(streamMutex_);
+    if (cameraOpen_) {
+      stopStreaming();
+      liveResume_ = true;
+      FLOG("live stream paused for a replay");
+    }
+  }
+  ring_->clear();
   pipeline_.setBadPixels(badPixelMapFor(dump.serial));  // the dump's camera, not the connected one
   pipeline_.setDriftMap(driftMapFor(dump.serial));
   replay_ = std::move(dump);
@@ -1689,9 +1730,22 @@ void Session::stopReplay() {
   if (!replayRun_.exchange(false)) return;
   replayThread_.join();
   stopProcessing();
+  ring_->clear();
   enter(State::Idle, nowNs());
   renderer_.clear();
   FLOG("replay stopped");
+  if (!liveResume_.exchange(false)) return;
+  // Back to the camera: its stream again, from the start sequence.
+  std::unique_lock lock(streamMutex_);
+  if (!cameraOpen_) return;
+  if (!startStreaming()) {
+    enter(State::Failed, nowNs());
+    setBanner("The camera's stream didn't start again after the replay — replug it");
+    return;
+  }
+  lock.unlock();
+  startProcessing();
+  FLOG("live stream resumed after the replay");
 }
 
 void Session::replayLoop() {
@@ -1727,6 +1781,7 @@ void Session::replayLoop() {
 // --- UI queries and commands ---------------------------------------------------------------------
 
 std::string Session::sendShutter() {
+  if (replayRun_) return "replaying";
   std::lock_guard lock(streamMutex_);
   if (!cameraOpen_ || !gate_) return "no camera";
   const CommandResult result = gate_->send(kCmdShutter);
@@ -1760,6 +1815,11 @@ void Session::setRangeEnds(double loC, double hiC) {
     pendingHiC_ = hiC;
   }
   rangeEndsPending_ = true;
+}
+
+std::string Session::cancelCapture() {
+  cancelRequested_ = true;
+  return "cancelling";
 }
 
 std::string Session::triggerLockout() {

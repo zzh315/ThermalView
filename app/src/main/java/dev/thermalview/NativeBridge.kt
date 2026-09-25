@@ -46,6 +46,7 @@ object NativeBridge {
     external fun requestNrCheck()  // debug: stage 4b's GPU against the CPU reference, into the field log
     external fun setRange(high: Boolean): String  // debug: manual range switch
     external fun triggerLockout(): String
+    external fun cancelCapture(): String  // a capture's steps or a recording in progress, dropped
     external fun mark(label: String)  // debug: "owner mark: <label>" in the field log
     /** Debug: mark, recalibrate, dump 200 frames; with [rangePair], again in the high range, then back. */
     external fun readyCapture(label: String, rangePair: Boolean): String

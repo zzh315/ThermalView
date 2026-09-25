@@ -108,6 +108,7 @@ class Session {
   std::string triggerLockout();  // debug: run one over-range lockout without a hot scene
   // debug: recalibrate, then dump 200 frames; with rangePair, again in the high range, then back.
   std::string requestCapture(const std::string& label, bool rangePair = false);
+  std::string cancelCapture();  // a capture's steps or a recording in progress, dropped
   // M6's range lock: lock the colors to the temperatures they show now (on) or go back to the
   // automatic mapping; then move the locked range's ends, in °C.
   std::string setRangeLock(bool on);
@@ -201,6 +202,8 @@ class Session {
   std::atomic<int64_t> manualShutterNs_{0};
   std::atomic<bool> manualLockout_{false};
   std::atomic<bool> captureRequested_{false};
+  std::atomic<bool> cancelRequested_{false};
+  std::atomic<bool> liveResume_{false};  // a replay paused the live stream: start it again after
   enum class CapturePhase { None, WaitGap, Recalibrating, Settle, Recording, Done, SwitchHigh, SwitchBack };
   std::atomic<bool> capturePairRequested_{false};
   bool capturePair_ = false;

@@ -149,11 +149,14 @@ fun LeftBar(
                 Note("tap for 1×")
             }
         }
-        if (replay.isNotEmpty()) {
+        if (replay.isNotEmpty()) {  // (a replay runs: the way back to the camera)
             Tile(onClick = onStopReplay, color = Ui.TileAlert) {
-                Caption("Replay", Color(0xFFFFB4B4))
-                Text(replay, color = Ui.Text, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp)
-                Note("tap to stop")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Caption("Replay", Color(0xFFFFB4B4), Modifier.weight(1f))
+                    Text("✕", color = Color(0xFFFFB4B4), fontSize = 13.sp)
+                }
+                Value("Exit replay")
+                Note(replay)
             }
         }
     }
@@ -427,20 +430,21 @@ private fun CalibrateTile(live: Boolean) {
 
 private class CaptureMode(val title: String, val caption: String, val note: String, val description: String)
 
+// (Mark, which only wrote a line to the field log for test scripts, is gone: the owner, 2026-09-26.)
 private val CAPTURE_MODES = listOf(
-    CaptureMode("Mark", "Mark", "log only", "Marks the field log (for test scripts)"),
     CaptureMode("Record", "Record", "200 frames", "Records 200 raw frames now"),
     CaptureMode("Recalibrate + record", "Recal", "shutter, then 200", "Waits for the shutter to cool, recalibrates, then records 200 frames"),
 )
 
 /**
- * The Ready button, grown up (owner, 2026-09-26: "more versatile and powerful and more intuitive"):
- * Capture runs the chosen mode and shows its progress on the button itself; ▾ (or a long press)
- * picks the mode. Every mode logs "owner mark: …" first, so test scripts can wait for it.
+ * Capture (was Ready): runs the chosen mode and shows its progress on the tile; the mode row (or a long
+ * press) picks the mode. While it runs, a tap cancels it (owner, 2026-09-26: "a button to cancel the
+ * record if misclicked"): the frames so far are dropped. Each run logs "owner mark: …" first, so test
+ * scripts can still wait for it.
  */
 @Composable
 private fun CaptureTile(status: Status, live: Boolean) {
-    var mode by rememberSaveable { mutableIntStateOf(1) }
+    var mode by rememberSaveable { mutableIntStateOf(0) }
     var count by rememberSaveable { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(false) }
     var flash by remember { mutableStateOf("") }
@@ -458,34 +462,43 @@ private fun CaptureTile(status: Status, live: Boolean) {
             flash = ""
         }
     }
-    val busy = status.dumpTotal > 0 || writing || status.capture.isNotEmpty()
-    val m = CAPTURE_MODES[mode]
-    val run = {
-        if (live && !busy) {
-            count += 1
-            val label = "${m.caption.lowercase()} #$count"
-            flash = when (mode) {
-                0 -> { NativeBridge.mark(label); "marked #$count" }
-                1 -> {
-                    NativeBridge.mark(label)
-                    NativeBridge.startDump(200).let { if (it.startsWith("dump_")) "" else it }
-                }
-                else -> NativeBridge.readyCapture(label, false).let { if (it == "capture started") "" else it }
+    val running = status.dumpTotal > 0 || status.capture.isNotEmpty()  // (cancellable)
+    val busy = running || writing
+    val m = CAPTURE_MODES[mode.coerceIn(0, CAPTURE_MODES.size - 1)]
+    val tap = {
+        when {
+            running -> {
+                NativeBridge.cancelCapture()
+                flash = "cancelled"
+            }
+            live && !busy -> {
+                count += 1
+                val label = "${m.caption.lowercase()} #$count"
+                NativeBridge.mark(label)
+                flash = if (mode == 0) NativeBridge.startDump(200).let { if (it.startsWith("dump_")) "" else it }
+                else NativeBridge.readyCapture(label, false).let { if (it == "capture started") "" else it }
             }
         }
     }
     Box {
-        Tile(onClick = run, onLongClick = { menu = true }, enabled = live, color = if (busy) Ui.TileBusy else Ui.Tile) {
-            // The mode, and the way to change it: the whole caption row (and a long press anywhere).
-            Row(
-                Modifier.fillMaxWidth().combinedClickableCompat { menu = true }
-                    .padding(vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Caption(m.caption, Ui.Accent, Modifier.weight(1f))
-                Chevron(Ui.Accent)
+        Tile(onClick = tap, onLongClick = { if (!busy) menu = true }, enabled = live || busy, color = if (busy) Ui.TileBusy else Ui.Tile) {
+            if (running) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Caption(m.caption, Ui.Warning, Modifier.weight(1f))
+                    Text("✕", color = Ui.Warning, fontSize = 13.sp)
+                }
+                Value("Cancel")
+            } else {
+                // The mode, and the way to change it: the whole caption row (and a long press anywhere).
+                Row(
+                    Modifier.fillMaxWidth().combinedClickableCompat { if (!busy) menu = true }.padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Caption(m.caption, Ui.Accent, Modifier.weight(1f))
+                    Chevron(Ui.Accent)
+                }
+                Value("Capture")
             }
-            Value("Capture")
             val progress = when {
                 status.dumpTotal > 0 -> "${status.dumpDone} / ${status.dumpTotal}"
                 writing -> "saving…"

@@ -174,6 +174,10 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setRangeEnds(JNIEnv*, j
 }
 
 
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_cancelCapture(JNIEnv* env, jobject) {
+  return toJava(env, session().cancelCapture());
+}
+
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {
   return env->NewStringUTF(session().triggerLockout().c_str());
 }

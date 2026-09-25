@@ -31,7 +31,7 @@ data class DebugOptions(
     val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): Low, the default (owner, 2026-09-26)
     val nrSearch: Int = 5,                  // its search radius: 2 (5x5), 3 (7x7), 5 (11x11); NR_SEARCHES
     val gpuNr: Boolean = true,              // stage 4b on the GPU; off: the CPU at a 5x5 search (h scaled to match)
-    val nrMethod: Int = 0,                  // stage 4b's filter: 0 non-local means (Low, the default), 1 BM3D (High)
+    val nrMethod: Int = 1,                  // stage 4b's filter: 0 non-local means, 1 BM3D (Low and High; owner, 2026-09-26)
     val detail: Boolean = true,             // M4 stage 6 (approved): the mid-scale texture layer; a setting
     val textureStrength: Float = 1.5f,      // stage 6's strength: owner, 1.5 by default, up to 3 (TEXTURE_STRENGTHS)
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
@@ -280,14 +280,14 @@ class MainActivity : ComponentActivity() {
         // The simple settings (owner, 2026-09-26: "simple presets that abstract settings into simple low
         // and high effects"): each level sets the stages underneath, and a setting changed by hand in the
         // debug panel shows as "custom". Noise reduction is stage 3c (the per-frame stripes) with stage
-        // 4b at the owner's Low or High strength: Low is non-local means at h 0.8; High is BM3D at the
-        // strength that leaves NLM 1.1's noise, where it keeps 6-16 points more texture (PIPELINE_LOG).
-        // It costs latency (p95 ~31 ms), which the owner's rule puts after image quality (2026-09-26).
-        // (nrStrength stays 1.1: the CPU's non-local means takes over if the GPU can't run BM3D.)
+        // 4b's BM3D at the owner's Low or High strength (owner, 2026-09-26: BM3D the default method): the
+        // strengths that leave the noise non-local means leaves at h 0.8 and 1.1 (PIPELINE_LOG). It costs
+        // latency (p95 ~30 ms), which the owner's rule puts after image quality. (nrStrength is NLM's h:
+        // BM3D's strength comes from it, and the CPU's non-local means takes over if the GPU can't.)
         val LEVELS = listOf("Off", "Low", "High")
         fun withNrLevel(o: DebugOptions, level: Int): DebugOptions = when (level) {
             0 -> o.copy(nr = false, stripes = false)
-            1 -> o.copy(nr = true, nrMethod = 0, nrStrength = 0.8f, nrSearch = 5, stripes = true)
+            1 -> o.copy(nr = true, nrMethod = 1, nrStrength = 0.8f, nrSearch = 5, stripes = true)
             else -> o.copy(nr = true, nrMethod = 1, nrStrength = 1.1f, nrSearch = 5, stripes = true)
         }
         fun nrLevelOf(o: DebugOptions): Int? = LEVELS.indices.firstOrNull { withNrLevel(o, it) == o }

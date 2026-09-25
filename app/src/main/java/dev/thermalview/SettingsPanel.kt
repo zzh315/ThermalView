@@ -187,7 +187,7 @@ private fun MainPage(
     // Noise and texture (owner, 2026-09-26: Low by default, here rather than on the bar).
     Section("Picture")
     val nr = MainActivity.nrLevelOf(options)
-    Choice("Noise", MainActivity.LEVELS, nr, note = if (nr == null) "Custom (Image processing)" else "High: BM3D") {
+    Choice("Noise", MainActivity.LEVELS, nr, note = if (nr == null) "Custom (Image processing)" else "BM3D") {
         onOptions(MainActivity.withNrLevel(options, it))
     }
     val texture = MainActivity.textureLevelOf(options)
@@ -279,10 +279,6 @@ private fun RecordingPage(options: DebugOptions, onOptions: (DebugOptions) -> Un
     )
     Section("Replay")
     ActionRow("Replay a recording…", "Runs the pipeline on it, no camera needed") { chooseReplay() }
-    ActionRow("Stop the replay", null) {
-        NativeBridge.stopReplay()
-        say("Replay stopped")
-    }
     Section("Logging")
     SwitchRow("Stats CSV", "A row of statistics per frame", options.statsCsv) { onOptions(options.copy(statsCsv = it)) }
     SwitchRow("Record lockouts", "Dumps the frames around each over-range lockout", options.dumpOnLockout) {
