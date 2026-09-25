@@ -327,20 +327,34 @@ void Pipeline::updateDestripe(const float* sig) {
   std::vector<float>& colCount = colCount_;  // and how many were kept
   std::fill(colAcc.begin(), colAcc.end(), 0.0f);
   std::fill(colCount.begin(), colCount.end(), 0.0f);
+  // (the window is 9 wide from x = 4 to w - 5, where dividing by its other 8 is an exact * 0.125;
+  // the sums are branchless, adding 0 where a residual isn't kept: the same values as the plain loop)
   for (int y = 0; y < h; ++y) {
     const float* row = sig + size_t(y) * w;
     float sum = 0;
     int lo = 0, hi = -1;  // the window [lo, hi]
-    for (int x = 0; x < w; ++x) {
+    const auto edge = [&](int x) {
       while (hi < std::min(w - 1, x + 4)) sum += row[++hi];
       while (lo < x - 4) sum -= row[lo++];
       const float c = row[x];
       const float r = c - (sum - c) / float(hi - lo);
-      if (keep(c, r, row[std::max(0, x - 1)], row[std::min(w - 1, x + 1)])) {
-        colAcc[size_t(x)] += r;
-        colCount[size_t(x)] += 1.0f;
-      }
+      const bool k = keep(c, r, row[std::max(0, x - 1)], row[std::min(w - 1, x + 1)]);
+      colAcc[size_t(x)] += k ? r : 0.0f;
+      colCount[size_t(x)] += k ? 1.0f : 0.0f;
+    };
+    for (int x = 0; x <= 4; ++x) edge(x);
+    for (int x = 5; x <= w - 5; ++x) {
+      sum += row[x + 4];
+      sum -= row[x - 5];
+      const float c = row[x];
+      const float r = c - (sum - c) * 0.125f;
+      const bool k = keep(c, r, row[x - 1], row[x + 1]);
+      colAcc[size_t(x)] += k ? r : 0.0f;
+      colCount[size_t(x)] += k ? 1.0f : 0.0f;
     }
+    hi = w - 1;
+    lo = w - 9;
+    for (int x = w - 4; x < w; ++x) edge(x);
   }
   const float tau = destripeFrames_ < 75 ? 1.0f : options_.destripeTauS;  // 25 fps
   const float gain = 1.0f / (25.0f * tau);
@@ -364,15 +378,15 @@ void Pipeline::updateDestripe(const float* sig) {
     const float* up = sig + size_t(std::max(0, y - 1)) * w;
     const float* down = sig + size_t(std::min(h - 1, y + 1)) * w;
     const float count = float(bottom - top);
+    const bool full = bottom - top == 8;  // (then * 0.125 is the same as / 8)
     float acc = 0;
     int n = 0;
     for (int x = 0; x < w; ++x) {
       const float c = row[x];
-      const float r = c - (colSum[size_t(x)] - c) / count;
-      if (keep(c, r, up[x], down[x])) {
-        acc += r;
-        ++n;
-      }
+      const float r = full ? c - (colSum[size_t(x)] - c) * 0.125f : c - (colSum[size_t(x)] - c) / count;
+      const bool k = keep(c, r, up[x], down[x]);
+      acc += k ? r : 0.0f;
+      n += k;
     }
     if (n >= w / 2) rowOffset_[size_t(y)] += gain * acc / float(n);
   }

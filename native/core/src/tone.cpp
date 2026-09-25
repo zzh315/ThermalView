@@ -68,15 +68,18 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
     apply(signal, out, detail);  // nothing to measure: keep the current mapping
     return;
   }
-  auto pct = [&](float p) {
-    const int k = std::clamp(int(p / 100.0f * float(n - 1) + 0.5f), 0, n - 1);
-    std::nth_element(v, v + k, v + n);
-    return v[k];
-  };
+  // (the high percentile is searched for only above the low one: nth_element leaves every value
+  // from the low one's place on at least as large, so it's the same value either way)
+  auto index = [&](float p) { return std::clamp(int(p / 100.0f * float(n - 1) + 0.5f), 0, n - 1); };
   const bool retargeting = retargetLeftS_ > 0.0f;
   const float fastTau = retargetS_ / 3.0f;
   if (retargeting) retargetLeftS_ -= dtS;
-  float lo = pct(options_.lowPct), hi = pct(options_.highPct);
+  const int kLo = index(options_.lowPct), kHi = index(options_.highPct);
+  std::nth_element(v, v + kLo, v + n);
+  float lo = v[kLo];
+  if (kHi > kLo) std::nth_element(v + kLo + 1, v + kHi, v + n);
+  else std::nth_element(v, v + kHi, v + n);
+  float hi = v[kHi];
   if (hi - lo < 1.0f) {
     const float c = 0.5f * (lo + hi);
     lo = c - 0.5f;
@@ -103,9 +106,10 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
   // 4. The curve: double-plateau histogram equalization blended with linear, each bin's rise capped
   //    at maxGain (levels per count): a flat scene gets a calm, centred band instead of stretched noise.
   hist_.assign(kCurve, 0);
+  const float perBin = 1.0f / binWidth;  // (a multiply a pixel instead of a divide)
   for (size_t i = 0; i < kImagePixels; ++i) {
     if (exclude && exclude[i]) continue;
-    const int b = int((signal[i] - offset_ - lo_) / binWidth);
+    const int b = int((signal[i] - offset_ - lo_) * perBin);  // (truncated: just under lo_ counts in bin 0)
     if (b >= 0 && b < kCurve) ++hist_[size_t(b)];
   }
   double occupiedSum = 0, peaksSum = 0;
@@ -172,13 +176,14 @@ void ToneMapper::apply(const float* signal, float* out, const float* detail) con
   //    the base's contrast there.
   const float span = std::max(hi_ - lo_, 1.0f);
   const float binWidth = span / float(kCurve);
+  const float perBin = 1.0f / binWidth;  // (multiplies instead of two divides a pixel)
   const float scale = options_.outHi - options_.outLo;
   for (size_t i = 0; i < kImagePixels; ++i) {
-    const float t = std::clamp((signal[i] - offset_ - lo_) / binWidth, 0.0f, float(kCurve));
+    const float t = std::clamp((signal[i] - offset_ - lo_) * perBin, 0.0f, float(kCurve));
     const int k = std::min(int(t), kCurve - 1);
     const float step = curve_[size_t(k + 1)] - curve_[size_t(k)];
     float c = curve_[size_t(k)] + (t - float(k)) * step;
-    if (detail) c += detail[i] * step / binWidth;
+    if (detail) c += detail[i] * step * perBin;
     out[i] = options_.outLo + scale * std::clamp(c, 0.0f, 1.0f);
   }
 }
