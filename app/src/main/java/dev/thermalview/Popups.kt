@@ -187,15 +187,20 @@ fun Swatch(colors: List<Color>, modifier: Modifier, height: Dp = 6.dp) {
 }
 
 /**
- * The palette picker: White hot, Rainbow or Rainbow HC, each shown by its colors; with Rainbow, its
- * looks too (Deep or Soft), which slide open under it. Picking closes it, except Rainbow, which stays
- * open for its looks.
+ * The palette picker: White hot, Rainbow HC (above Rainbow: the owner, 2026-09-26, "it looks way better
+ * than the normal rainbow") or Rainbow, each shown by its colors; with Rainbow, its looks too (Deep or
+ * Soft), which slide open under it. Picking closes it, except Rainbow, which stays open for its looks.
  */
 @Composable
 fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colors: (Int, Int) -> List<Color>, done: () -> Unit) {
     MenuHeading("Palette")
     PaletteCard("White hot", colors(1, 0), options.palette == 1) {
         onOptions(options.copy(palette = 1))
+        done()
+    }
+    Spacer(Modifier.height(8.dp))
+    PaletteCard("Rainbow HC", colors(3, 0), options.palette == 3) {
+        onOptions(options.copy(palette = 3))
         done()
     }
     Spacer(Modifier.height(8.dp))
@@ -223,11 +228,6 @@ fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colo
                 }
             }
         }
-    }
-    Spacer(Modifier.height(8.dp))
-    PaletteCard("Rainbow HC", colors(3, 0), options.palette == 3) {
-        onOptions(options.copy(palette = 3))
-        done()
     }
 }
 

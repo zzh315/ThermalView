@@ -4,7 +4,7 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
-## 2026-09-26 — Rainbow HC: Hti Image's full rainbow, as another palette (awaiting the owner)
+## 2026-09-26 — Rainbow HC: Hti Image's full rainbow, as another palette (the owner: better than Rainbow)
 
 **The owner:** "HTi's rainbow_hc has blue and purple color as well at the lower range, try it out, add it as another palette". Their screenshot of it is in the tablet's DCIM/Screenshots (07:24).
 
@@ -21,7 +21,9 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - *Strips:* `palettes.png` (Rainbow HC, Deep, Soft).
 - *GPU check:* passes on the tablet with Rainbow HC (max 2 levels).
 
-**In the app:** the palette picker's third choice, Rainbow HC, below Rainbow. The tile reads "Rainbow" over "HC", and it's kept across launches like the others.
+**In the app:** the palette picker's Rainbow HC. The tile reads "Rainbow" over "HC", and it's kept across launches like the others.
+
+**The owner, trying it live:** "it look way better than the normal rainbow, move it on top of the original rainbow". It now comes before Rainbow in the picker.
 
 ## 2026-09-26 — Stage 5's range: every object's pixels (0.01–99.99%); the rainbow is Deep, or Soft
 
