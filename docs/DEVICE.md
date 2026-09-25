@@ -327,3 +327,7 @@ Commands: `adb shell input keyevent KEYCODE_HOME`, then `am start -n dev.thermal
 | The settings panel (a Material `Surface`) | Kept its background through a cycle |
 
 - **So:** the side bars avoid graphics layers (`SideBars.kt` `Tile`). A clip or alpha layer elsewhere should be checked through a background cycle.
+
+### Recordings archived off the tablet (2026-09-26)
+
+The owner asked for what's no longer useful to be deleted. The tablet now keeps only the nine benchmark recordings, for on-device replay. The recordings this file cites as evidence (`dump_20260924_201315`, `_205023`, `_212923`), `dump_20260925_164754` (stage 3c's motion tests) and the M1–M2 stats CSVs are archived on the Mac in `bench/archive/tablet_2026-09-26/` (local, not in git). The drift series is in `bench/drift/`; the other bench sources are the scenes' `thermalview.raw`.

@@ -32,3 +32,5 @@ bench/out/
 
 # clangd compile database (generate from build/core)
 /compile_commands.json
+# Recordings and logs archived off the tablet (evidence the docs cite; local only).
+bench/archive/
