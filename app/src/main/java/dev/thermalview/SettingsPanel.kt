@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 enum class Page(val title: String) {
     Main("Settings"),
@@ -112,29 +114,62 @@ fun SettingsPanel(
     }
 
     if (choosingReplay) {
-        val dumps = File(dumpsDir).listFiles { f -> f.name.endsWith(".raw") }
-            ?.map { it.path.removeSuffix(".raw") }?.sortedDescending().orEmpty()
+        var dumps by remember { mutableStateOf<List<DumpEntry>?>(null) }
+        LaunchedEffect(dumpsDir) { dumps = withContext(Dispatchers.IO) { listDumps(dumpsDir) } }
         AlertDialog(
             onDismissRequest = { choosingReplay = false },
             confirmButton = { TextButton(onClick = { choosingReplay = false }) { Text("Cancel") } },
             title = { Text("Replay a recording") },
             text = {
-                if (dumps.isEmpty()) {
-                    Text("No recordings in $dumpsDir")
-                } else {
-                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                        items(dumps) { base ->
-                            TextButton(onClick = {
-                                choosingReplay = false
-                                val error = NativeBridge.startReplay(base)
-                                say(if (error.isEmpty()) "Replaying ${File(base).name}" else "Replay: $error")
-                            }) { Text(File(base).name) }
+                val list = dumps
+                when {
+                    list == null -> Text("Reading the recordings…")
+                    list.isEmpty() -> Text("No recordings in $dumpsDir")
+                    else -> LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                        items(list) { d ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    choosingReplay = false
+                                    val error = NativeBridge.startReplay(d.base)
+                                    say(if (error.isEmpty()) "Replaying ${d.title}" else "Replay: $error")
+                                }.padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RowText(d.title, d.note, Modifier.weight(1f))
+                            }
                         }
                     }
                 }
             },
         )
     }
+}
+
+/** A recording in the dumps folder, as the replay list shows it. */
+private class DumpEntry(val base: String, val title: String, val note: String)
+
+/**
+ * The recordings, newest first: each by its date and time (from its name, dump_YYYYMMDD_HHMMSS),
+ * with its length and source from the sidecar JSON.
+ */
+private fun listDumps(dir: String): List<DumpEntry> {
+    val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+    val shown = java.text.SimpleDateFormat("EEE d MMM, HH:mm:ss", java.util.Locale.getDefault())
+    return File(dir).listFiles { f -> f.name.endsWith(".raw") }.orEmpty()
+        .sortedByDescending { it.name }
+        .map { raw ->
+            val base = raw.path.removeSuffix(".raw")
+            val name = raw.name.removeSuffix(".raw")
+            val date = runCatching { stamp.parse(name.removePrefix("dump_")) }.getOrNull()
+            val meta = runCatching { org.json.JSONObject(File("$base.json").readText()) }.getOrNull()
+            val frames = meta?.optInt("frame_count", 0)?.takeIf { it > 0 }
+            val note = listOfNotNull(
+                frames?.let { "$it frames (%.0f s)".format(it / 25.0) },
+                meta?.optString("source")?.takeIf { it.isNotEmpty() && it != "camera" },
+                if (date != null) name else null,
+            ).joinToString(" · ")
+            DumpEntry(base, date?.let { shown.format(it) } ?: name, note)
+        }
 }
 
 // --- The pages -------------------------------------------------------------------------------------
