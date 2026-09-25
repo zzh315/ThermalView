@@ -5,6 +5,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,8 +40,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -100,8 +101,8 @@ fun LeftBar(
             Value(PALETTE_NAMES.getOrElse(options.palette) { "?" })
             Spacer(Modifier.height(5.dp))
             Box(
-                Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
-                    .background(Brush.horizontalGradient(paletteColors(options.palette).ifEmpty { listOf(Color.Black, Color.White) })),
+                Modifier.fillMaxWidth().height(6.dp)
+                    .background(Brush.horizontalGradient(paletteColors(options.palette).ifEmpty { listOf(Color.Black, Color.White) }), RoundedCornerShape(3.dp)),
             )
         }
         LevelTile("Noise", MainActivity.nrLevelOf(options)) { onOptions(MainActivity.withNrLevel(options, it)) }
@@ -291,8 +292,8 @@ private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifie
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             if (locked) Grips(Modifier.fillMaxHeight())
             Box(
-                Modifier.fillMaxHeight().width(16.dp).clip(RoundedCornerShape(8.dp))
-                    .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) })),
+                Modifier.fillMaxHeight().width(16.dp)
+                    .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) }), RoundedCornerShape(8.dp)),
             )
             if (locked) Grips(Modifier.fillMaxHeight())
         }
@@ -428,7 +429,7 @@ private fun CaptureTile(status: Status, live: Boolean) {
         Tile(onClick = run, onLongClick = { menu = true }, enabled = live, color = if (busy) Ui.TileBusy else Ui.Tile) {
             // The mode, and the way to change it: the whole caption row (and a long press anywhere).
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).combinedClickableCompat { menu = true }
+                Modifier.fillMaxWidth().combinedClickableCompat { menu = true }
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -446,10 +447,10 @@ private fun CaptureTile(status: Status, live: Boolean) {
             Note(progress, if (busy) Ui.Warning else Ui.Subtle)
             if (status.dumpTotal > 0) {
                 Spacer(Modifier.height(4.dp))
-                Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(Ui.Faint)) {
+                Box(Modifier.fillMaxWidth().height(3.dp).background(Ui.Faint, RoundedCornerShape(2.dp))) {
                     Box(
                         Modifier.fillMaxWidth(status.dumpDone.toFloat() / status.dumpTotal).height(3.dp)
-                            .background(Ui.Warning),
+                            .background(Ui.Warning, RoundedCornerShape(2.dp)),
                     )
                 }
             }
@@ -484,8 +485,8 @@ private fun LevelTile(title: String, level: Int?, onLevel: (Int) -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
                     for (i in 1..2) {
                         Box(
-                            Modifier.size(width = 5.dp, height = (6 + 5 * i).dp).clip(RoundedCornerShape(2.dp))
-                                .background(if (level >= i) Ui.Accent else Ui.Faint),
+                            Modifier.size(width = 5.dp, height = (6 + 5 * i).dp)
+                                .background(if (level >= i) Ui.Accent else Ui.Faint, RoundedCornerShape(2.dp)),
                         )
                     }
                 }
@@ -533,6 +534,16 @@ private fun ViewGlyph(size: Int) {
 internal val Tabular = TextStyle(fontFeatureSettings = "tnum")
 internal val PALETTE_NAMES = listOf("Gray", "White hot", "Rainbow")
 
+/** A disabled tile's text is dimmed (its colors, not a layer: see [Tile]). */
+internal val LocalTileEnabled = compositionLocalOf { true }
+
+private fun Color.dimmedUnless(enabled: Boolean) = if (enabled) this else copy(alpha = alpha * 0.45f)
+
+/**
+ * A side-bar button. Drawn without graphics layers: with a clip and an alpha layer, some tiles came
+ * back from the app's background with no background drawn (on this tablet, 2026-09-26). So: a shaped
+ * background, a drawn highlight while pressed instead of the ripple, and dimmed text when disabled.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun Tile(
@@ -543,20 +554,29 @@ internal fun Tile(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(14.dp)
-    Column(
-        Modifier.fillMaxWidth().clip(shape).background(color)
-            .then(
-                if (onClick != null) Modifier.combinedClickable(enabled = enabled, onClick = onClick, onLongClick = onLongClick)
-                else Modifier,
-            )
-            .alpha(if (enabled) 1f else 0.5f)
-            .padding(horizontal = 9.dp, vertical = 7.dp),
-        content = content,
-    )
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    CompositionLocalProvider(LocalTileEnabled provides enabled) {
+        Column(
+            Modifier.fillMaxWidth().background(if (pressed) lerp(color, Color.White, 0.10f) else color, shape)
+                .then(
+                    if (onClick != null) {
+                        Modifier.combinedClickable(
+                            interactionSource = interaction, indication = null, enabled = enabled,
+                            onClick = onClick, onLongClick = onLongClick,
+                        )
+                    } else Modifier,
+                )
+                .padding(horizontal = 9.dp, vertical = 7.dp),
+            content = content,
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-private fun Modifier.combinedClickableCompat(onClick: () -> Unit) = combinedClickable(onClick = onClick)
+@Composable
+private fun Modifier.combinedClickableCompat(onClick: () -> Unit) =
+    combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
 
 @Composable
 internal fun Caption(text: String, modifier: Modifier = Modifier) = Caption(text, Ui.Subtle, modifier)
@@ -564,17 +584,23 @@ internal fun Caption(text: String, modifier: Modifier = Modifier) = Caption(text
 @Composable
 internal fun Caption(text: String, color: Color, modifier: Modifier = Modifier) {
     Text(
-        text.uppercase(), color = color, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+        text.uppercase(), color = color.dimmedUnless(LocalTileEnabled.current), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.8.sp, maxLines = 1, modifier = modifier,
     )
 }
 
 @Composable
 internal fun Value(text: String, modifier: Modifier = Modifier, size: TextUnit = if (LocalCompact.current) 14.sp else 16.sp) {
-    Text(text, color = Ui.Text, fontSize = size, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier)
+    Text(
+        text, color = Ui.Text.dimmedUnless(LocalTileEnabled.current), fontSize = size, fontWeight = FontWeight.Medium,
+        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier,
+    )
 }
 
 @Composable
 internal fun Note(text: String, color: Color = Ui.Subtle) {
-    Text(text, color = color, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 13.sp, style = Tabular)
+    Text(
+        text, color = color.dimmedUnless(LocalTileEnabled.current), fontSize = 11.sp, maxLines = 2,
+        overflow = TextOverflow.Ellipsis, lineHeight = 13.sp, style = Tabular,
+    )
 }
