@@ -41,6 +41,7 @@ data class DebugOptions(
     val upscaler: Int = 1,                  // M5 preview: 0 nearest (M1), 1 cardinal B-spline + 2x2 clamp
     val palette: Int = 1,                   // M5: 1 white_hot, 2 rainbow_hc (0: the old plain gray, adb only)
     val viewSize: Int = 2,                  // M6 presets, debug until then: 0 Phone, 1 Small tablet, 2 Full
+    val boxDim: Float = 0.5f,               // M6: the brightness outside the box (start at 50%; tunable)
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -293,6 +294,7 @@ class MainActivity : ComponentActivity() {
         }
         // PLAN M6's starting view sizes at the panel's verified 244.5 dpi (DEVICE.md): Phone ~4.5" (880 px
         // wide), Small tablet 7.5" (1467 px), Full the largest 4:3 fit (2133 x 1600, 10.9").
+        val BOX_DIMS = listOf(0.3f, 0.5f, 0.7f)  // the box's outside, debug choices
         val VIEW_WIDTHS = listOf(880, 1467, 0)
         const val PANEL_DPI = 244.5f  // the panel's verified density (DEVICE.md: 244.52 x 244.45)
         val VIEW_NAMES = listOf("Phone", "Tablet", "Full")  // 4.5", 7.5" and 10.9" diagonals

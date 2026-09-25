@@ -131,8 +131,8 @@ fun AppScreen(
     val prefs = remember { context.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE) }
     var boxOn by rememberSaveable { mutableStateOf(false) }
     var camBox by rememberSaveable(stateSaver = CamBox.Saver) { mutableStateOf(CamBox.load(prefs)) }
-    LaunchedEffect(boxOn, camBox) {
-        NativeBridge.setBox(boxOn, camBox.x, camBox.y, camBox.w, camBox.h)
+    LaunchedEffect(boxOn, camBox, options.boxDim) {
+        NativeBridge.setBox(boxOn, camBox.x, camBox.y, camBox.w, camBox.h, options.boxDim)
         if (boxOn) camBox.save(prefs)
     }
     LaunchedEffect(zoomRequest) {

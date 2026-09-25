@@ -90,7 +90,7 @@ class Session {
   // tone mapping and the readouts measure it (the processing thread applies it with the next frame).
   void setViewRect(float x, float y, float w, float h);
   // M6's box, camera pixels (x, y, w, h), and whether it's on: the measurement region and the dimming.
-  void setBox(bool on, int x, int y, int w, int h);
+  void setBox(bool on, int x, int y, int w, int h, float dim = 0.5f);  // dim: the outside's brightness
 
   // Debug: the renderer saves its next frame for M5's GPU-vs-CPU check (Renderer::requestReadback).
   void requestReadback(const std::string& prefix, const std::string& paletteName) {
@@ -263,6 +263,7 @@ class Session {
   std::mutex viewMutex_;
   std::array<float, 4> view_{0.0f, 0.0f, float(kFrameWidth), float(kImageRows)};  // under viewMutex_
   bool boxOn_ = false;                // under viewMutex_: M6's box and whether it's on
+  float boxDim_ = 0.5f;               // under viewMutex_: the brightness outside it
   Region box_;                        // under viewMutex_
   void updateRegion();                // viewMutex_ held: the region from the view and the box
   Region pendingRegion_;              // under viewMutex_

@@ -1735,9 +1735,10 @@ void Session::setViewRect(float x, float y, float w, float h) {
   updateRegion();
 }
 
-void Session::setBox(bool on, int x, int y, int w, int h) {
+void Session::setBox(bool on, int x, int y, int w, int h, float dim) {
   std::lock_guard lock(viewMutex_);
   boxOn_ = on;
+  boxDim_ = std::clamp(dim, 0.0f, 1.0f);
   box_.x0 = std::clamp(x, 0, kFrameWidth - 1);
   box_.y0 = std::clamp(y, 0, kImageRows - 1);
   box_.x1 = std::clamp(x + w, box_.x0 + 1, kFrameWidth);
@@ -1765,7 +1766,7 @@ void Session::updateRegion() {
   pendingRegion_ = r;
   regionPending_ = true;
   if (boxShown)
-    renderer_.setBox(float(box_.x0), float(box_.y0), float(box_.x1), float(box_.y1));
+    renderer_.setBox(float(box_.x0), float(box_.y0), float(box_.x1), float(box_.y1), boxDim_);
   else
     renderer_.setBox(0, 0, 0, 0);
 }

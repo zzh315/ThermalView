@@ -204,6 +204,12 @@ private fun ImagePage(options: DebugOptions, onOptions: (DebugOptions) -> Unit) 
     ) { onOptions(options.copy(textureStrength = MainActivity.TEXTURE_STRENGTHS[it])) }
     Section("Display")
     Choice("Upscaling", listOf("Nearest", "B-spline"), options.upscaler.coerceIn(0, 1)) { onOptions(options.copy(upscaler = it)) }
+    Choice(
+        "Outside the box",
+        MainActivity.BOX_DIMS.map { "%.0f%%".format(100 * it) },
+        MainActivity.BOX_DIMS.indexOf(options.boxDim).takeIf { it >= 0 },
+        note = "Its brightness",
+    ) { onOptions(options.copy(boxDim = MainActivity.BOX_DIMS[it])) }
 }
 
 @Composable
