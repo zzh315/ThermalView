@@ -14,7 +14,8 @@ struct GpuBm3dShape {
   int group = 8;        // 2, 4 or 8
   int stride = 6;       // between reference blocks, 1-8
   float kaiser = 2.0f;  // the aggregation window's beta
-  int ablate = 0;       // profiling only (wrong results): 1 no ranking (the first candidates), 2 no distances
+  int ablate = 0;       // profiling only (wrong results): 1 no ranking (the first candidates), 2 no
+                        // distances, 4 no tile sums
   bool operator==(const GpuBm3dShape&) const = default;
 };
 

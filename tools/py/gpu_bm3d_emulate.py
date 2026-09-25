@@ -23,6 +23,7 @@ GLSLC = pathlib.Path.home() / "Library/Android/sdk/ndk/28.1.13356709/shader-tool
 
 PRELUDE = r"""
 #include <algorithm>
+#include <atomic>
 #include <barrier>
 #include <cmath>
 #include <cstdio>
@@ -42,6 +43,7 @@ inline void barrier() { gBarrier->arrive_and_wait(); }
 using std::max;
 using std::min;
 inline int clamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+inline int atomicAdd(int& x, int v) { return std::atomic_ref<int>(x).fetch_add(v); }
 
 template <class F> void runGroups(int gx, int gy, F body) {  // 64 invocations a group, as threads
   std::barrier<> sync(64);

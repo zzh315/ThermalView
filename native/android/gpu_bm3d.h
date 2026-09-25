@@ -40,6 +40,9 @@ class GpuBm3d {
   // gather, step 2, the final gather). The result lands in dst as with run(); ablate (GpuBm3dShape's)
   // leaves parts out to time the rest, and makes the result wrong.
   bool profile(const float* src, float* dst, float sigma, const Bm3dOptions& o, double ms[4], int ablate = 0);
+  // Debug, after a run with these options: one pass (0 step 1, 1 a gather, 2 step 2) dispatched
+  // `repeats` times back to back, the GPU at a sustained clock: ms a dispatch, or -1.
+  double sustained(const Bm3dOptions& o, int pass, int repeats, int ablate = 0);
 
   bool failed() const { return failed_; }
   const std::string& status() const { return status_; }

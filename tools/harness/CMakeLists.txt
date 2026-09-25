@@ -20,3 +20,12 @@ set_property(TARGET thermalcore PROPERTY POSITION_INDEPENDENT_CODE ON)
 add_library(tvnr SHARED src/nrlib.cpp)
 target_link_libraries(tvnr PRIVATE thermalcore)
 target_compile_options(tvnr PRIVATE -Wall -Wextra)
+
+# Android only: the GPU BM3D on its own from the adb shell (src/gpu_bench.cpp), to time its shaders
+# without the app.
+if(ANDROID)
+  set(TV_ANDROID ${CMAKE_CURRENT_SOURCE_DIR}/../../native/android)
+  add_executable(gpu_bench src/gpu_bench.cpp ${TV_ANDROID}/gpu_bm3d.cpp ${TV_ANDROID}/gpu_bm3d_shader.cpp)
+  target_include_directories(gpu_bench PRIVATE ${TV_ANDROID})
+  target_link_libraries(gpu_bench PRIVATE thermalcore EGL GLESv3 log)
+endif()

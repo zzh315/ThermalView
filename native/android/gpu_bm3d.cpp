@@ -1,5 +1,6 @@
 #include "gpu_bm3d.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -29,7 +30,10 @@ GpuBm3dShape shapeOf(const Bm3dOptions& o) {
 
 bool GpuBm3d::supports(const Bm3dOptions& o) {
   const bool groupOk = o.group1 == o.group2 && (o.group1 == 2 || o.group1 == 4 || o.group1 == 8);
-  return o.block == 8 && groupOk && o.search >= 1 && o.search <= 7 && o.stride >= 1 && o.stride <= 8 &&
+  // (and a full group even at a corner, where the window keeps (search + 1)^2 positions: the CPU's
+  // groups shrink there, the shaders' don't)
+  const bool cornerOk = (o.search + 1) * (o.search + 1) - 1 >= o.group1 - 1;
+  return o.block == 8 && groupOk && cornerOk && o.search >= 1 && o.search <= 7 && o.stride >= 1 && o.stride <= 8 &&
          !(o.tau1 > 0.0f) && !(o.tau2 > 0.0f) && o.aggregateAll && !o.skipSameColumn && !o.skipSameRow;
 }
 
@@ -220,6 +224,40 @@ bool GpuBm3d::dispatch(const float* src, float sigma, const Bm3dOptions& o, doub
   phasesMs_[0] = t1 - t0;
   phasesMs_[1] = t2 - t1;
   return true;
+}
+
+double GpuBm3d::sustained(const Bm3dOptions& o, int pass, int repeats, int ablate) {
+  if (failed_ || !supports(o) || !current()) return -1.0;
+  GpuBm3dShape shape = shapeOf(o);
+  shape.ablate = ablate;
+  const Programs* p = programs(shape);
+  if (!p || tilesBytes_ == 0) return -1.0;
+  const int rx = gpuBm3dRefsX(shape), ry = gpuBm3dRefsY(shape);
+  const std::vector<float> window = gpuBm3dWindow(shape);
+  const GLuint program = pass == 0 ? p->step1 : pass == 2 ? p->step2 : p->gather;
+  glUseProgram(program);
+  if (pass != 1) {  // (the uniforms don't change the time: any plausible values)
+    glUniform1f(0, 5000.0f);
+    glUniform1f(1, 1.0f);
+    glUniform1f(2, 1.0f);
+    glUniform1fv(3, 64, window.data());
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, src_);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, tiles_);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, basic_);
+  } else {
+    glUniform1f(0, 0.0f);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, tiles_);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, out_);
+  }
+  glFinish();
+  const double t0 = nowMs();
+  for (int k = 0; k < repeats; ++k) {
+    if (pass == 1) glDispatchCompute(GLuint(kImagePixels / 64), 1, 1);
+    else glDispatchCompute(GLuint(rx), GLuint(ry), 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+  }
+  glFinish();
+  return (nowMs() - t0) / double(std::max(repeats, 1));
 }
 
 bool GpuBm3d::finish(float* dst) {
