@@ -15,7 +15,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -42,15 +41,14 @@ enum class Page(val title: String) {
     Main("Settings"),
     Image("Image processing"),
     Camera("Camera & range"),
-    Recording("Recording & replay"),
     Diagnostics("Diagnostics"),
 }
 
 /**
  * The settings (debug builds; owner, 2026-09-26: "menu hierachy for advanced options in deeper menus
  * and routine simple options and toggles in shallow hierachy"). The routine controls are on the side
- * bars, so the first page only leads to the deeper ones. An action's result shows under the title
- * for a few seconds (no toasts: they'd sit over the image).
+ * bars; the first page has Noise, Texture and the recordings, and leads to the deeper pages. An
+ * action's result shows under the title for a few seconds (no toasts: they'd sit over the image).
  */
 @Composable
 fun SettingsPanel(
@@ -94,10 +92,11 @@ fun SettingsPanel(
             }
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 when (page) {
-                    Page.Main -> MainPage(options, onOptions, showStats, onShowStats, onPage)
+                    Page.Main -> MainPage(options, onOptions, showStats, onShowStats, onPage, recordings(dumpsDir, choosingReplay)) {
+                        choosingReplay = true
+                    }
                     Page.Image -> ImagePage(options, onOptions)
                     Page.Camera -> CameraPage(options, onOptions, say)
-                    Page.Recording -> RecordingPage(options, onOptions, say) { choosingReplay = true }
                     Page.Diagnostics -> DiagnosticsPage(say)
                 }
                 Spacer(Modifier.height(6.dp))
@@ -114,6 +113,11 @@ fun SettingsPanel(
     }
 }
 
+/** How many recordings there are (read again when the list closes: it may have deleted some). */
+@Composable
+private fun recordings(dumpsDir: String, listOpen: Boolean): Int =
+    remember(dumpsDir, listOpen) { java.io.File(dumpsDir).list { _, name -> name.endsWith(".raw") }?.size ?: 0 }
+
 // --- The pages -------------------------------------------------------------------------------------
 
 @Composable
@@ -123,6 +127,8 @@ private fun MainPage(
     showStats: Boolean,
     onShowStats: (Boolean) -> Unit,
     open: (Page) -> Unit,
+    recordings: Int,
+    openRecordings: () -> Unit,
 ) {
     Text(
         "Palette, view and the box are on the ${leftBarName()}; the range, recalibrate and capture on the ${rightBarName()}.",
@@ -142,11 +148,12 @@ private fun MainPage(
     SwitchRow("Frame rate and lag", "On the ${leftBarName()}", showStats, onShowStats)
     Section("More")
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The recordings, one tap away (owner, 2026-09-26): the list replays and deletes them.
+        NavTile("Recordings", if (recordings == 1) "1 · replay, delete" else "$recordings · replay, delete", Modifier.weight(1f), openRecordings)
         NavTile("Image processing", "Tuning", Modifier.weight(1f)) { open(Page.Image) }
-        NavTile("Camera & range", "Lockout, high range", Modifier.weight(1f)) { open(Page.Camera) }
     }
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NavTile("Recording & replay", "Replay, logging", Modifier.weight(1f)) { open(Page.Recording) }
+        NavTile("Camera & range", "Lockout, high range", Modifier.weight(1f)) { open(Page.Camera) }
         NavTile("Diagnostics", "Detailed stats, checks", Modifier.weight(1f)) { open(Page.Diagnostics) }
     }
     Text(
@@ -212,26 +219,6 @@ private fun CameraPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit,
     SwitchRow("Maths: InfiCam's", "Off: ht301's", options.highMathInfiCam) { onOptions(options.copy(highMathInfiCam = it)) }
     ActionRow("Range test", "Records 50 frames in each range, then switches back (M2)") {
         say("Range test: " + NativeBridge.readyCapture("range test", true))
-    }
-}
-
-@Composable
-private fun RecordingPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit, say: (String) -> Unit, chooseReplay: () -> Unit) {
-    Text(
-        "To record, use Capture on the ${rightBarName()}: the mode at its top (or a long press) picks what it does. " +
-            "A replay pauses the camera; Exit replay on the ${leftBarName()} goes back to it.",
-        color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
-    )
-    Section("Recordings")
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        FilledTonalButton(onClick = chooseReplay, modifier = Modifier.fillMaxWidth()) {
-            Text("Recordings: replay or delete", fontSize = 15.sp)
-        }
-    }
-    Section("Logging")
-    SwitchRow("Stats CSV", "A row of statistics per frame", options.statsCsv) { onOptions(options.copy(statsCsv = it)) }
-    SwitchRow("Record lockouts", "Dumps the frames around each over-range lockout", options.dumpOnLockout) {
-        onOptions(options.copy(dumpOnLockout = it))
     }
 }
 

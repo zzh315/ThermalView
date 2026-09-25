@@ -4,6 +4,25 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — Rainbow HC: Hti Image's full rainbow, as another palette (awaiting the owner)
+
+**The owner:** "HTi's rainbow_hc has blue and purple color as well at the lower range, try it out, add it as another palette". Their screenshot of it is in the tablet's DCIM/Screenshots (07:24).
+
+**The palette, read from that screenshot** (`tools/py/palette_from_screenshot.py`: its output only, PRIOR_ART.md):
+- *The colours:* magenta and violet at the cold end, then a vivid blue, a dark muted teal, green, a bright yellow, orange and the darkest red. Past that, a lighter, softer red is the hottest colour.
+- *The file:* `palettes/rainbow_hti.json`, 16 stops at even OKLab steps along the curve, each reproduced exactly (`"chroma": "interpolate"`).
+- *How close it is:* the screenshot's smooth pixels lie a median 0.005 from the palette in OKLab (p95 0.012, p99 0.019). Deep sits at 0.23 from them.
+- *Test:* `native/core/tests/test_palette.cpp`. The hue falls steadily through ~295°, the lightness is darkest in the blue-teal stretch and brightest at the yellow, and no neighbouring entries jump.
+
+**Stage 5's balance is on for it, as for Deep and Soft** (`bench/results/rainbow_hc/`):
+- *On `rainbow`, `room` and `keyboard`* (`scenes.jpg`), the balance changes nothing visible. The scene spreads violet to red either way.
+- *On `bulb`* (`bulb_vs_hti.jpg`, next to the owner's screenshot), the 60 °C bulb stretches the range. Without the balance the room sinks into one flat blue; with it the room sits on teal and green and its shapes show.
+- *Not measured again:* the benchmark's metrics are on the display values, before the palette, and the balance's cost is logged in the rainbow entry below. The pipeline itself is unchanged.
+- *Strips:* `palettes.png` (Rainbow HC, Deep, Soft).
+- *GPU check:* passes on the tablet with Rainbow HC (max 2 levels).
+
+**In the app:** the palette picker's third choice, Rainbow HC, below Rainbow. The tile reads "Rainbow" over "HC", and it's kept across launches like the others.
+
 ## 2026-09-26 — Stage 5's range: every object's pixels (0.01–99.99%); the rainbow is Deep, or Soft
 
 **The owner, on two recordings** (`bench/bulb`, a 60 °C bulb and a hand in front of it): "the light bulb did not change color much and the hand seems to have color close to the light bulb, which is 60 degrees, my hand is around 30". Earlier: "how come sometimes the high temp pointer is sitting outside of the auto range?"

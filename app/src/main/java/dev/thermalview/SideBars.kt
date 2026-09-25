@@ -161,12 +161,16 @@ fun LeftBar(
         Box(Modifier.item(150.dp)) {
             Tile(inBox, onClick = { picking = true }, color = if (picking) Ui.TileActive else Ui.Tile) {
                 Caption("Palette")
-                Value(PALETTE_NAMES.getOrElse(options.palette) { "?" })
+                // (the rainbows by their family, then which one: Deep, Soft or HC; "Rainbow HC" won't fit)
+                Value(if (options.palette == 3) "Rainbow" else PALETTE_NAMES.getOrElse(options.palette) { "?" })
                 Spacer(Modifier.height(5.dp))
                 Swatch(paletteColors(options.palette, options.rainbowPreset), Modifier.fillMaxWidth())
-                if (options.palette == 2) {
+                if (options.palette == 2 || options.palette == 3) {
                     Spacer(Modifier.height(3.dp))
-                    Note(MainActivity.RAINBOW_PRESETS.getOrElse(options.rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }.name)
+                    Note(
+                        if (options.palette == 3) "HC"
+                        else MainActivity.RAINBOW_PRESETS.getOrElse(options.rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }.name,
+                    )
                 }
             }
             SidePopup(picking, { picking = false }, menuSide(leftBar = true), width = 300.dp) {
@@ -682,7 +686,7 @@ private fun ViewGlyph(size: Int) {
 // --- Building blocks -------------------------------------------------------------------------------
 
 internal val Tabular = TextStyle(fontFeatureSettings = "tnum")
-internal val PALETTE_NAMES = listOf("Gray", "White hot", "Rainbow")
+internal val PALETTE_NAMES = listOf("Gray", "White hot", "Rainbow", "Rainbow HC")
 
 /** A disabled tile's text is dimmed (its colors, not a layer: see [Tile]). */
 internal val LocalTileEnabled = compositionLocalOf { true }

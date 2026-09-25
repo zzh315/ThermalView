@@ -134,6 +134,14 @@ Answer each with file/function pointers and a verdict. Answered under Findings �
 - **Box gestures:** the croppers' model (Compose-Cropper, Android-Image-Cropper, uCrop). Hit regions stay large on a small box: well inside moves; otherwise the nearest corner within 28 dp, then an edge. The minimum is 4×4 camera pixels, and the renderer dims the outside.
 - **Box storage:** camera coordinates, avoiding thermal-camera-viewer's pitfall. A second finger turns an edit into a zoom, and pan and zoom otherwise keep p2pro-rs's model (the anchor under the fingers, re-baselined on finger changes).
 
+### Palettes: Hti Image's rainbow_hc (2026-09-26)
+
+- **Source:** the owner's screenshot of Hti Image showing its rainbow_hc (DCIM/Screenshots, 2026-09-26 07:24), its output only (ground rules). The owner: "HTi's rainbow_hc has blue and purple color as well at the lower range".
+- **What it is:** a full rainbow, one way round the hue wheel. Cold magenta (hue 317°) and violet lead to a vivid blue, then a dark, muted teal (chroma down to ~0.06), green and a bright yellow (lightness 0.89). After that come orange and the darkest red (hue 29°, L 0.50), then a lighter, softer red at the hot end (hue 22°, L 0.61). Our `rainbow_hc` (M5) was only its green-to-red part.
+- **How it was read:** `tools/py/palette_from_screenshot.py`. The smooth parts of the image lie on the palette's curve. Ordered by hue, the ends meet in a 65° gap between the magenta and the soft red, and each hue's median lightness and chroma give the curve.
+- **Verdict: adopt** as Rainbow HC (`palettes/rainbow_hti.json`). Its spacing along the curve is ours (even OKLab steps), since one image doesn't show HTi's.
+- **Fidelity:** the screenshot's smooth pixels lie a median 0.005 from the palette in OKLab (p99 0.019; Deep: 0.23). PIPELINE_LOG, 2026-09-26.
+
 ### Reference apps' measurement UX (M0 matrix, 2026-09-24)
 
 - **Box:** Hti Image (point, line, box) and Xtherm (point, line, box, grid) both have one, and neither changes the color range. They only confine readouts: Hti Image shows hottest, coldest and center; Xtherm shows max, avg and min. This confirms the design finding above.

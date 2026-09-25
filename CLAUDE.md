@@ -77,7 +77,7 @@ Enforcement:
 
 ## Scope
 
-- **v1:** live view; palettes `white_hot` and `rainbow_hc`; auto range and manual (locked, adjustable) range; low, high and center-crosshair temperature readouts; palette scale bar with °C endpoints; a Recalibrate button; view-size presets (the image always stays 4:3); pinch zoom; a measurement box; the over-range lockout. Temperatures come from the normal range only (to ~120–130 °C; anything hotter reads as over range); the high range is parked. docs/PLAN.md M6 specifies the UI.
+- **v1:** live view; palettes `white_hot`, `rainbow_hc` (as its Deep and Soft looks) and Rainbow HC (`rainbow_hti`, Hti Image's full rainbow; owner, 2026-09-26); auto range and manual (locked, adjustable) range; low, high and center-crosshair temperature readouts; palette scale bar with °C endpoints; a Recalibrate button; view-size presets (the image always stays 4:3); pinch zoom; a measurement box; the over-range lockout. Temperatures come from the normal range only (to ~120–130 °C; anything hotter reads as over range); the high range is parked. docs/PLAN.md M6 specifies the UI.
 - **Debug builds only:** raw frame dumper, dump replay, debug overlay, pipeline stage toggles and tuning sliders.
 - **Out of scope — don't build:** photo capture, video recording, tablet-camera overlay, other cameras, other palettes, iOS, emissivity UI, cropped or stretched aspect ratios.
 

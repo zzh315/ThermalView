@@ -118,7 +118,8 @@ fun RecordingsDialog(dir: String, onDismiss: () -> Unit, onReplay: (RecordingEnt
                     Column(Modifier.weight(1f)) {
                         Text("Recordings", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (selecting) "${selected.size} selected" else "${list.size} on the tablet",
+                            if (selecting) "${selected.size} selected"
+                            else "${list.size} on the tablet · Capture records one; a replay pauses the camera until Exit replay",
                             color = Ui.Subtle, fontSize = 13.sp,
                         )
                     }

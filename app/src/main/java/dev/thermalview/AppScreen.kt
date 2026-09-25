@@ -261,7 +261,7 @@ fun AppScreen(
                         horizontal = portrait,
                         readings = readings,
                         palette = scaleLut,
-                        marksLocked = options.palette == 2,  // (the rainbow palettes' lockedAbove / lockedBelow)
+                        marksLocked = MainActivity.marksLocked(options.palette),
                         live = live,
                         status = status,
                         panelOpen = panelOpen,

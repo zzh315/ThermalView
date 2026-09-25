@@ -97,6 +97,47 @@ TEST_CASE("rainbow_deep and rainbow_soft: rainbow_hc's hues at their stops' ligh
   }
 }
 
+TEST_CASE("rainbow_hti (Rainbow HC): magenta to red and a softer red, round the hue wheel one way") {
+  const tv::PaletteSpec spec = load("rainbow_hti");
+  CHECK(spec.marksLocked);
+  const auto lut = tv::buildPaletteLut(spec);
+  // Its ends are its stops: HTi's cold magenta and its hot, lighter red.
+  CHECK(lut.front() == std::array<uint8_t, 3>{0x82, 0x04, 0xA1});
+  CHECK(lut.back() == std::array<uint8_t, 3>{0xCB, 0x4E, 0x52});
+  // The hue falls steadily from magenta (~317 degrees) through blue, green and yellow to red
+  // (~22): unwrapped, it only falls, and never by a jump.
+  float previous = hueDeg(tv::paletteColor(spec, 0.0f));
+  float total = 0.0f;
+  for (int i = 1; i <= 400; ++i) {
+    const float h = hueDeg(tv::paletteColor(spec, float(i) / 400.0f));
+    float d = h - previous;
+    if (d > 180.0f) d -= 360.0f;
+    if (d < -180.0f) d += 360.0f;
+    CHECK(d <= 0.05f);
+    CHECK(d > -8.0f);
+    total += d;
+    previous = h;
+  }
+  CHECK(total == doctest::Approx(-295.0f).epsilon(0.02));
+  // Lightness: darkest in the blue-teal stretch, brightest at the yellow, the red darker again.
+  float lMin = 1.0f, lMax = 0.0f, tMin = 0.0f, tMax = 0.0f;
+  for (int i = 0; i <= 100; ++i) {
+    const float t = float(i) / 100.0f, l = tv::srgbToOklab(tv::paletteColor(spec, t))[0];
+    if (l < lMin) lMin = l, tMin = t;
+    if (l > lMax) lMax = l, tMax = t;
+  }
+  CHECK(tMin > 0.1f);
+  CHECK(tMin < 0.4f);
+  CHECK(tMax > 0.55f);
+  CHECK(tMax < 0.75f);
+  CHECK(lMax - lMin > 0.45f);
+  // Smooth: neighbouring entries never differ by more than a few levels.
+  int jumps = 0;
+  for (size_t i = 1; i < lut.size(); ++i)
+    for (size_t k = 0; k < 3; ++k) jumps += std::abs(int(lut[i][k]) - int(lut[i - 1][k])) > 4;
+  CHECK(jumps == 0);
+}
+
 TEST_CASE("palette files are checked") {
   tv::PaletteSpec spec;
   std::string error;

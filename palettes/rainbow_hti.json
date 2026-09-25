@@ -1,0 +1,75 @@
+{
+  "name": "rainbow_hti",
+  "space": "oklch",
+  "chroma": "interpolate",
+  "stops": [
+    [
+      0.0,
+      "#8204A1"
+    ],
+    [
+      0.0667,
+      "#550BB2"
+    ],
+    [
+      0.1333,
+      "#1B15BE"
+    ],
+    [
+      0.2,
+      "#113887"
+    ],
+    [
+      0.2667,
+      "#0E4E60"
+    ],
+    [
+      0.3333,
+      "#0C633F"
+    ],
+    [
+      0.4,
+      "#307E28"
+    ],
+    [
+      0.4667,
+      "#66991E"
+    ],
+    [
+      0.5333,
+      "#9AB313"
+    ],
+    [
+      0.6,
+      "#CFCC09"
+    ],
+    [
+      0.6667,
+      "#F8D101"
+    ],
+    [
+      0.7333,
+      "#EBA901"
+    ],
+    [
+      0.8,
+      "#DE7F01"
+    ],
+    [
+      0.8667,
+      "#CF5302"
+    ],
+    [
+      0.9333,
+      "#BB1A08"
+    ],
+    [
+      1.0,
+      "#CB4E52"
+    ]
+  ],
+  "saturation": "#808080",
+  "lockedAbove": "#C8C8C8",
+  "lockedBelow": "#555555",
+  "note": "Rainbow HC (the owner, 2026-09-26: \"HTi's rainbow_hc has blue and purple color as well at the lower range, try it out, add it as another palette\"): Hti Image's rainbow_hc as its output shows it, read back from the owner's screenshot (DCIM/Screenshots, 2026-09-26 07:24) by tools/py/palette_from_screenshot.py: cold magenta and violet, a vivid blue, a dark muted teal, green, a bright yellow, orange, the darkest red, then a lighter, softer red at the hot end. Its own spacing along that curve isn't visible in one image, so the stops sit at even steps of OKLab distance; each stop exactly, the hue along the shorter arc between. saturation, lockedAbove, lockedBelow: as the other rainbows (grey)."
+}

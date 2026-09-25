@@ -187,19 +187,19 @@ fun Swatch(colors: List<Color>, modifier: Modifier, height: Dp = 6.dp) {
 }
 
 /**
- * The palette picker: White hot or Rainbow, each shown by its colors; with Rainbow, its looks too (Deep
- * or Soft), which slide open under it. Picking closes it, except Rainbow, which stays open for its looks.
+ * The palette picker: White hot, Rainbow or Rainbow HC, each shown by its colors; with Rainbow, its
+ * looks too (Deep or Soft), which slide open under it. Picking closes it, except Rainbow, which stays
+ * open for its looks.
  */
 @Composable
 fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colors: (Int, Int) -> List<Color>, done: () -> Unit) {
     MenuHeading("Palette")
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        PaletteCard("White hot", colors(1, 0), options.palette == 1) {
-            onOptions(options.copy(palette = 1))
-            done()
-        }
-        PaletteCard("Rainbow", colors(2, options.rainbowPreset), options.palette == 2) { onOptions(options.copy(palette = 2)) }
+    PaletteCard("White hot", colors(1, 0), options.palette == 1) {
+        onOptions(options.copy(palette = 1))
+        done()
     }
+    Spacer(Modifier.height(8.dp))
+    PaletteCard("Rainbow", colors(2, options.rainbowPreset), options.palette == 2) { onOptions(options.copy(palette = 2)) }
     val rainbow = remember { MutableTransitionState(options.palette == 2) }
     rainbow.targetState = options.palette == 2
     AnimatedVisibility(
@@ -208,9 +208,9 @@ fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colo
         exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
     ) {
         Column {
-            Spacer(Modifier.height(14.dp))
-            MenuHeading("Rainbow colors")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(10.dp))
+            MenuHeading("Rainbow colors", Modifier.padding(start = 6.dp))
+            Row(Modifier.padding(start = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MainActivity.RAINBOW_PRESETS.forEachIndexed { i, preset ->
                     ChoiceCard(options.rainbowPreset == i, {
                         onOptions(options.copy(rainbowPreset = i))
@@ -223,6 +223,11 @@ fun PalettePicker(options: DebugOptions, onOptions: (DebugOptions) -> Unit, colo
                 }
             }
         }
+    }
+    Spacer(Modifier.height(8.dp))
+    PaletteCard("Rainbow HC", colors(3, 0), options.palette == 3) {
+        onOptions(options.copy(palette = 3))
+        done()
     }
 }
 

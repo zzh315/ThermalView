@@ -17,9 +17,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 
 data class DebugOptions(
     val skipStartupShutter: Boolean = false,
-    val statsCsv: Boolean = false,
+    val statsCsv: Boolean = false,          // test runs over adb (--ez csv): a row of statistics per frame
     val fallbackOrder: Boolean = false,
-    val dumpOnLockout: Boolean = false,
+    val dumpOnLockout: Boolean = false,     // test runs over adb (--ez lockoutDump): frames around each lockout
     val autoRange: Boolean = false,      // automatic range switching (off until the M2 iron session)
     val highMathInfiCam: Boolean = false,
     val lockoutEnabled: Boolean = true,     // off only for tests with hot objects within the sensor's rating
@@ -39,7 +39,7 @@ data class DebugOptions(
     val bigCores: Boolean = true,           // processing thread on the big cores (little ones: ~8x slower)
     val perfHint: Boolean = true,           // ADPF: ask for the clock the frame budget needs
     val upscaler: Int = 1,                  // M5 preview: 0 nearest (M1), 1 cardinal B-spline + 2x2 clamp
-    val palette: Int = 1,                   // M5: 1 white_hot, 2 rainbow_hc (0: the old plain gray, adb only)
+    val palette: Int = 1,                   // 1 white hot, 2 Rainbow (RAINBOW_PRESETS), 3 Rainbow HC (0: plain gray, adb only)
     val viewSize: Int = 2,                  // M6 presets, debug until then: 0 Phone, 1 Small tablet, 2 Full
     val boxDim: Float = 0.5f,               // M6: the brightness outside the box (start at 50%; tunable)
     val rainbowPreset: Int = 0,             // the rainbow's look: 0 Deep, 1 Soft (RAINBOW_PRESETS; kept)
@@ -57,9 +57,8 @@ data class DebugOptions(
         "nrMethod=bm3d", "bm3dStrength=" + MainActivity.bm3dStrengthFor(nrStrength), "bm3dBlock=8", "bm3dStride=6",
         "bm3dSearch=5", "bm3dGroup1=8", "bm3dGroup2=8", "bm3dTau1=0", "bm3dTau2=0",
     ) else emptyList()).plus(
-        // (the rainbow presets' own auto contrast; white hot keeps stage 5 as it is)
-        (if (palette == 2) MainActivity.RAINBOW_PRESETS.getOrElse(rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }.tone else "")
-            .let { if (it.isEmpty()) emptyList() else listOf(it) },
+        // (the rainbows' own auto contrast; white hot keeps stage 5 as it is)
+        MainActivity.toneFor(palette, rainbowPreset).let { if (it.isEmpty()) emptyList() else listOf(it) },
     ).joinToString(",")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
@@ -270,7 +269,10 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "ThermalView"
-        val PALETTES = listOf("white_hot", "rainbow_hc")  // assets from palettes/, DebugOptions.palette 1 and 2
+        // Assets from palettes/, DebugOptions.palette 1 to 3 (Rainbow's file is its preset's). Rainbow HC
+        // (owner, 2026-09-26: "HTi's rainbow_hc has blue and purple color as well at the lower range, try
+        // it out, add it as another palette"): Hti Image's rainbow_hc, read back from its output.
+        val PALETTES = listOf("white_hot", "rainbow_hc", "rainbow_hti")
         // The rainbow's looks (the owner's pick, 2026-09-26: Deep "looks more colorful and intense", and
         // Soft kept as an option; Vivid and Room looked washed out, Deep+ like Deep): the palette file and
         // stage 5's balance, which centres the scene's median on the palette (PIPELINE_LOG).
@@ -282,6 +284,15 @@ class MainActivity : ComponentActivity() {
         fun paletteName(palette: Int, rainbowPreset: Int): String? =
             if (palette == 2) RAINBOW_PRESETS.getOrElse(rainbowPreset) { RAINBOW_PRESETS[0] }.palette
             else PALETTES.getOrNull(palette - 1)
+        // Stage 5 for each palette: the rainbows centre the scene's median on the palette (the balance;
+        // for Rainbow HC too: with one very hot object in view, the room keeps the palette's middle
+        // rather than sinking into its blues, PIPELINE_LOG 2026-09-26); white hot as it is.
+        fun toneFor(palette: Int, rainbowPreset: Int): String = when (palette) {
+            2 -> RAINBOW_PRESETS.getOrElse(rainbowPreset) { RAINBOW_PRESETS[0] }.tone
+            3 -> "toneBalance"
+            else -> ""
+        }
+        fun marksLocked(palette: Int) = palette >= 2  // (the rainbows' lockedAbove / lockedBelow: grey)
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
         val NR_STRENGTHS = listOf(0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas
         val NR_SEARCHES = listOf(2, 3, 5)  // stage 4b's search radius: 5x5, 7x7, 11x11
