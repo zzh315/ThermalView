@@ -1729,7 +1729,9 @@ void Session::setBanner(const std::string& text) {
 }
 
 std::string Session::statusLine() {
+  const double p50 = renderer_.latencyP50Ms(), p95 = renderer_.latencyP95Ms();
   std::lock_guard lock(snapshotMutex_);
+  const Snapshot& snap = *snapshot_;
   const State state = state_.load();
   const bool streaming = state == State::Starting || state == State::AwaitValid ||
                          state == State::RangeWait || state == State::ShutterHold ||
@@ -1739,8 +1741,10 @@ std::string Session::statusLine() {
   std::replace(banner.begin(), banner.end(), ';', ',');
   std::string dump = dumpStatus_;
   std::replace(dump.begin(), dump.end(), ';', ',');
+  // (the on-screen summary: frame rate, lag, and frames that never made it to the screen)
   return std::string("state=") + stateName(state) + ";streaming=" + (streaming ? "1" : "0") +
-         ";banner=" + banner + ";dump=" + dump + ";replay=" + (replayRun_ ? replayName_ : "");
+         ";banner=" + banner + ";dump=" + dump + ";replay=" + (replayRun_ ? replayName_ : "") +
+         format(";fps=%.2f;lat50=%.1f;lat95=%.1f;dropped=%" PRIu64, snap.fps, p50, p95, snap.seqGaps + snap.overruns);
 }
 
 std::string Session::overlayText() {

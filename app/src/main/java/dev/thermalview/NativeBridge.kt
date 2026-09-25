@@ -62,6 +62,10 @@ data class Status(
     val banner: String = "",
     val dump: String = "",
     val replay: String = "",
+    val fps: Float = 0f,           // frames a second reaching the pipeline
+    val lagMs: Float = 0f,         // latency, frame arrival to the screen: median and 95th percentile
+    val lagP95Ms: Float = 0f,
+    val dropped: Long = 0,         // frames lost since the stream started (never arrived, or no time for them)
 ) {
     companion object {
         fun parse(line: String): Status {
@@ -75,6 +79,10 @@ data class Status(
                 banner = fields["banner"].orEmpty(),
                 dump = fields["dump"].orEmpty(),
                 replay = fields["replay"].orEmpty(),
+                fps = fields["fps"]?.toFloatOrNull() ?: 0f,
+                lagMs = fields["lat50"]?.toFloatOrNull() ?: 0f,
+                lagP95Ms = fields["lat95"]?.toFloatOrNull() ?: 0f,
+                dropped = fields["dropped"]?.toLongOrNull() ?: 0,
             )
         }
     }
