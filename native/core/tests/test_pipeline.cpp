@@ -71,6 +71,23 @@ TEST_CASE("stage 1 holds through repeated frames and the first fresh one, then c
   CHECK(out == live);
 }
 
+TEST_CASE("stage 1 switched off during a cycle: the next fresh frame still ends the freeze") {
+  tv::PipelineOptions o = allOff();
+  o.shutterHold = true;
+  tv::Pipeline p(o);
+  std::vector<float> out(tv::kImagePixels);
+  const auto a = image(5000, 30);
+  p.process(a.data(), out.data());
+  p.process(a.data(), out.data());  // a repeat: frozen
+  REQUIRE(p.frozen());
+  o.shutterHold = false;
+  p.setOptions(o);
+  const auto b = image(4990, 31);
+  p.process(b.data(), out.data());
+  CHECK_FALSE(p.frozen());
+  CHECK_FALSE(p.skipping());
+}
+
 TEST_CASE("stage 1's crossfade, if asked for: the held output fades out over its frames") {
   tv::PipelineOptions o = allOff();
   o.shutterHold = true;

@@ -19,7 +19,7 @@ ToneMapper::ToneMapper(const ToneOptions& options)
 }
 
 void ToneMapper::reset() {
-  havePrevious_ = haveRange_ = haveCurve_ = false;
+  havePrevious_ = haveRange_ = haveCurve_ = fixed_ = false;
   offset_ = 0.0f;
   for (int i = 0; i <= kCurve; ++i) curve_[size_t(i)] = float(i) / float(kCurve);
 }

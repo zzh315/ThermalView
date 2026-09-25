@@ -78,24 +78,34 @@ enum class Grab(val left: Boolean, val top: Boolean, val right: Boolean, val bot
 }
 
 /**
- * Hit-testing in view pixels (the box's corners at l, t, r, b), with targets that stay large on a small
- * box, as the Android croppers do (PRIOR_ART.md): well inside moves; else the nearest corner, then the
- * nearest edge within reach; else anywhere inside moves.
+ * Hit-testing in view pixels (the box's corners at l, t, r, b; the view viewW x viewH), with targets
+ * that stay large on a small box, as the Android croppers do (PRIOR_ART.md): well inside moves; else
+ * the nearest corner, then the nearest edge within reach; else anywhere inside moves. Only what's on
+ * screen can be grabbed, and a box around the whole view can't be moved from inside (so one-finger
+ * drags pan when zoomed into it).
  */
-fun hitBox(p: Offset, l: Float, t: Float, r: Float, b: Float, reach: Float): Grab? {
+fun hitBox(p: Offset, l: Float, t: Float, r: Float, b: Float, reach: Float, viewW: Float, viewH: Float): Grab? {
+    val showsL = l in 0f..viewW
+    val showsR = r in 0f..viewW
+    val showsT = t in 0f..viewH
+    val showsB = b in 0f..viewH
+    val movable = showsL || showsR || showsT || showsB  // some edge is on screen
     val inside = p.x in l..r && p.y in t..b
     val depth = if (inside) min(min(p.x - l, r - p.x), min(p.y - t, b - p.y)) else -1f
-    if (inside && depth >= min(reach * 0.6f, 0.25f * min(r - l, b - t))) return Grab.Move
-    val corners = listOf(Grab.TopLeft to Offset(l, t), Grab.TopRight to Offset(r, t), Grab.BottomLeft to Offset(l, b), Grab.BottomRight to Offset(r, b))
-    corners.minBy { (it.second - p).getDistance() }.let { (g, c) -> if ((c - p).getDistance() <= reach) return g }
+    if (movable && inside && depth >= min(reach * 0.6f, 0.25f * min(r - l, b - t))) return Grab.Move
+    val corners = listOf(
+        Triple(Grab.TopLeft, Offset(l, t), showsL && showsT), Triple(Grab.TopRight, Offset(r, t), showsR && showsT),
+        Triple(Grab.BottomLeft, Offset(l, b), showsL && showsB), Triple(Grab.BottomRight, Offset(r, b), showsR && showsB),
+    ).filter { it.third }
+    corners.minByOrNull { (it.second - p).getDistance() }?.let { (g, c) -> if ((c - p).getDistance() <= reach) return g }
     val edges = listOf(
-        Grab.Left to if (p.y in t - reach..b + reach) abs(p.x - l) else Float.MAX_VALUE,
-        Grab.Right to if (p.y in t - reach..b + reach) abs(p.x - r) else Float.MAX_VALUE,
-        Grab.Top to if (p.x in l - reach..r + reach) abs(p.y - t) else Float.MAX_VALUE,
-        Grab.Bottom to if (p.x in l - reach..r + reach) abs(p.y - b) else Float.MAX_VALUE,
+        Grab.Left to if (showsL && p.y in t - reach..b + reach) abs(p.x - l) else Float.MAX_VALUE,
+        Grab.Right to if (showsR && p.y in t - reach..b + reach) abs(p.x - r) else Float.MAX_VALUE,
+        Grab.Top to if (showsT && p.x in l - reach..r + reach) abs(p.y - t) else Float.MAX_VALUE,
+        Grab.Bottom to if (showsB && p.x in l - reach..r + reach) abs(p.y - b) else Float.MAX_VALUE,
     )
     edges.minBy { it.second }.let { (g, d) -> if (d <= reach * 0.8f) return g }
-    return if (inside) Grab.Move else null
+    return if (movable && inside) Grab.Move else null
 }
 
 /**
@@ -121,7 +131,7 @@ suspend fun PointerInputScope.imageGestures(
             val t = (it.y - r.y) / r.h * viewH
             val rr = (it.right - r.x) / r.w * viewW
             val bb = (it.bottom - r.y) / r.h * viewH
-            hitBox(down.position, l, t, rr, bb, reach)
+            hitBox(down.position, l, t, rr, bb, reach, viewW, viewH)
         }
         if (box != null && grab != null) {
             var total = Offset.Zero

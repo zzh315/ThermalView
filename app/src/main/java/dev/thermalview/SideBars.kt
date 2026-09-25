@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 // The side bars (owner, 2026-09-26: "there are empty black spaces on both side of the screen, utilise
@@ -203,19 +204,28 @@ private fun ReadoutRow(marker: Color, textColor: Color, text: String?) {
  * The palette with the temperatures at the ends of the mapping (PLAN M5: endpoints only, since
  * the curve isn't linear). The colors run from the mapping's top (hot) to its bottom. With the range
  * locked, a drag adjusts it: from the top part the hot end, from the bottom part the cold end, from
- * the middle both (the whole range slides). A drag across the bar's height moves by one span.
+ * the middle both (the whole range slides). A drag across the bar's height moves by one span, or by
+ * 4 °C for a narrower one (so a tight lock can still slide far).
  */
 @Composable
 private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifier) {
     val locked = readings?.locked == true
-    // While dragging (and briefly after, until the native side has caught up), the ends shown are ours.
+    // While dragging, and after it until the native side shows the same ends (at most 3 s), the ends
+    // shown are ours. Unlocked, they're the native side's again at once.
     var ours by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var dragging by remember { mutableStateOf(false) }
     var released by remember { mutableIntStateOf(0) }
+    val native by rememberUpdatedState((readings?.scaleLoC ?: Float.NaN) to (readings?.scaleHiC ?: Float.NaN))
+    LaunchedEffect(locked) { if (!locked) ours = null }
     LaunchedEffect(released) {
-        if (released > 0) {
-            delay(400)
-            ours = null
+        if (released == 0) return@LaunchedEffect
+        val until = System.currentTimeMillis() + 3000
+        while (System.currentTimeMillis() < until) {
+            val o = ours ?: return@LaunchedEffect
+            if (abs(native.first - o.first) < 0.05f && abs(native.second - o.second) < 0.05f) break
+            delay(100)
         }
+        if (!dragging) ours = null
     }
     val lo = ours?.first ?: readings?.scaleLoC ?: Float.NaN
     val hi = ours?.second ?: readings?.scaleHiC ?: Float.NaN
@@ -238,31 +248,40 @@ private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifie
             var part = 0
             var start = 0f to 0f
             var moved = 0f
-            detectVerticalDragGestures(
-                onDragStart = { at ->
-                    part = when {
-                        at.y < size.height * 0.35f -> 1   // the hot end
-                        at.y > size.height * 0.65f -> -1  // the cold end
-                        else -> 0                          // both
+            try {
+                detectVerticalDragGestures(
+                    onDragStart = { at ->
+                        part = when {
+                            at.y < size.height * 0.35f -> 1   // the hot end
+                            at.y > size.height * 0.65f -> -1  // the cold end
+                            else -> 0                          // both
+                        }
+                        start = current
+                        moved = 0f
+                        dragging = true
+                    },
+                    onDragEnd = { dragging = false; released += 1 },
+                    onDragCancel = { dragging = false; released += 1 },
+                ) { change, dy ->
+                    change.consume()
+                    val (l0, h0) = start
+                    if (l0.isNaN() || h0.isNaN()) return@detectVerticalDragGestures
+                    moved += dy
+                    val d = -moved / size.height * maxOf(h0 - l0, 4f)
+                    val minSpan = minOf(0.5f, h0 - l0)  // (RangeLock::kMinSpanC, or a narrower lock's own)
+                    val next = when (part) {
+                        1 -> l0 to maxOf(h0 + d, l0 + minSpan)
+                        -1 -> minOf(l0 + d, h0 - minSpan) to h0
+                        else -> (l0 + d) to (h0 + d)
                     }
-                    start = current
-                    moved = 0f
-                },
-                onDragEnd = { released += 1 },
-                onDragCancel = { released += 1 },
-            ) { change, dy ->
-                change.consume()
-                val (l0, h0) = start
-                if (l0.isNaN() || h0.isNaN()) return@detectVerticalDragGestures
-                moved += dy
-                val d = -moved / size.height * (h0 - l0)
-                val next = when (part) {
-                    1 -> l0 to maxOf(h0 + d, l0 + 0.5f)
-                    -1 -> minOf(l0 + d, h0 - 0.5f) to h0
-                    else -> (l0 + d) to (h0 + d)
+                    ours = next
+                    NativeBridge.setRangeEnds(next.first, next.second)
                 }
-                ours = next
-                NativeBridge.setRangeEnds(next.first, next.second)
+            } finally {  // (the gesture restarts, without an end or cancel, when the lock changes)
+                if (dragging) {
+                    dragging = false
+                    released += 1
+                }
             }
         },
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -376,9 +395,12 @@ private fun CaptureTile(status: Status, live: Boolean) {
     var menu by remember { mutableStateOf(false) }
     var flash by remember { mutableStateOf("") }
     var wasRecording by remember { mutableStateOf(false) }
+    // (a dump is still being written after its last frame: "capturing" until it says "saved")
+    val writing = status.dumpTotal == 0 && status.dump.startsWith("capturing")
     LaunchedEffect(status.dumpTotal, status.dump) {
-        if (wasRecording && status.dumpTotal == 0) flash = if (status.dump.startsWith("saved")) "saved" else status.dump
-        wasRecording = status.dumpTotal > 0
+        val recording = status.dumpTotal > 0 || status.dump.startsWith("capturing")
+        if (wasRecording && !recording) flash = if (status.dump.startsWith("saved")) "saved" else status.dump
+        wasRecording = recording
     }
     LaunchedEffect(flash) {
         if (flash.isNotEmpty()) {
@@ -386,7 +408,7 @@ private fun CaptureTile(status: Status, live: Boolean) {
             flash = ""
         }
     }
-    val busy = status.dumpTotal > 0 || status.capture.isNotEmpty()
+    val busy = status.dumpTotal > 0 || writing || status.capture.isNotEmpty()
     val m = CAPTURE_MODES[mode]
     val run = {
         if (live && !busy) {
@@ -416,6 +438,7 @@ private fun CaptureTile(status: Status, live: Boolean) {
             Value("Capture")
             val progress = when {
                 status.dumpTotal > 0 -> "${status.dumpDone} / ${status.dumpTotal}"
+                writing -> "saving…"
                 status.capture.isNotEmpty() -> status.capture
                 flash.isNotEmpty() -> flash
                 else -> m.note

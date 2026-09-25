@@ -745,11 +745,12 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     ~RestTimer() { *out = std::chrono::duration<float, std::milli>(Clock::now() - t0).count(); }
   } rest{&partMs_[kRest], t};
 
-  if (!options_.shutterHold) return;
-  if (resuming) {  // the first fresh frame after a cycle
+  if (resuming) {  // the first fresh frame after a cycle (cleared even with stage 1 switched off since)
     frozen_ = false;
-    blendLeft_ = blendTotal_ = std::max(0, options_.shutterBlendFrames);
+    skipLeft_ = 0;
   }
+  if (!options_.shutterHold) return;
+  if (resuming) blendLeft_ = blendTotal_ = std::max(0, options_.shutterBlendFrames);
   if (blendLeft_ > 0) {
     // The held output's weight falls linearly to zero: n/(n+1), ..., 1/(n+1) over n frames.
     const float w = float(blendLeft_) / float(blendTotal_ + 1);

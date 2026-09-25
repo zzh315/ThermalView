@@ -1147,6 +1147,36 @@ void Session::handleFrame(const RawFrame& frame) {
     region_ = pendingRegion_;
     pipeline_.setRegion(region_);  // stage 5 measures what the view shows
   }
+  // The range lock's requests, on every frame (a drag during a shutter hold shows at once too).
+  switch (rangeLockRequest_.exchange(-1)) {
+    case 1: {
+      const ToneMapper* tone = pipeline_.toneMapper();
+      if (!rangeLock_.held() && tone && rangeLock_.lock(*tone, lut_))
+        FLOG("range locked: %.2f to %.2f C", rangeLock_.loC(), rangeLock_.hiC());
+      else if (!rangeLock_.held())
+        FLOG("range lock: nothing to lock yet");
+      break;
+    }
+    case 0:
+      if (rangeLock_.held()) FLOG("range unlocked");
+      rangeLock_.release();
+      break;
+    default:
+      break;
+  }
+  if (rangeEndsPending_.exchange(false)) {
+    std::lock_guard lock(rangeEndsMutex_);
+    // (kept inside the table's valid temperatures, so the mapping can always be built)
+    const uint16_t first = uint16_t(std::min<int>(lut_.vertex() + 1, TemperatureLut::kSize - 1));
+    const double minC = lut_.valid(first) ? lut_[first] : -INFINITY;
+    const double maxC = lut_.valid(uint16_t(TemperatureLut::kSize - 1)) ? lut_[uint16_t(TemperatureLut::kSize - 1)] : INFINITY;
+    rangeLock_.setEnds(pendingLoC_, pendingHiC_, minC, maxC);
+  }
+  if (rangeLock_.held()) {
+    scaleLoC_ = rangeLock_.loC();
+    scaleHiC_ = rangeLock_.hiC();
+    scaleHiOver_ = false;
+  }
   // The temperature work (PROTOCOL.md "Temperature math"; CLAUDE.md rule 2): this frame's table, the
   // readouts from raw values, the over-range counts and what they trigger (the lockout, range
   // switching), the CSV row and the dump. Nothing in it feeds the pipeline, so for a frame going to
@@ -1316,29 +1346,16 @@ void Session::handleFrame(const RawFrame& frame) {
       recal_.onCalibration(double(frame.arrivalNs) / 1e9, view.fpaC());
     }
 
-    // M6's range lock: the UI's requests, then this frame's mapping (through the last frame's table:
-    // this one's is built while the pipeline runs, and it moves slowly).
-    switch (rangeLockRequest_.exchange(-1)) {
-      case 1: {
-        const ToneMapper* tone = pipeline_.toneMapper();
-        if (tone && rangeLock_.lock(*tone, lut_))
-          FLOG("range locked: %.2f to %.2f C", rangeLock_.loC(), rangeLock_.hiC());
-        else
-          FLOG("range lock: nothing to lock yet");
-        break;
-      }
-      case 0:
-        if (rangeLock_.held()) FLOG("range unlocked");
-        rangeLock_.release();
-        break;
-      default:
-        break;
+    // M6's range lock: this frame's mapping, through the last frame's table (this one's is built while
+    // the pipeline runs, and it moves slowly). If the table can't express it, the last one holds, so
+    // a locked range never falls back to automatic by itself.
+    if (rangeLock_.held()) {
+      if (rangeLock_.mapping(lut_, &fixedMapping_)) fixedMappingValid_ = true;
+      pipeline_.setFixedMapping(fixedMappingValid_ ? &fixedMapping_ : nullptr);
+    } else {
+      fixedMappingValid_ = false;
+      pipeline_.setFixedMapping(nullptr);
     }
-    if (rangeEndsPending_.exchange(false)) {
-      std::lock_guard lock(rangeEndsMutex_);
-      rangeLock_.setEnds(pendingLoC_, pendingHiC_);
-    }
-    pipeline_.setFixedMapping(rangeLock_.held() && rangeLock_.mapping(lut_, &fixedMapping_) ? &fixedMapping_ : nullptr);
 
     DisplayFrame& out = renderer_.frameSlot();
     displayOut = &out;

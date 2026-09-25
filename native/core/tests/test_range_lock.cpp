@@ -172,3 +172,51 @@ TEST_CASE("nothing to lock before a mapping exists") {
   FixedMapping m;
   CHECK_FALSE(lock.mapping(lut, &m));
 }
+
+TEST_CASE("the ends stay inside the table, keeping their span") {
+  const auto lut = lutOf(goldenInputs());
+  const auto sig = scene(lut);
+  ToneMapper tone;
+  std::vector<float> out(tv::kImagePixels);
+  for (int f = 0; f < 60; ++f) tone.map(sig.data(), out.data());
+  RangeLock lock;
+  REQUIRE(lock.lock(tone, lut));
+  const double span = lock.hiC() - lock.loC();
+  lock.setEnds(500.0, 500.0 + span, 0.0, 150.0);  // dragged far past the top
+  CHECK(lock.hiC() == doctest::Approx(150.0));
+  CHECK(lock.hiC() - lock.loC() == doctest::Approx(span));
+  lock.setEnds(-400.0, -400.0 + span, 0.0, 150.0);
+  CHECK(lock.loC() == doctest::Approx(0.0));
+  CHECK(lock.hiC() - lock.loC() == doctest::Approx(span));
+}
+
+TEST_CASE("a lock narrower than kMinSpanC keeps its span when an end moves") {
+  const auto lut = lutOf(goldenInputs());
+  std::vector<float> flat(tv::kImagePixels, float(tv::countsAt(lut, 21.0)));
+  for (size_t i = 0; i < flat.size(); ++i) flat[i] += float(i % 3);  // a few counts of texture
+  ToneMapper tone;
+  std::vector<float> out(tv::kImagePixels);
+  for (int f = 0; f < 30; ++f) tone.map(flat.data(), out.data());
+  RangeLock lock;
+  REQUIRE(lock.lock(tone, lut));
+  const double span = lock.hiC() - lock.loC();
+  REQUIRE(span < RangeLock::kMinSpanC);
+  lock.setEnds(lock.loC(), lock.hiC() - 0.001);  // a tiny drag of the hot end down
+  CHECK(lock.hiC() - lock.loC() == doctest::Approx(span).epsilon(0.01));
+}
+
+TEST_CASE("reset() ends a lock too") {
+  const auto lut = lutOf(goldenInputs());
+  const auto sig = scene(lut);
+  ToneMapper tone;
+  std::vector<float> out(tv::kImagePixels);
+  for (int f = 0; f < 10; ++f) tone.map(sig.data(), out.data());
+  RangeLock lock;
+  REQUIRE(lock.lock(tone, lut));
+  FixedMapping m;
+  REQUIRE(lock.mapping(lut, &m));
+  tone.setFixed(&m);
+  REQUIRE(tone.fixed());
+  tone.reset();
+  CHECK_FALSE(tone.fixed());
+}

@@ -84,7 +84,7 @@ fun AppScreen(
     LaunchedEffect(live) {
         while (live) {
             readings = Readings.parse(NativeBridge.readouts())
-            delay(100)
+            delay(40)  // a frame's time: the markers keep up with the image when the camera moves
         }
         readings = null
     }

@@ -212,6 +212,7 @@ class Session {
   // The range lock (processing thread), and the UI's requests for it.
   RangeLock rangeLock_;
   FixedMapping fixedMapping_;
+  bool fixedMappingValid_ = false;  // fixedMapping_ holds a good mapping (the last one built)
   std::atomic<int> rangeLockRequest_{-1};  // 1 lock, 0 release, -1 nothing new
   std::mutex rangeEndsMutex_;
   double pendingLoC_ = 0, pendingHiC_ = 0;  // under rangeEndsMutex_

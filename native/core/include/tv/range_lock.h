@@ -3,6 +3,7 @@
 // own warming moves the counts a temperature reads at, so each frame's table converts it back.
 #pragma once
 
+#include <cmath>
 #include <vector>
 
 #include "tv/temperature.h"
@@ -18,7 +19,7 @@ double countsAt(const TemperatureLut& lut, double tempC);
 
 class RangeLock {
  public:
-  static constexpr double kMinSpanC = 0.5;  // the ends stay at least this far apart
+  static constexpr double kMinSpanC = 0.5;  // the ends stay at least this far apart (or the span locked, if less)
 
   // Holds the mapping [tone] shows now, through [lut]. False, holding nothing, without a mapping or
   // valid temperatures at its ends.
@@ -26,8 +27,9 @@ class RangeLock {
   void release() { edgesC_.clear(); }
   bool held() const { return !edgesC_.empty(); }
 
-  // The ends, in °C: the held curve keeps its shape, scaled linearly between them.
-  void setEnds(double loC, double hiC);
+  // The ends, in °C: the held curve keeps its shape, scaled linearly between them. Clamped to
+  // [minC, maxC] when given (the table's valid temperatures), keeping the span.
+  void setEnds(double loC, double hiC, double minC = -INFINITY, double maxC = INFINITY);
   double loC() const { return loC_; }
   double hiC() const { return hiC_; }
 
@@ -39,6 +41,7 @@ class RangeLock {
   std::vector<double> edgesC_;  // the curve's kCurve + 1 edges in °C when locked, ascending
   std::vector<float> curve_;    // the curve's values there
   double loC_ = 0, hiC_ = 0;    // the ends now
+  double minSpanC_ = kMinSpanC;
 };
 
 }  // namespace tv

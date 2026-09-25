@@ -38,15 +38,28 @@ bool RangeLock::lock(const ToneMapper& tone, const TemperatureLut& lut) {
   curve_ = tone.curve();
   loC_ = edgesC_.front();
   hiC_ = edgesC_.back();
+  minSpanC_ = std::min(kMinSpanC, hiC_ - loC_);  // (a flat scene's lock may be narrower: no jump on the first drag)
   return true;
 }
 
-void RangeLock::setEnds(double loC, double hiC) {
+void RangeLock::setEnds(double loC, double hiC, double minC, double maxC) {
   if (!std::isfinite(loC) || !std::isfinite(hiC)) return;
-  if (hiC - loC < kMinSpanC) {
+  if (hiC - loC < minSpanC_) {
     const double mid = 0.5 * (loC + hiC);
-    loC = mid - 0.5 * kMinSpanC;
-    hiC = mid + 0.5 * kMinSpanC;
+    loC = mid - 0.5 * minSpanC_;
+    hiC = mid + 0.5 * minSpanC_;
+  }
+  // Inside the table: a range dragged past its end slides back (keeping its span where it fits).
+  if (maxC - minC > minSpanC_) {
+    const double span = std::min(hiC - loC, maxC - minC);
+    if (hiC > maxC) {
+      hiC = maxC;
+      loC = std::max(minC, hiC - span);
+    }
+    if (loC < minC) {
+      loC = minC;
+      hiC = std::min(maxC, loC + span);
+    }
   }
   loC_ = loC;
   hiC_ = hiC;
