@@ -22,6 +22,7 @@
 #include "renderer.h"
 #include "tv/recalibration.h"
 #include "tv/pipeline.h"
+#include "tv/range_lock.h"
 #include "tv/command_gate.h"
 #include "tv/dump.h"
 #include "tv/frame.h"
@@ -104,6 +105,10 @@ class Session {
   std::string triggerLockout();  // debug: run one over-range lockout without a hot scene
   // debug: recalibrate, then dump 200 frames; with rangePair, again in the high range, then back.
   std::string requestCapture(const std::string& label, bool rangePair = false);
+  // M6's range lock: lock the colors to the temperatures they show now (on) or go back to the
+  // automatic mapping; then move the locked range's ends, in °C.
+  std::string setRangeLock(bool on);
+  void setRangeEnds(double loC, double hiC);
   // Shown readouts for the UI: {temp, x, y, flags} for high, low and center, then 1 if the high
   // range is active. flags: 1 = a valid temperature, 2 = over range. temp is NaN when invalid.
   std::vector<float> readouts();
@@ -201,6 +206,13 @@ class Session {
   CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
   double scaleLoC_ = NAN, scaleHiC_ = NAN;  // the scale bar's endpoints (processing thread)
   bool scaleHiOver_ = false;
+  // The range lock (processing thread), and the UI's requests for it.
+  RangeLock rangeLock_;
+  FixedMapping fixedMapping_;
+  std::atomic<int> rangeLockRequest_{-1};  // 1 lock, 0 release, -1 nothing new
+  std::mutex rangeEndsMutex_;
+  double pendingLoC_ = 0, pendingHiC_ = 0;  // under rangeEndsMutex_
+  std::atomic<bool> rangeEndsPending_{false};
   int64_t capturePhaseNs_ = 0;
   int64_t lastFreezeEndNs_ = 0;  // end of the latest shutter cycle, ours or the camera's
 

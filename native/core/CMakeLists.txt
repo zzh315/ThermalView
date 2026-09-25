@@ -17,6 +17,7 @@ add_library(thermalcore STATIC
   src/frame.cpp
   src/palette.cpp
   src/pipeline.cpp
+  src/range_lock.cpp
   src/readouts.cpp
   src/recalibration.cpp
   src/stats.cpp
@@ -45,6 +46,7 @@ if(PROJECT_IS_TOP_LEVEL)
     tests/test_palette.cpp
     tests/test_pipeline.cpp
     tests/test_queues.cpp
+    tests/test_range_lock.cpp
     tests/test_readouts.cpp
     tests/test_recalibration.cpp
     tests/test_stats.cpp

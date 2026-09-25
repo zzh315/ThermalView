@@ -215,6 +215,10 @@ class Pipeline {
   // stage 5 off).
   const ToneMapper* toneMapper() const { return options_.tone && tone_.ready() ? &tone_ : nullptr; }
 
+  // M6's range lock: stage 5 maps through [m] from the next frame (null: automatic again). The
+  // caller builds it each frame from °C (RangeLock), since the counts a temperature reads at move.
+  void setFixedMapping(const FixedMapping* m) { tone_.setFixed(m); }
+
   // One 256x192 camera image in; display intensity in [0, 1] out (kImagePixels floats). signal, if
   // given, receives the value tone mapping started from, in raw counts (for the harness's °C metrics).
   // alongside, if given, runs exactly once during the call: while the accelerator filters (the app's

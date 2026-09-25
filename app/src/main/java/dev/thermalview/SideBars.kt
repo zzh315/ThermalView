@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -37,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -138,8 +141,8 @@ fun StatsLines(status: Status, recentDrops: Long) {
 }
 
 /**
- * The right bar: measuring and acting. The three readouts, the scale bar with the temperatures at its
- * ends, Recalibrate, Capture (debug) and Settings.
+ * The right bar: measuring and acting. The three readouts, the range (Auto, or locked: M6) and the
+ * scale bar with the temperatures at its ends, Recalibrate, Capture (debug) and Settings.
  */
 @Composable
 fun RightBar(
@@ -156,6 +159,14 @@ fun RightBar(
             ReadoutRow(Ui.Hot, Ui.HotText, readings?.let { it.text(it.high, unit = false) })
             ReadoutRow(Ui.Center, Color.White, readings?.let { it.text(it.center, unit = false) })
             ReadoutRow(Ui.Cold, Ui.ColdText, readings?.let { it.text(it.low, unit = false) })
+        }
+        val locked = readings?.locked == true
+        Tile(onClick = { NativeBridge.setRangeLock(!locked) }, enabled = live, color = if (locked) Ui.TileActive else Ui.Tile) {
+            Caption("Range")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Value(if (locked) "Locked" else "Auto", Modifier.weight(1f))
+                LockGlyph(locked)
+            }
         }
         ScaleBar(readings, scaleColors, Modifier.weight(1f))
         CalibrateTile(live)
@@ -180,30 +191,120 @@ private fun ReadoutRow(marker: Color, textColor: Color, text: String?) {
 
 /**
  * The palette with the temperatures at the ends of the mapping (PLAN M5: endpoints only, since
- * the curve isn't linear). The colors run from the mapping's top (hot) to its bottom.
+ * the curve isn't linear). The colors run from the mapping's top (hot) to its bottom. With the range
+ * locked, a drag adjusts it: from the top part the hot end, from the bottom part the cold end, from
+ * the middle both (the whole range slides). A drag across the bar's height moves by one span.
  */
 @Composable
 private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifier) {
+    val locked = readings?.locked == true
+    // While dragging (and briefly after, until the native side has caught up), the ends shown are ours.
+    var ours by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var released by remember { mutableIntStateOf(0) }
+    LaunchedEffect(released) {
+        if (released > 0) {
+            delay(400)
+            ours = null
+        }
+    }
+    val lo = ours?.first ?: readings?.scaleLoC ?: Float.NaN
+    val hi = ours?.second ?: readings?.scaleHiC ?: Float.NaN
+    val current by rememberUpdatedState(lo to hi)
     val top = when {
         readings == null -> ""
-        readings.scaleHiOver -> "> 120°"
-        readings.scaleHiC.isNaN() -> "--"
-        else -> "%.1f°".format(readings.scaleHiC)
+        readings.scaleHiOver && ours == null -> "> 120°"
+        hi.isNaN() -> "--"
+        else -> "%.1f°".format(hi)
     }
     val bottom = when {
         readings == null -> ""
-        readings.scaleLoC.isNaN() -> "--"
-        else -> "%.1f°".format(readings.scaleLoC)
+        lo.isNaN() -> "--"
+        else -> "%.1f°".format(lo)
     }
-    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(top, color = Ui.Text, fontSize = 14.sp, style = Tabular, maxLines = 1)
+    val labelColor = if (locked) Ui.Accent else Ui.Text
+    Column(
+        modifier.fillMaxWidth().pointerInput(locked) {
+            if (!locked) return@pointerInput
+            var part = 0
+            var start = 0f to 0f
+            var moved = 0f
+            detectVerticalDragGestures(
+                onDragStart = { at ->
+                    part = when {
+                        at.y < size.height * 0.35f -> 1   // the hot end
+                        at.y > size.height * 0.65f -> -1  // the cold end
+                        else -> 0                          // both
+                    }
+                    start = current
+                    moved = 0f
+                },
+                onDragEnd = { released += 1 },
+                onDragCancel = { released += 1 },
+            ) { change, dy ->
+                change.consume()
+                val (l0, h0) = start
+                if (l0.isNaN() || h0.isNaN()) return@detectVerticalDragGestures
+                moved += dy
+                val d = -moved / size.height * (h0 - l0)
+                val next = when (part) {
+                    1 -> l0 to maxOf(h0 + d, l0 + 0.5f)
+                    -1 -> minOf(l0 + d, h0 - 0.5f) to h0
+                    else -> (l0 + d) to (h0 + d)
+                }
+                ours = next
+                NativeBridge.setRangeEnds(next.first, next.second)
+            }
+        },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(top, color = labelColor, fontSize = 14.sp, style = Tabular, maxLines = 1)
         Spacer(Modifier.height(4.dp))
-        Box(
-            Modifier.weight(1f).width(16.dp).clip(RoundedCornerShape(8.dp))
-                .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) })),
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            if (locked) Grips(Modifier.fillMaxHeight())
+            Box(
+                Modifier.fillMaxHeight().width(16.dp).clip(RoundedCornerShape(8.dp))
+                    .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) })),
+            )
+            if (locked) Grips(Modifier.fillMaxHeight())
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(bottom, color = labelColor, fontSize = 14.sp, style = Tabular, maxLines = 1)
+    }
+}
+
+/** Beside a locked scale bar: short ticks at its ends and middle, the three places to drag from. */
+@Composable
+private fun Grips(modifier: Modifier) {
+    Canvas(modifier.width(12.dp)) {
+        val w = 1.5.dp.toPx()
+        for (f in listOf(0.12f, 0.5f, 0.88f)) {
+            val y = size.height * f
+            for (k in -1..1) {
+                val yy = y + k * 4.dp.toPx()
+                drawLine(Ui.Accent, Offset(3.dp.toPx(), yy), Offset(size.width - 3.dp.toPx(), yy), w, StrokeCap.Round)
+            }
+        }
+    }
+}
+
+/** A padlock, closed when [locked]. */
+@Composable
+private fun LockGlyph(locked: Boolean) {
+    Canvas(Modifier.size(width = 14.dp, height = 16.dp)) {
+        val c = if (locked) Ui.Accent else Ui.Subtle
+        val w = 1.6.dp.toPx()
+        val bodyTop = size.height * 0.45f
+        drawRoundRect(c, Offset(0f, bodyTop), androidx.compose.ui.geometry.Size(size.width, size.height - bodyTop),
+            androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()))
+        val r = size.width * 0.3f
+        val cx = size.width / 2
+        val lift = if (locked) 0f else 3.dp.toPx()  // open: the shackle up
+        drawArc(
+            c, 180f, 180f, false, Offset(cx - r, bodyTop - r - 2.dp.toPx() - lift),
+            androidx.compose.ui.geometry.Size(2 * r, 2 * r), style = androidx.compose.ui.graphics.drawscope.Stroke(w),
         )
-        Spacer(Modifier.height(4.dp))
-        Text(bottom, color = Ui.Text, fontSize = 14.sp, style = Tabular, maxLines = 1)
+        drawLine(c, Offset(cx - r, bodyTop - 2.dp.toPx() - lift), Offset(cx - r, bodyTop), w)
+        if (locked) drawLine(c, Offset(cx + r, bodyTop - 2.dp.toPx()), Offset(cx + r, bodyTop), w)
     }
 }
 

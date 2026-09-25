@@ -28,6 +28,13 @@ struct ToneOptions {
   bool trackOffset = true;       // follow whole-frame steps (calibrations, the camera's wander)
 };
 
+// A mapping given from outside (M6's range lock: RangeLock builds one each frame from °C): the range
+// in absolute counts and the curve at its ToneMapper::kCurve + 1 even edges, in [0, 1].
+struct FixedMapping {
+  float lo = 0.0f, hi = 0.0f;
+  std::vector<float> curve;
+};
+
 class ToneMapper {
  public:
   static constexpr int kCurve = 256;  // bins across the smoothed range; the curve has kCurve + 1 edges
@@ -48,6 +55,11 @@ class ToneMapper {
   // the global offset from itself instead of from the frame before (the caller skipped frames).
   void resync() { havePrevious_ = false; }
 
+  // M6's range lock: map through [m] (no statistics, no smoothing, no offset tracking) until called
+  // with null, which goes back to the automatic mapping: the scene's own from the next frame.
+  void setFixed(const FixedMapping* m);
+  bool fixed() const { return fixed_; }
+
   // The statistics' region changed (the box moved or resized, zoom, pan): for the next seconds the
   // range and the curve follow the new statistics at once, with no deadband, converging within
   // about that time (time constants of a third of it), then the usual damping resumes.
@@ -66,6 +78,7 @@ class ToneMapper {
   std::vector<float> previous_, work_, curve_, target_;
   std::vector<uint32_t> hist_;
   bool havePrevious_ = false, haveRange_ = false, haveCurve_ = false;
+  bool fixed_ = false;  // setFixed()
   float offset_ = 0.0f;  // tracked global offset, counts
   float lo_ = 0.0f, hi_ = 0.0f;  // smoothed range of (signal - offset), counts
   float retargetS_ = 0.0f, retargetLeftS_ = 0.0f;  // retarget(): its length and what's left of it

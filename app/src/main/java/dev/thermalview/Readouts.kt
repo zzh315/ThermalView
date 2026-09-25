@@ -43,6 +43,7 @@ data class Readings(
     val scaleLoC: Float,     // the temperatures at the ends of the color mapping (NaN: none yet)
     val scaleHiC: Float,
     val scaleHiOver: Boolean,  // the mapping's top is over range
+    val locked: Boolean,       // the range is locked (M6): the ends are the lock's, adjustable
 ) {
     /** "45.3 °C" ([unit] false: "45.3°"), "> 120 °C" over range, "--" without a reading. */
     fun text(s: Spot, unit: Boolean = true): String = when {
@@ -59,6 +60,7 @@ data class Readings(
                 high = spot(0), low = spot(1), center = spot(2), highRange = a[12] > 0.5f,
                 scaleLoC = a.getOrElse(13) { Float.NaN }, scaleHiC = a.getOrElse(14) { Float.NaN },
                 scaleHiOver = a.getOrElse(15) { 0f } > 0.5f,
+                locked = a.getOrElse(16) { 0f } > 0.5f,
             )
         }
     }

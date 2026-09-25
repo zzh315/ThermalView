@@ -185,7 +185,7 @@ struct Session::Snapshot {
   // The scale bar (PLAN M5): the temperatures at the ends of stage 5's range (NaN: no mapping), and
   // whether the top one is over range.
   double scaleLoC = NAN, scaleHiC = NAN;
-  bool scaleHiOver = false;
+  bool scaleHiOver = false, scaleLocked = false;
   double lastCycleMs = 0;
   uint64_t recalDue = 0;   // the recalibration policy's dry run: how often it would have asked
   double recalAgoS = -1;   // and how long ago it last would have
@@ -1316,6 +1316,30 @@ void Session::handleFrame(const RawFrame& frame) {
       recal_.onCalibration(double(frame.arrivalNs) / 1e9, view.fpaC());
     }
 
+    // M6's range lock: the UI's requests, then this frame's mapping (through the last frame's table:
+    // this one's is built while the pipeline runs, and it moves slowly).
+    switch (rangeLockRequest_.exchange(-1)) {
+      case 1: {
+        const ToneMapper* tone = pipeline_.toneMapper();
+        if (tone && rangeLock_.lock(*tone, lut_))
+          FLOG("range locked: %.2f to %.2f C", rangeLock_.loC(), rangeLock_.hiC());
+        else
+          FLOG("range lock: nothing to lock yet");
+        break;
+      }
+      case 0:
+        if (rangeLock_.held()) FLOG("range unlocked");
+        rangeLock_.release();
+        break;
+      default:
+        break;
+    }
+    if (rangeEndsPending_.exchange(false)) {
+      std::lock_guard lock(rangeEndsMutex_);
+      rangeLock_.setEnds(pendingLoC_, pendingHiC_);
+    }
+    pipeline_.setFixedMapping(rangeLock_.held() && rangeLock_.mapping(lut_, &fixedMapping_) ? &fixedMapping_ : nullptr);
+
     DisplayFrame& out = renderer_.frameSlot();
     displayOut = &out;
     readoutDt = dt;
@@ -1328,17 +1352,13 @@ void Session::handleFrame(const RawFrame& frame) {
     // so the signal's counts are the camera's own.
     scaleLoC_ = scaleHiC_ = NAN;
     scaleHiOver_ = false;
-    if (const ToneMapper* tone = pipeline_.toneMapper()) {
-      const auto celsius = [&](double counts) {
-        if (!std::isfinite(counts)) return double(NAN);
-        const double c = std::clamp(counts, 0.0, double(TemperatureLut::kSize - 2));
-        const auto i = uint16_t(c);
-        if (!lut_.valid(i) || !lut_.valid(uint16_t(i + 1))) return double(NAN);
-        return lut_[i] + (c - i) * (lut_[uint16_t(i + 1)] - lut_[i]);
-      };
-      scaleLoC_ = celsius(tone->lowCounts());
+    if (rangeLock_.held()) {  // (the lock's own ends: what the UI adjusts)
+      scaleLoC_ = rangeLock_.loC();
+      scaleHiC_ = rangeLock_.hiC();
+    } else if (const ToneMapper* tone = pipeline_.toneMapper()) {
+      scaleLoC_ = celsiusAt(lut_, tone->lowCounts());
       scaleHiOver_ = tone->highCounts() >= clipRaw_;
-      scaleHiC_ = scaleHiOver_ ? NAN : celsius(tone->highCounts());
+      scaleHiC_ = scaleHiOver_ ? NAN : celsiusAt(lut_, tone->highCounts());
     }
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
@@ -1412,6 +1432,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.scaleLoC = scaleLoC_;
   s.scaleHiC = scaleHiC_;
   s.scaleHiOver = scaleHiOver_;
+  s.scaleLocked = rangeLock_.held();
   s.lastCycleMs = lastCycleMs_;
   s.recalDue = recalDue_;
   s.recalAgoS = recalDueNs_ ? double(frame.arrivalNs - recalDueNs_) / 1e9 : -1.0;
@@ -1665,6 +1686,20 @@ std::string Session::requestCapture(const std::string& label, bool rangePair) {
   return rangePair ? "range test started" : "capture started";
 }
 
+std::string Session::setRangeLock(bool on) {
+  rangeLockRequest_ = on ? 1 : 0;
+  return on ? "range lock requested" : "automatic range";
+}
+
+void Session::setRangeEnds(double loC, double hiC) {
+  {
+    std::lock_guard lock(rangeEndsMutex_);
+    pendingLoC_ = loC;
+    pendingHiC_ = hiC;
+  }
+  rangeEndsPending_ = true;
+}
+
 std::string Session::triggerLockout() {
   if (state_.load() != State::Running) return "not running";
   manualLockout_ = true;
@@ -1752,6 +1787,7 @@ std::vector<float> Session::readouts() {
   v.push_back(float(snapshot_->scaleLoC));
   v.push_back(float(snapshot_->scaleHiC));
   v.push_back(snapshot_->scaleHiOver ? 1.0f : 0.0f);
+  v.push_back(snapshot_->scaleLocked ? 1.0f : 0.0f);
   return v;
 }
 

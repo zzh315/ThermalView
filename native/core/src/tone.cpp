@@ -24,7 +24,34 @@ void ToneMapper::reset() {
   for (int i = 0; i <= kCurve; ++i) curve_[size_t(i)] = float(i) / float(kCurve);
 }
 
+void ToneMapper::setFixed(const FixedMapping* m) {
+  if (!m) {
+    if (fixed_) {
+      // The scene's own mapping from the next frame, as at a start (a clean cut: easing from a
+      // locked range far from the scene's would take seconds). The offset tracking carries on.
+      fixed_ = false;
+      haveRange_ = haveCurve_ = false;
+    }
+    return;
+  }
+  if (m->curve.size() != size_t(kCurve + 1) || !(m->hi > m->lo)) return;
+  fixed_ = true;
+  offset_ = 0.0f;  // absolute counts
+  lo_ = m->lo;
+  hi_ = m->hi;
+  std::copy(m->curve.begin(), m->curve.end(), curve_.begin());
+  haveRange_ = haveCurve_ = true;
+}
+
 void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, float dtS, const float* detail) {
+  if (fixed_) {
+    // The range lock: the mapping as given. The frame still counts as the previous one, so the offset
+    // tracking carries on from here when the lock ends.
+    std::copy(signal, signal + kImagePixels, previous_.begin());
+    havePrevious_ = true;
+    apply(signal, out, detail);
+    return;
+  }
   // 1. The global offset: the median frame-to-frame change over a subsample (robust to anything
   //    covering less than half the frame), accumulated.
   if (!options_.trackOffset) {

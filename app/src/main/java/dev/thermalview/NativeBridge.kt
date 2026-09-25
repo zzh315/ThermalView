@@ -52,10 +52,14 @@ object NativeBridge {
     /**
      * Shown readouts: {temp °C, x, y, flags} for high, low and center (camera pixels), then 1 if
      * the high range is active. flags: 1 = valid temperature, 2 = over range. temp is NaN if invalid.
-     * Then the scale bar: the temperatures at the ends of the color mapping (NaN: none yet) and 1 if
-     * the top one is over range. See [Readings.parse].
+     * Then the scale bar: the temperatures at the ends of the color mapping (NaN: none yet), 1 if
+     * the top one is over range, and 1 if the range is locked. See [Readings.parse].
      */
     external fun readouts(): FloatArray
+
+    /** M6's range lock: hold the colors to the temperatures they show now (on), or automatic again. */
+    external fun setRangeLock(on: Boolean): String
+    external fun setRangeEnds(loC: Float, hiC: Float)  // the locked range's ends, °C
 
     /** [n] colors (0xAARRGGBB) of a palette file (palettes/, as the display bakes it); empty if it doesn't parse. */
     external fun paletteColors(json: String, n: Int): IntArray

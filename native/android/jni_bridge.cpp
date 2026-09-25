@@ -160,6 +160,14 @@ JNIEXPORT jintArray JNICALL Java_dev_thermalview_NativeBridge_paletteColors(JNIE
   return a;
 }
 
+JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_setRangeLock(JNIEnv* env, jobject, jboolean on) {
+  return toJava(env, session().setRangeLock(bool(on)));
+}
+
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setRangeEnds(JNIEnv*, jobject, jfloat loC, jfloat hiC) {
+  session().setRangeEnds(double(loC), double(hiC));
+}
+
 JNIEXPORT jstring JNICALL Java_dev_thermalview_NativeBridge_triggerLockout(JNIEnv* env, jobject) {
   return env->NewStringUTF(session().triggerLockout().c_str());
 }
