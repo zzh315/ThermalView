@@ -236,7 +236,19 @@ void groupVariances(const NoiseTables& t, const std::vector<int>& group, int k, 
 }
 
 // Both noise models: white (tables null: every coefficient's variance sigma2) or correlated.
-void bm3dCore(const float* src, float* dst, float sigma2, const NoiseTables* tables, float scale, const Bm3dOptions& o) {
+void bm3dCore(const float* image, float* dst, float sigma2, const NoiseTables* tables, float scale, const Bm3dOptions& o) {
+  // Around the image's mean: the transforms' float rounding then scales with the scene's contrast,
+  // not its level. (At ~6000 counts a block's DC is ~48000, and its rounding flipped threshold
+  // decisions: a scene and the same scene 1000 counts warmer differed by up to 0.17 counts.) Each
+  // group's mean (its 3D DC) is kept as it is, neither thresholded nor shrunk, as it always was at
+  // the camera's levels (and in the reference package's use); centred, it would be thresholded
+  // against the image's mean and flat areas near it would snap to it.
+  double sum = 0.0;
+  for (size_t i = 0; i < kImagePixels; ++i) sum += image[i];
+  const float level = float(sum / double(kImagePixels));
+  std::vector<float> centred(kImagePixels);
+  for (size_t i = 0; i < kImagePixels; ++i) centred[i] = image[i] - level;
+  const float* src = centred.data();
   const int k = std::clamp(o.block, 2, 16);
   const int kk = k * k;
   const std::vector<float> c = dctMatrix(k), window = kaiserWindow(k, o.kaiser);
@@ -272,7 +284,7 @@ void bm3dCore(const float* src, float* dst, float sigma2, const NoiseTables* tab
         for (int j = 0; j < n; ++j) {
           float& v = g[size_t(j) * kk + q];
           const float vr = var[size_t(j) * kk + q];
-          if (v * v < lambda2 * vr) v = 0.0f;
+          if (v * v < lambda2 * vr && (q | j)) v = 0.0f;  // (the group's mean, q = j = 0, always stays: below)
           else keptVar += vr;
         }
         walshHadamard(g.data() + q, n, kk);
@@ -308,7 +320,7 @@ void bm3dCore(const float* src, float* dst, float sigma2, const NoiseTables* tab
         for (int j = 0; j < n; ++j) {
           const float b = gb[size_t(j) * kk + q];
           const float vr = var[size_t(j) * kk + q];
-          const float wf = b * b / (b * b + o.mu2 * vr);
+          const float wf = (q | j) ? b * b / (b * b + o.mu2 * vr) : 1.0f;
           g[size_t(j) * kk + q] *= wf;
           energy += double(wf) * wf * vr;
         }
@@ -317,7 +329,7 @@ void bm3dCore(const float* src, float* dst, float sigma2, const NoiseTables* tab
       aggregate(g.data(), group, k, energy > 1e-20 ? float(1.0 / energy) : 1.0f / pixelVar, c, window, num.data(),
                 den.data(), tmp.data(), o.aggregateAll);
     }
-  for (size_t i = 0; i < kImagePixels; ++i) dst[i] = num[i] / den[i];
+  for (size_t i = 0; i < kImagePixels; ++i) dst[i] = num[i] / den[i] + level;
 }
 
 }  // namespace

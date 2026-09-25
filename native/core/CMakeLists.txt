@@ -34,6 +34,7 @@ if(PROJECT_IS_TOP_LEVEL)
   add_executable(core_tests
     tests/main.cpp
     tests/test_bad_pixels.cpp
+    tests/test_bm3d.cpp
     tests/test_command_gate.cpp
     tests/test_display.cpp
     tests/test_drift.cpp
