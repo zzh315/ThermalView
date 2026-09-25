@@ -163,6 +163,8 @@ struct Session::Snapshot {
   std::string startOrderNote;
   double fps = 0, jitterMs = 0, maxIntervalMs = 0, procP95Ms = 0;
   double partP50Ms[4] = {};  // proc's parts: checks, table + lockout, pipeline, the rest
+  double stageP50Ms[tv::Pipeline::kParts] = {};  // the pipeline's (tv::Pipeline::Part)
+  double stripesP95Ms = 0.0;
   int cpu = -1;          // the processing thread's core for the last frame
   std::string perfHint;  // "ADPF 8 ms" or "no ADPF"
   double bigShare = 0;   // share of processed frames that ran on a big core
@@ -1226,6 +1228,7 @@ void Session::handleFrame(const RawFrame& frame) {
     partMs_[1].push(double(tableNs) / 1e6);
     partMs_[2].push(double(tPipe1 - tPipe0 - tableNs) / 1e6);
     partMs_[3].push(double(workNs - (tPipe1 - tPipe0) - (tChecks - t0)) / 1e6);
+    for (int k = 0; k < tv::Pipeline::kParts; ++k) stageMs_[size_t(k)].push(pipeline_.lastPartMs()[size_t(k)]);
     perfHint_.report(workNs);
     lastCpu_ = sched_getcpu();
     ++cpuFrames_;
@@ -1289,6 +1292,8 @@ void Session::handleFrame(const RawFrame& frame) {
   s.recalReason = recalReason_;
   s.procP95Ms = procMs_.percentile(95);
   for (int k = 0; k < 4; ++k) s.partP50Ms[k] = partMs_[k].percentile(50);
+  for (int k = 0; k < tv::Pipeline::kParts; ++k) s.stageP50Ms[k] = stageMs_[size_t(k)].percentile(50);
+  s.stripesP95Ms = stageMs_[tv::Pipeline::kStripes].percentile(95);
   s.cpu = lastCpu_;
   s.perfHint = perfHint_.active() ? "ADPF " + std::to_string(perfHint_.targetNs() / 1000000) + " ms" : "no ADPF";
   s.bigShare = cpuFrames_ ? double(cpuFramesBig_) / double(cpuFrames_) : 0.0;
@@ -1661,6 +1666,12 @@ std::string Session::overlayText() {
   o += format("proc p50 by part: checks %.2f  table + readouts %.2f  pipeline %.2f  rest %.2f ms   "
               "render p50: wake %.2f  draw %.2f (B-spline prefilter %.2f)  swap %.2f ms\n",
               s.partP50Ms[0], s.partP50Ms[1], s.partP50Ms[2], s.partP50Ms[3], wakeMs, drawMs, prefilterMs, swapMs);
+  o += format("pipeline p50 by stage: 1-3a %.2f  3b %.2f  3c %.2f (p95 %.2f)  4b %.2f  alongside 4b: table + readouts "
+              "%.2f, 3b learning %.2f, 3c reference %.2f  5-6 %.2f  rest %.2f ms\n",
+              s.stageP50Ms[tv::Pipeline::kEarly], s.stageP50Ms[tv::Pipeline::kDestripe],
+              s.stageP50Ms[tv::Pipeline::kStripes], s.stripesP95Ms, s.stageP50Ms[tv::Pipeline::kNoise], s.partP50Ms[1],
+              s.stageP50Ms[tv::Pipeline::kLearn], s.stageP50Ms[tv::Pipeline::kReference],
+              s.stageP50Ms[tv::Pipeline::kTone], s.stageP50Ms[tv::Pipeline::kRest]);
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
               " (size %" PRIu64 ")  overrun %" PRIu64 "  start-up %" PRIu64 "  restarts %" PRIu64 "\n",
               s.frames, s.seqGaps, s.arrivalGaps, s.rejectedSize + s.rejectedChecks, s.rejectedSize,

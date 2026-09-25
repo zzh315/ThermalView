@@ -296,4 +296,22 @@ Commands:
 
 - **Little cores:** they run the pipeline about 7–9× slower than the prime core, and with stage 6 they would miss the 20 ms latency budget.
 - **The app's thread:** with stages 1–5 on replay, the app reported processing p95 8.9 ms (PIPELINE_LOG stage 5). That is between the big-core total (~2.3 ms) and the little-core one (~12 ms), so its processing thread likely spent at least part of the time on little cores.
-- **Pinning:** since `def22ad` the processing thread pins itself to cpus 4–7, and the overlay shows its core and the share of frames on a big core. This is still to be checked in the app.
+- **Pinning:** since `def22ad` the processing thread pins itself to cpus 4–7, and the overlay shows its core and the share of frames on a big core. Checked live (2026-09-26, camera, screen on): cpus 4, 5 or 6, big 100%.
+
+### The processing thread's clock (M4, 2026-09-26, live with the camera)
+
+Commands:
+- `adb shell cat /sys/devices/system/cpu/cpu{4..7}/cpufreq/{scaling_cur_freq,scaling_governor}` while the app runs;
+- the field log's "ADPF:" lines;
+- `adb shell ls /dev/cpuctl/top-app`, `cat /proc/<app pid>/cgroup` and `uname -r`;
+- the overlay's "pipeline p50 by stage" line, against `harness perf` on a big core (`taskset 20`).
+
+| Fact | Value |
+|---|---|
+| Governor | schedutil. cpus 4–6: 710 MHz to 2419 MHz; cpu 7: to 3187 MHz. Sampled while the app streams, the app's big cores sat at 710–826 MHz between frames, sometimes 2419 |
+| ADPF | `APerformanceHint_createSession` returns null: "the device declined a session", at every start since 2026-09-25 16:06 |
+| Kernel | 4.19.157: schedtune, no uclamp (no `cpu.uclamp.*` in `/dev/cpuctl`). The app sits in `schedtune:/top-app`, `cpuset:/top-app`, whose boost only the system sets |
+| Live vs a busy loop | The same pipeline code takes ~2.5× longer in the app than in `harness perf` on a big core: stage 3c 2.8 vs 1.10 ms, stages 5–6 ~7 vs 2.4 ms |
+
+- **Why:** at 25 fps the processing thread is busy ~15 ms of every 40, so schedutil keeps the big cluster near its lowest clock, and neither of Android's hints reaches it on this ROM.
+- **So:** every millisecond of CPU work costs ~2.5 ms of latency. Budget gains come from doing less, from spreading work over cores, or from the GPU.

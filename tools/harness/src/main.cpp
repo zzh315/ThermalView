@@ -456,6 +456,7 @@ int perf(int argc, char** argv) {
   pipeline.setDriftMap(tv::loadDriftMap(driftPath));
   std::vector<float> display(tv::kImagePixels);
   std::vector<double> ms, appMs;  // the pipeline; the app's other per-frame work (checks, table, readouts)
+  std::vector<std::vector<double>> partMs(tv::Pipeline::kParts);  // the pipeline's parts
   tv::TemperatureLut lut;
   using Clock = std::chrono::steady_clock;
   auto since = [](Clock::time_point t0) { return std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); };
@@ -472,6 +473,7 @@ int perf(int argc, char** argv) {
       t0 = Clock::now();
       pipeline.process(frame.image(), display.data(), nullptr, {frame.fpaC(), frame.shutterC()});
       ms.push_back(since(t0));
+      for (int k = 0; k < tv::Pipeline::kParts; ++k) partMs[size_t(k)].push_back(pipeline.lastPartMs()[size_t(k)]);
       (void)r;
     }
   }
@@ -483,6 +485,13 @@ int perf(int argc, char** argv) {
               path.c_str(), dump.frameCount, passes, tv::describeStages(pipeline.options()).c_str(),
               pipeline.driftMap().empty() ? "none" : "loaded", at(ms, 0.5), at(ms, 0.95), ms.back(),
               at(appMs, 0.5), at(appMs, 0.95));
+  for (auto& v : partMs) std::sort(v.begin(), v.end());
+  const auto part = [&](tv::Pipeline::Part k) { return at(partMs[size_t(k)], 0.5); };
+  std::printf("  p50 by part: 1-3a %.2f  3b %.2f  3c %.2f  4b %.2f  alongside it: 3b learning %.2f, 3c reference %.2f"
+              "  5-6 %.2f  rest %.2f ms\n",
+              part(tv::Pipeline::kEarly), part(tv::Pipeline::kDestripe), part(tv::Pipeline::kStripes),
+              part(tv::Pipeline::kNoise), part(tv::Pipeline::kLearn), part(tv::Pipeline::kReference),
+              part(tv::Pipeline::kTone), part(tv::Pipeline::kRest));
   return 0;
 }
 

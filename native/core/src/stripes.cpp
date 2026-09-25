@@ -9,6 +9,7 @@ namespace tv {
 namespace {
 
 constexpr int W = kFrameWidth, H = kImageRows;
+static_assert(W % 8 == 0, "the row sums run 8 columns at a time");
 
 int reflect101(int k, int n) {
   if (n == 1) return 0;
@@ -193,10 +194,13 @@ void highPass(std::vector<float>& p, double sigma) {
 // An integer map shifted by (dx, dy) rounded to whole pixels, out(p) = in(p - d), edges reflected.
 void shiftNearest(const int* in, int* out, double dx, double dy) {
   const int ix = int(std::lround(dx)), iy = int(std::lround(dy));
+  const int lo = std::clamp(ix, 0, W), hi = std::clamp(W + ix, lo, W);  // (x - ix inside the row)
   for (int y = 0; y < H; ++y) {
     const int* row = in + size_t(reflect101(y - iy, H)) * W;
     int* o = out + size_t(y) * W;
-    for (int x = 0; x < W; ++x) o[x] = row[reflect101(x - ix, W)];
+    for (int x = 0; x < lo; ++x) o[x] = row[reflect101(x - ix, W)];
+    std::copy(row + lo - ix, row + hi - ix, o + lo);
+    for (int x = hi; x < W; ++x) o[x] = row[reflect101(x - ix, W)];
   }
 }
 
@@ -212,14 +216,20 @@ void shiftImage(const float* in, float* out, int w, int h, double dx, double dy,
   const int ix = int(std::floor(sx)), iy = int(std::floor(sy));
   const std::array<float, 4> wx = cubicWeights(sx - ix), wy = cubicWeights(sy - iy);
   scratch.resize(size_t(w) * h);
+  // (taps x + ix - 1 .. x + ix + 2: inside the row for x in [lo, hi), reflected only outside it)
+  const int lo = std::clamp(1 - ix, 0, w), hi = std::clamp(w - 2 - ix, lo, w);
   for (int y = 0; y < h; ++y) {
     const float* row = in + size_t(y) * w;
     float* o = scratch.data() + size_t(y) * w;
-    for (int x = 0; x < w; ++x) {
+    const auto edge = [&](int x) {
       const int x0 = x + ix;
       o[x] = wx[0] * row[reflect101(x0 - 1, w)] + wx[1] * row[reflect101(x0, w)] + wx[2] * row[reflect101(x0 + 1, w)] +
              wx[3] * row[reflect101(x0 + 2, w)];
-    }
+    };
+    for (int x = 0; x < lo; ++x) edge(x);
+    const float* p = row + ix - 1;
+    for (int x = lo; x < hi; ++x) o[x] = wx[0] * p[x] + wx[1] * p[x + 1] + wx[2] * p[x + 2] + wx[3] * p[x + 3];
+    for (int x = hi; x < w; ++x) edge(x);
   }
   for (int y = 0; y < h; ++y) {
     const int y0 = y + iy;
@@ -239,13 +249,24 @@ std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<
 std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<float>& scratch,
                                     std::array<double, 2> guess, double noise, double* stderror,
                                     double significance) {
+  ShiftScratch s;
+  s.tmp.swap(scratch);
+  const auto d = estimateShift(a, b, s, guess, noise, stderror, significance);
+  s.tmp.swap(scratch);
+  return d;
+}
+
+std::array<double, 2> estimateShift(const float* a, const float* b, ShiftScratch& s, std::array<double, 2> guess,
+                                    double noise, double* stderror, double significance) {
   // At half resolution and below, each level less its column and row means so stripes can't read as
   // motion. Accurate to ~0.07 px at worst (Lucas-Kanade's ~0.035 px at its finest level, half the
   // frame's; measured with exact Fourier shifts): through a pan the stripe fix does as well with it as
   // with the true motion, and a full-resolution level would cost ~1 ms more on the tablet.
-  constexpr int kLevels = 3;  // 128 x 96, 64 x 48, 32 x 24
-  std::vector<std::vector<float>> pa(kLevels), pb(kLevels);
-  std::vector<int> ws(kLevels), hs(kLevels);
+  constexpr int kLevels = ShiftScratch::kLevels;  // 128 x 96, 64 x 48, 32 x 24
+  auto& pa = s.pa;
+  auto& pb = s.pb;
+  auto& scratch = s.tmp;
+  std::array<int, kLevels> ws{}, hs{};
   pyrDown(a, W, H, pa[0], scratch);
   pyrDown(b, W, H, pb[0], scratch);
   ws[0] = (W + 1) / 2;
@@ -260,7 +281,10 @@ std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<
     unstripeLevel(pa[size_t(l)].data(), ws[size_t(l)], hs[size_t(l)]);
     unstripeLevel(pb[size_t(l)].data(), ws[size_t(l)], hs[size_t(l)]);
   }
-  std::vector<float> gx, gy, bw, sample;
+  auto& gx = s.gx;
+  auto& gy = s.gy;
+  auto& bw = s.bw;
+  auto& sample = s.sample;
   std::array<double, 2> d{guess[0] / double(2 << (kLevels - 1)), guess[1] / double(2 << (kLevels - 1))};
   for (int l = kLevels - 1; l >= 0; --l) {
     // (each level's noise: the pyramid's blur takes it down ~2x a level; residuals carry two images')
@@ -312,7 +336,7 @@ void FrameStripes::process(float* sig, const float* source, float sigma) {
   shiftImage(ref_.data(), refSensor_.data(), W, H, cum_[0], cum_[1], tmp_);
   double stderror = 0.0;
   const std::array<double, 2> delta =
-      estimateShift(refSensor_.data(), source, tmp_, {0.0, 0.0}, sigma, &stderror, o.significance);
+      estimateShift(refSensor_.data(), source, shift_, {0.0, 0.0}, sigma, &stderror, o.significance);
   lastStdError_ = float(stderror);
   // The motion since the reference began: followed, the sum of the residual shifts (cum); not
   // followed, the reference stayed put, so it's this frame's own shift.
@@ -347,46 +371,46 @@ void FrameStripes::process(float* sig, const float* source, float sigma) {
     shiftImage(ref_.data(), refSensor_.data(), W, H, cum_[0], cum_[1], tmp_);
   }
   shiftNearest(age_.data(), ageSensor_.data(), cum_[0], cum_[1]);
-  for (size_t i = 0; i < kImagePixels; ++i) diff_[i] = source[i] - refSensor_[i];
+  const float* r = refSensor_.data();
   values_.clear();
-  for (size_t i = 5; i < kImagePixels; i += 23) values_.push_back(diff_[i]);  // (a subsample: every column and row)
+  for (size_t i = 5; i < kImagePixels; i += 23) values_.push_back(source[i] - r[i]);  // (a subsample: every column and row)
   const float med = medianOf(values_);
   const float g = o.gate * sigma * 1.4f;
-  const float edge = o.edge * sigma;
-  // One pass: the shared offset off, the gate, freshness, and (a misalignment of a few hundredths of
-  // a pixel during a pan would leave a residual along a strong vertical or horizontal edge, under the
-  // gate, that its column or row would take for an offset) the edges; then each column's and row's
-  // first mean over the pixels that pass.
-  std::vector<double> colSum(W, 0.0), rowSum(H, 0.0);
-  std::vector<int> colCount(W, 0), rowCount(H, 0);
+  const float edge2 = 2.0f * (o.edge * sigma);
+  // One pass: frame - reference less the frame's shared offset (it's not a stripe), the gate,
+  // freshness, and (a misalignment of a few hundredths of a pixel during a pan would leave a residual
+  // along a strong vertical or horizontal edge, under the gate, that its column or row would take for
+  // an offset) the edges; then each column's first mean over the pixels that pass.
+  // (float sums: at most 192 values under the gate each, so the rounding stays ~1e-6 counts, and the
+  // passes vectorize across the columns)
+  std::vector<float>& colSum = colSum_;
+  std::vector<int>& colCount = colCount_;
+  colSum.assign(W, 0.0f);
+  colCount.assign(W, 0);
   size_t unchanged = 0;
-  const float* r = refSensor_.data();
   for (int y = 0; y < H; ++y) {
+    const float* sr = source + size_t(y) * W;
     float* d = diff_.data() + size_t(y) * W;
     const float* rr = r + size_t(y) * W;
     const float* up = r + size_t(y > 0 ? y - 1 : y) * W;
     const float* dn = r + size_t(y < H - 1 ? y + 1 : y) * W;
     const int* ag = ageSensor_.data() + size_t(y) * W;
     unsigned char* mk = matched_.data() + size_t(y) * W;
-    double rs = 0.0;
-    int rc = 0;
-    for (int x = 0; x < W; ++x) {
-      d[x] -= med;  // the frame's shared offset is not a stripe
-      const bool still = std::fabs(d[x]) < g;
+    const auto cell = [&](int x, int xl, int xr) {
+      float v = sr[x] - rr[x];
+      v -= med;
+      d[x] = v;
+      const bool still = std::fabs(v) < g;
       unchanged += still;
-      const int xl = x > 0 ? x - 1 : x, xr = x < W - 1 ? x + 1 : x;
-      const bool flat = std::fabs(rr[xr] - rr[xl]) < 2.0f * edge && std::fabs(dn[x] - up[x]) < 2.0f * edge;
+      const bool flat = std::fabs(rr[xr] - rr[xl]) < edge2 && std::fabs(dn[x] - up[x]) < edge2;
       const bool vote = still && flat && ag[x] >= o.fresh;
       mk[x] = vote;
-      if (vote) {
-        colSum[size_t(x)] += d[x];
-        ++colCount[size_t(x)];
-        rs += d[x];
-        ++rc;
-      }
-    }
-    rowSum[size_t(y)] = rs;
-    rowCount[size_t(y)] = rc;
+      colSum[size_t(x)] += vote ? v : 0.0f;
+      colCount[size_t(x)] += vote;
+    };
+    cell(0, 0, 1);
+    for (int x = 1; x < W - 1; ++x) cell(x, x - 1, x + 1);
+    cell(W - 1, W - 2, W - 1);
   }
   lastMatched_ = float(unchanged) / float(kImagePixels);
   if (lastMatched_ < o.lost) {  // can't follow the scene: start over from this frame
@@ -401,40 +425,47 @@ void FrameStripes::process(float* sig, const float* source, float sigma) {
   colOff_.assign(W, 0.0f);
   rowOff_.assign(H, 0.0f);
   const float band = o.band * 1.4f * sigma;
-  std::vector<float> first(W);
-  for (int x = 0; x < W; ++x) first[size_t(x)] = colCount[size_t(x)] ? float(colSum[size_t(x)] / colCount[size_t(x)]) : 0.0f;
-  std::fill(colSum.begin(), colSum.end(), 0.0);
+  std::vector<float>& first = first_;
+  first.resize(W);
+  for (int x = 0; x < W; ++x) first[size_t(x)] = colCount[size_t(x)] ? colSum[size_t(x)] / float(colCount[size_t(x)]) : 0.0f;
+  std::fill(colSum.begin(), colSum.end(), 0.0f);
   std::fill(colCount.begin(), colCount.end(), 0);
   for (int y = 0; y < H; ++y) {
     const float* d = diff_.data() + size_t(y) * W;
     const unsigned char* mk = matched_.data() + size_t(y) * W;
-    for (int x = 0; x < W; ++x)
-      if (mk[x] && std::fabs(d[x] - first[size_t(x)]) < band) {
-        colSum[size_t(x)] += d[x];
-        ++colCount[size_t(x)];
-      }
+    for (int x = 0; x < W; ++x) {
+      const bool keep = mk[x] && std::fabs(d[x] - first[size_t(x)]) < band;
+      colSum[size_t(x)] += keep ? d[x] : 0.0f;
+      colCount[size_t(x)] += keep;
+    }
   }
   for (int x = 0; x < W; ++x)
-    colOff_[size_t(x)] = colCount[size_t(x)] >= H / 2 ? float(colSum[size_t(x)] / colCount[size_t(x)]) : 0.0f;
+    colOff_[size_t(x)] = colCount[size_t(x)] >= H / 2 ? colSum[size_t(x)] / float(colCount[size_t(x)]) : 0.0f;
   for (int y = 0; y < H; ++y) {
     const float* d = diff_.data() + size_t(y) * W;
     const unsigned char* mk = matched_.data() + size_t(y) * W;
-    double s1 = 0.0, s2 = 0.0;
-    int n1 = 0, n2 = 0;
-    for (int x = 0; x < W; ++x)
-      if (mk[x]) {
-        s1 += d[x] - colOff_[size_t(x)];
-        ++n1;
+    // (8 interleaved partial sums, so the additions don't wait on each other; W is a multiple of 8)
+    float a1[8] = {}, a2[8] = {};
+    int c1[8] = {}, c2[8] = {};
+    const float* co = colOff_.data();
+    for (int x = 0; x < W; x += 8)
+      for (int k = 0; k < 8; ++k) {
+        a1[k] += mk[x + k] ? d[x + k] - co[x + k] : 0.0f;
+        c1[k] += mk[x + k];
       }
-    const float f1 = n1 ? float(s1 / n1) : 0.0f;
-    for (int x = 0; x < W; ++x) {
-      const float v = d[x] - colOff_[size_t(x)];
-      if (mk[x] && std::fabs(v - f1) < band) {
-        s2 += v;
-        ++n2;
+    const float s1 = ((a1[0] + a1[1]) + (a1[2] + a1[3])) + ((a1[4] + a1[5]) + (a1[6] + a1[7]));
+    const int n1 = c1[0] + c1[1] + c1[2] + c1[3] + c1[4] + c1[5] + c1[6] + c1[7];
+    const float f1 = n1 ? s1 / float(n1) : 0.0f;
+    for (int x = 0; x < W; x += 8)
+      for (int k = 0; k < 8; ++k) {
+        const float v = d[x + k] - co[x + k];
+        const bool keep = mk[x + k] && std::fabs(v - f1) < band;
+        a2[k] += keep ? v : 0.0f;
+        c2[k] += keep;
       }
-    }
-    rowOff_[size_t(y)] = n2 >= W / 2 ? float(s2 / n2) : 0.0f;
+    const float s2 = ((a2[0] + a2[1]) + (a2[2] + a2[3])) + ((a2[4] + a2[5]) + (a2[6] + a2[7]));
+    const int n2 = c2[0] + c2[1] + c2[2] + c2[3] + c2[4] + c2[5] + c2[6] + c2[7];
+    rowOff_[size_t(y)] = n2 >= W / 2 ? s2 / float(n2) : 0.0f;
   }
   auto zeroMean = [](std::vector<float>& v) {
     double s = 0.0;
@@ -448,11 +479,11 @@ void FrameStripes::process(float* sig, const float* source, float sigma) {
   highPass(rowOff_, o.highpass / 2.0);
   gateUsed_ = g;
   updatePending_ = true;
-  for (int y = 0; y < H; ++y)
-    for (int x = 0; x < W; ++x) {
-      const float c = std::clamp(colOff_[size_t(x)] + rowOff_[size_t(y)], -o.clamp, o.clamp);
-      sig[size_t(y) * W + x] -= c;
-    }
+  for (int y = 0; y < H; ++y) {
+    float* sg = sig + size_t(y) * W;
+    const float ro = rowOff_[size_t(y)];
+    for (int x = 0; x < W; ++x) sg[x] -= std::clamp(colOff_[size_t(x)] + ro, -o.clamp, o.clamp);
+  }
   lastCorrected_ = true;
 }
 
@@ -470,9 +501,9 @@ void FrameStripes::updateReference() {
   shiftNearest(flags_.data(), flagsScene_.data(), -cum_[0], -cum_[1]);
   const float alpha = 1.0f / std::max(options_.tauFrames, 1.0f);
   for (size_t i = 0; i < kImagePixels; ++i) {
-    if (flagsScene_[i] == 1) ref_[i] += alpha * (scene_[i] - ref_[i]);
-    else ref_[i] = scene_[i];
-    age_[i] = flagsScene_[i] == 1 ? age_[i] + 1 : 0;
+    const bool keep = flagsScene_[i] == 1;
+    ref_[i] = keep ? ref_[i] + alpha * (scene_[i] - ref_[i]) : scene_[i];
+    age_[i] = keep ? age_[i] + 1 : 0;
   }
 }
 

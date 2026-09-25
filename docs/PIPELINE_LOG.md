@@ -103,7 +103,11 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - **Moving objects:** a warm block moving across a still scene adds no streaks (unit test).
 - **Lasting change** (time-mean on − off, fine part): 0.06–0.09 counts on the real scenes.
 
-**Cost:** +0.44 ms a frame on the Mac (the whole pipeline: p50 5.12 → 5.56 ms, `harness perf`). On the tablet at full clock, the first version cost +1.6 ms (the harness). Live latency is pending: it needs the camera plugged in and the screen on.
+**Cost** (the overlay now splits the pipeline by stage):
+- **Live on the tablet** (camera, 2026-09-26): 3c costs 2.8 ms p50 (p95 3.8–4.3) before stage 4b, plus 0.45 ms alongside it. Latency p50 / p95: 15.5 / 17.7 ms off, 17.6 / 20.0–20.8 ms on. That's at the 20 ms budget, so 3c can't be approved as is.
+- **Why so much:** the app's processing runs near the big cores' lowest clock (DEVICE.md "The processing thread's clock"). In `harness perf` on a big core, 3c is 1.10 ms and stages 5–6 2.4 ms; live they take ~2.5× that.
+- **Made cheaper** (bit-identical output, then float sums that differ by one float step): 1.73 → 1.10 ms on the tablet at full clock, 0.34 → 0.22 ms on the Mac. What's left is mostly the motion estimate's pyramids (42%) and the voting passes.
+- **The rest of the budget, live:** stages 5–6 take ~7 ms, the largest part; next are 3b's learning (1.7–2.1 ms) and the temperature table and readouts (1.4–1.6 ms), both alongside stage 4b's GPU, which they already outlast.
 
 **Review:** side-by-side clips (NLM Low, 3c off | on), regenerated for `0a19f38`, local: `bench/out/clips/stage3c/` (full frames, 4×) and `bench/out/clips/stage3c_crops/` (8×). Made with `tools/py/compare_clips.py`.
 

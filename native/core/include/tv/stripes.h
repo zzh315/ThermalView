@@ -50,6 +50,12 @@ struct StripeOptions {
   float edge = 10.0f;       // x sigma per pixel: pixels on steeper gradients don't vote
 };
 
+// estimateShift's buffers, kept between calls (fresh ones every frame cost page faults on Android).
+struct ShiftScratch {
+  static constexpr int kLevels = 3;
+  std::vector<float> tmp, pa[kLevels], pb[kLevels], gx, gy, bw, sample;
+};
+
 class FrameStripes {
  public:
   explicit FrameStripes(StripeOptions options = {}) : options_(options) {}
@@ -83,6 +89,10 @@ class FrameStripes {
   std::vector<float> ref_, refSensor_, diff_, scene_, tmp_, colOff_, rowOff_, values_;
   std::vector<int> age_, ageSensor_, flags_, flagsScene_;
   std::vector<float> uncorrected_;
+  ShiftScratch shift_;
+  std::vector<float> colSum_;  // (scratch)
+  std::vector<int> colCount_;
+  std::vector<float> first_;
   float gateUsed_ = 0.0f;
   bool updatePending_ = false;
   std::vector<unsigned char> matched_;
@@ -103,6 +113,9 @@ void shiftImage(const float* in, float* out, int w, int h, double dx, double dy,
 // errors a pyramid level's first step needs before the level moves at all (0: always).
 std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<float>& scratch);
 std::array<double, 2> estimateShift(const float* a, const float* b, std::vector<float>& scratch,
+                                    std::array<double, 2> guess, double noise, double* stderror = nullptr,
+                                    double significance = 5.0);
+std::array<double, 2> estimateShift(const float* a, const float* b, ShiftScratch& scratch,
                                     std::array<double, 2> guess, double noise, double* stderror = nullptr,
                                     double significance = 5.0);
 

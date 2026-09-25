@@ -3,6 +3,7 @@
 // shape the display only; readouts always come from raw values (CLAUDE.md rule 2).
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -186,6 +187,12 @@ class Pipeline {
   };
   void setNoiseReducer(NoiseReducer reducer) { reducer_ = std::move(reducer); }
   bool lastNoiseReductionAccelerated() const { return nrAccelerated_; }
+  // The last frame's time in each part, ms (the debug overlay: where the frame budget goes). The work
+  // that runs alongside stage 4b (3b's learning, 3c's reference) has parts of its own; kNoise is 4b's
+  // own share around it (the GPU's start, the wait, the copy back; or the CPU filter). The caller's
+  // alongside work isn't counted here.
+  enum Part { kEarly, kDestripe, kStripes, kNoise, kLearn, kReference, kTone, kRest, kParts };
+  const std::array<float, kParts>& lastPartMs() const { return partMs_; }
   const StripeOptions& stripeOptionsInUse() const { return stripes_.options(); }  // (tests)
 
   // A new stream, replay start or range switch: forget every frame seen so far.
@@ -232,6 +239,7 @@ class Pipeline {
   NlmPadded nrPadded_;
   NoiseReducer reducer_;
   bool nrAccelerated_ = false;
+  std::array<float, kParts> partMs_{};
   void updateNoiseSigma(const uint16_t* image);  // before previous_ is overwritten
   void reduceNoise(float* sig, const std::function<void()>& alongside);
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts

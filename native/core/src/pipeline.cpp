@@ -1,6 +1,7 @@
 #include "tv/pipeline.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -577,11 +578,20 @@ void Pipeline::hold() {
 
 void Pipeline::process(const uint16_t* image, float* display, float* signal, FrameMeta meta,
                        const std::function<void()>& alongside) {
+  using Clock = std::chrono::steady_clock;
+  const auto msSince = [](Clock::time_point t) {
+    return std::chrono::duration<float, std::milli>(Clock::now() - t).count();
+  };
+  partMs_.fill(0.0f);
+  auto t = Clock::now();
+  float callerMs = 0.0f;  // (the caller's alongside work, inside stage 4b's call: not 4b's own time)
   bool alongsideRan = false;
   const std::function<void()> once = [&] {
     if (alongsideRan) return;
     alongsideRan = true;
+    const auto t0 = Clock::now();
     if (alongside) alongside();
+    callerMs = msSince(t0);
   };
   const size_t bytes = kImagePixels * sizeof(uint16_t);
   const bool repeat = havePrevious_ && std::memcmp(image, previous_.data(), bytes) == 0;
@@ -596,6 +606,7 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     std::copy(held_.begin(), held_.end(), display);
     if (signal) std::copy(heldSignal_.begin(), heldSignal_.end(), signal);
     once();
+    partMs_[kEarly] = msSince(t) - callerMs;
     return;
   }
 
@@ -620,9 +631,13 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     for (size_t i = 0; i < kImagePixels; ++i) sig[i] -= k * r[i];
   }
   if (options_.badPixels) replaceBadPixels(badPixels_, sig);  // stage 2
+  partMs_[kEarly] = msSince(t);
+  t = Clock::now();
   // Stage 3b: this frame's correction now; its estimate for the next frames from this corrected
   // signal later, while stage 4b's GPU works (it changes nothing in this frame).
   if (options_.destripe) applyDestripe(sig);
+  partMs_[kDestripe] = msSince(t);
+  t = Clock::now();
   // Stage 3c: this frame's column and row noise now, on 3b's output (where the persistent pattern is
   // gone, so a reference moved with the scene doesn't drag it along); its reference's update later,
   // with 3b's (3b learns from its own output before 3c's correction, and each change it makes to its
@@ -632,14 +647,17 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     after3b_.assign(sig, sig + kImagePixels);
     stripes_.process(sig, noiseSigma());
   }
+  partMs_[kStripes] = msSince(t);
   bool patternChanged = false;
   const auto learnDestripe = [&] {  // stage 3b's estimate update (and, with 3c on, what it changed)
+    const auto t0 = Clock::now();
     if (stripesRan) {
       colBefore_ = colOffset_;
       rowBefore_ = rowOffset_;
       patternChanged = true;
     }
     updateDestripe(stripesRan ? after3b_.data() : sig);
+    partMs_[kLearn] += msSince(t0);
   };
   bool destripePending = options_.destripe, stripesPending = stripesRan;
   const std::function<void()> sideWork = [&] {
@@ -649,12 +667,14 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     if (destripePending) learnDestripe();
     destripePending = false;
     if (stripesPending) {
+      const auto t0 = Clock::now();
       stripes_.updateReference();  // (toward this frame, which had 3b's old estimate taken off)
       if (patternChanged) {        // then the change 3b just made, as the next frame will have it
         for (size_t x = 0; x < colBefore_.size(); ++x) colBefore_[x] = colOffset_[x] - colBefore_[x];
         for (size_t y = 0; y < rowBefore_.size(); ++y) rowBefore_[y] = rowOffset_[y] - rowBefore_[y];
         stripes_.applyPatternChange(colBefore_, rowBefore_);
       }
+      partMs_[kReference] += msSince(t0);
     }
     stripesPending = false;
     once();
@@ -664,8 +684,11 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     destripePending = false;
     denoise(sig);
   }
+  t = Clock::now();
   if (options_.nr) reduceNoise(sig, sideWork);  // stage 4b
   sideWork();  // (if stage 4b didn't run it: off)
+  partMs_[kNoise] = std::max(0.0f, msSince(t) - partMs_[kLearn] - partMs_[kReference] - callerMs);
+  t = Clock::now();
   if (options_.tone) {
     // Stage 5. Pixels at the camera's clip (too hot to measure) stay out of the statistics.
     // So do pixels outside the measurement region.
@@ -685,6 +708,13 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
   } else {
     renderBaseline(sig, display);
   }
+  partMs_[kTone] = msSince(t);
+  t = Clock::now();
+  struct RestTimer {  // (the blend and the copies below, however the function returns)
+    float* out;
+    Clock::time_point t0;
+    ~RestTimer() { *out = std::chrono::duration<float, std::milli>(Clock::now() - t0).count(); }
+  } rest{&partMs_[kRest], t};
 
   if (!options_.shutterHold) return;
   if (resuming) {  // the first fresh frame after a cycle
