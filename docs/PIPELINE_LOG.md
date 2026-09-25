@@ -4,6 +4,36 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-25 — Stage 4b: BM3D against NLM at matched noise, on stage 3c's output (evidence; awaiting the owner)
+
+**Why:** the owner chose BM3D for detail (after "stripe fix, then BM3D"). Before a GPU port (a large job), this checks what it buys with stage 3c on, at the owner's strengths.
+
+**Known texture** (`tools/py/nr_detail.py --synthetic` on `flat` through stages 1–3c, `8a9f180`; as in the detail-loss entry below):
+
+| Filter | Noise | 0.7 px ×0.5 / ×1 / ×2 | 1 px ×0.5 / ×1 / ×2 | 2 px ×0.5 / ×1 / ×2 | Cost a frame |
+|---|---|---|---|---|---|
+| NLM 11×11, 0.8 (Low, now) | 0.56 | 0.64 / 0.80 / 0.98 | 0.69 / 0.83 / 0.97 | 0.83 / 0.89 / 0.97 | GPU ~4 ms |
+| NLM 11×11, 0.9 (Medium) | 0.42 | 0.48 / 0.65 / 0.94 | 0.56 / 0.71 / 0.94 | 0.76 / 0.83 / 0.94 | |
+| NLM 11×11, 1.1 (High) | 0.28 | 0.31 / 0.42 / 0.78 | 0.40 / 0.53 / 0.81 | 0.66 / 0.73 / 0.88 | |
+| BM3D real-time, σ ×1.0 | 0.59 | 0.67 / 0.81 / 0.93 | 0.77 / 0.88 / 0.96 | 0.92 / 0.96 / 0.99 | ~86 M operations |
+| BM3D real-time, ×1.1 | 0.51 | 0.58 / 0.75 / 0.91 | 0.71 / 0.85 / 0.95 | 0.90 / 0.95 / 0.98 | |
+| BM3D real-time, ×1.2 | 0.44 | 0.50 / 0.68 / 0.88 | 0.65 / 0.81 / 0.93 | 0.88 / 0.94 / 0.98 | |
+| BM3D, stride 4, search 7, groups 16/16, ×1.0 | 0.54 | 0.66 / 0.80 / 0.93 | 0.76 / 0.88 / 0.96 | 0.91 / 0.96 / 0.99 | ~401 M |
+| BM3D, the reference parameters, ×1.0 | 0.49 | 0.63 / 0.79 / 0.92 | 0.74 / 0.87 / 0.96 | 0.91 / 0.96 / 0.98 | ~1908 M |
+
+"Real-time" is the cost sweep's candidate: block 8, stride 6, search radius 5, groups 8/8, full groups (no match thresholds), λ 3.0, μ² 0.4.
+
+- **At Low's noise** (interpolated), BM3D keeps texture differently: 1 px +6 / +4 / −1 points, 2 px +8 / +7 / +2. The finest texture is 0 / −1 / −6: strong 0.7 px texture is where BM3D's thresholds cost.
+- **At Medium's noise:** 1 px +9 / +10 / −1, 2 px +12 / +11 / +4, 0.7 px +2 / +3 / −6.
+- **The costlier configurations** add only 3–5 points at the same noise, so the real-time one keeps most of the gain.
+- **Stage 3c changes this little:** on stages 1–3b the same filters leave ~5% more noise and keep the same texture, within 2 points.
+
+**On the real scenes** (`harness`, BM3D on the CPU at ×1.04, the strength that matches Low's noise on `flat`), BM3D leaves 5–15% less temporal noise than NLM Low: `room` 0.65 vs 0.76 counts, `keyboard` 1.02 vs 1.13, `flat_aged` 0.65 vs 0.69. Non-local means backs off in textured areas; BM3D's thresholds don't. At 8×: no blocking or ringing. BM3D is smoother inside the keys and on walls, edges and the curtain folds hold, and it leaves a faint low-frequency mottle in flat areas.
+
+**Review:** side-by-side clips (stage 3c on in both; NLM Low | BM3D ×1.04), local: `bench/out/clips/bm3d_low/` (full frames, 4×) and `bench/out/clips/bm3d_low_crops/` (8×).
+
+**Verdict:** pending. The owner's call is whether this is worth the GPU port (the matching, 3D transforms and aggregation as compute shaders; its cost on the Adreno is unmeasured).
+
 ## 2026-09-25 — Stage 3c: the per-frame column and row noise (preview, `0a19f38`; awaiting the owner's second look)
 
 **Why:** the owner chose "stripe fix, then BM3D".
