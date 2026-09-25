@@ -32,6 +32,10 @@ struct PipelineOptions {
   // cycle would ghost through it.
   bool shutterHold = true;
   int shutterBlendFrames = 0;
+  // The camera's first fresh frame after a cycle carries strong column streaks the next ones don't
+  // (PIPELINE_LOG, stage 1): that many fresh frames after a cycle seen in the frames are held over
+  // too (after hold(), the app has already waited out a run of fresh frames).
+  int shutterSkipFrames = 1;
 
   // Stage 2 (approved 2026-09-25): replace the camera's known bad pixels (setBadPixels) for
   // display, from their good neighbours, before anything else sees them.
@@ -139,7 +143,8 @@ struct FrameMeta {
 
 // Stage settings as text, shared by the harness (--pipeline) and the app's debug options: a
 // comma-separated list applied on top of the defaults. "default" changes nothing; "shutter" or
-// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade; "badPixels" / "badPixels=0"
+// "shutter=0" switches stage 1; "shutterBlend=N" sets its crossfade, "shutterSkip=N" the fresh frames
+// it holds over; "badPixels" / "badPixels=0"
 // switches stage 2; "drift" / "drift=0" switches stage 3's compensation, "driftScale=X" and
 // "driftC0=X" tune it; "destripe" / "destripe=0" switches stage 3b, "destripeTau=X",
 // "destripeGate=X" and "destripeClamp=X" tune it; "denoise" / "denoise=0" switches stage 4,
@@ -224,6 +229,7 @@ class Pipeline {
 
   // True while the camera repeats one frame, or after hold() until the next frame (stage 1 on).
   bool frozen() const { return frozen_; }
+  bool skipping() const { return skipLeft_ > 0; }
   bool blending() const { return blendLeft_ > 0; }
 
  private:
@@ -263,6 +269,7 @@ class Pipeline {
   bool havePrevious_ = false;
   bool frozen_ = false;
   int blendLeft_ = 0, blendTotal_ = 0;
+  int skipLeft_ = 0;  // stage 1: fresh frames after a cycle still to hold over
 };
 
 }  // namespace tv

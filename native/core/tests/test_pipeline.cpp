@@ -43,10 +43,39 @@ TEST_CASE("with every stage off the pipeline equals the baseline") {
   }
 }
 
-TEST_CASE("stage 1 holds the last output through repeated frames, then crossfades back") {
+TEST_CASE("stage 1 holds through repeated frames and the first fresh one, then cuts to the next") {
+  tv::PipelineOptions o = allOff();
+  o.shutterHold = true;  // the defaults: no crossfade (owner, 2026-09-26: no afterimages), one frame skipped
+  CHECK(o.shutterBlendFrames == 0);
+  CHECK(o.shutterSkipFrames == 1);
+  tv::Pipeline p(o);
+  std::vector<float> out(tv::kImagePixels), held(tv::kImagePixels), live(tv::kImagePixels);
+
+  const auto before = image(5000, 1);
+  p.process(before.data(), out.data());
+  held = out;
+  for (int k = 0; k < 30; ++k) {  // the shutter cycle
+    p.process(before.data(), out.data());
+    CHECK(p.frozen());
+    CHECK(out == held);
+  }
+  const auto streaky = image(4000, 2);  // the camera's first fresh frame: held over
+  p.process(streaky.data(), out.data());
+  CHECK(p.frozen());
+  CHECK(out == held);
+  const auto fresh = image(4960, 3);  // then straight to the next one, nothing of the held image left
+  p.process(fresh.data(), out.data());
+  CHECK_FALSE(p.frozen());
+  CHECK_FALSE(p.blending());
+  tv::renderBaseline(fresh.data(), live.data());
+  CHECK(out == live);
+}
+
+TEST_CASE("stage 1's crossfade, if asked for: the held output fades out over its frames") {
   tv::PipelineOptions o = allOff();
   o.shutterHold = true;
   o.shutterBlendFrames = 4;
+  o.shutterSkipFrames = 0;
   tv::Pipeline p(o);
   std::vector<float> out(tv::kImagePixels), held(tv::kImagePixels), live(tv::kImagePixels);
 
@@ -117,7 +146,7 @@ TEST_CASE("reset forgets the previous frame, so a repeat right after it isn't a 
 TEST_CASE("hold(): the next frame crossfades from the last output, as after a cycle in the frames") {
   tv::PipelineOptions o = allOff();
   o.shutterHold = true;
-  o.shutterBlendFrames = 2;
+  o.shutterBlendFrames = 2;  // (hold() skips nothing: the app has already waited out fresh frames)
   tv::Pipeline p(o);
   std::vector<float> out(tv::kImagePixels), held(tv::kImagePixels), live(tv::kImagePixels);
   const auto a = image(5000, 20), b = image(4900, 21);
@@ -139,15 +168,15 @@ TEST_CASE("stage settings as text") {
   CHECK_FALSE(o.shutterHold);
   CHECK(tv::describeStages(o) == "none");
   CHECK(tv::parseStages("shutter,shutterBlend=12", &o));
-  CHECK(tv::describeStages(o) == "shutter(12)");
+  CHECK(tv::describeStages(o) == "shutter(12,skip1)");
   CHECK(tv::parseStages("badPixels", &o));
-  CHECK(tv::describeStages(o) == "shutter(12),badPixels");
+  CHECK(tv::describeStages(o) == "shutter(12,skip1),badPixels");
   CHECK(tv::parseStages("drift,destripe", &o));
-  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe");
+  CHECK(tv::describeStages(o) == "shutter(12,skip1),drift(x0.90),badPixels,destripe");
   CHECK(tv::parseStages("denoise", &o));
-  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,denoise(k0.25)");
+  CHECK(tv::describeStages(o) == "shutter(12,skip1),drift(x0.90),badPixels,destripe,denoise(k0.25)");
   CHECK(tv::parseStages("denoise=0,nr", &o));
-  CHECK(tv::describeStages(o) == "shutter(12),drift(x0.90),badPixels,destripe,nr(h0.80)");
+  CHECK(tv::describeStages(o) == "shutter(12,skip1),drift(x0.90),badPixels,destripe,nr(h0.80)");
   CHECK_FALSE(tv::parseStages("bogus", &o));
 }
 

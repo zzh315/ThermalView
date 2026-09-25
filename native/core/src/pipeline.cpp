@@ -26,6 +26,8 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->shutterHold = on;
     } else if (key == "shutterBlend" && !value.empty()) {
       o->shutterBlendFrames = std::atoi(value.c_str());
+    } else if (key == "shutterSkip" && !value.empty()) {
+      o->shutterSkipFrames = std::clamp(std::atoi(value.c_str()), 0, 25);
     } else if (key == "badPixels") {
       o->badPixels = on;
     } else if (key == "drift") {
@@ -175,7 +177,8 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
 std::string describeStages(const PipelineOptions& o) {
   std::string s;
   auto add = [&s](const std::string& item) { s += (s.empty() ? "" : ",") + item; };
-  if (o.shutterHold) add("shutter(" + std::to_string(o.shutterBlendFrames) + ")");
+  if (o.shutterHold)
+    add("shutter(" + std::to_string(o.shutterBlendFrames) + (o.shutterSkipFrames ? ",skip" + std::to_string(o.shutterSkipFrames) : "") + ")");
   if (o.drift) add("drift(x" + std::to_string(o.driftScale).substr(0, 4) + ")");
   if (o.badPixels) add("badPixels");
   if (o.destripe) add("destripe");
@@ -289,6 +292,7 @@ void Pipeline::reset() {
   nrSigma_ = 0.0f;
   frozen_ = false;
   blendLeft_ = blendTotal_ = 0;
+  skipLeft_ = 0;
   restartDestripe();
   stripes_.reset();
   haveFiltered_ = false;
@@ -617,6 +621,17 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     // A shutter cycle (M1: 30-31 repeats of one image): the camera's noise makes an accidental exact
     // repeat impossible. Show what was last shown and leave every stage's state alone.
     frozen_ = true;
+    skipLeft_ = std::max(0, options_.shutterSkipFrames);
+    std::copy(held_.begin(), held_.end(), display);
+    if (signal) std::copy(heldSignal_.begin(), heldSignal_.end(), signal);
+    once();
+    partMs_[kEarly] = msSince(t) - callerMs;
+    return;
+  }
+  if (options_.shutterHold && frozen_ && skipLeft_ > 0) {
+    // The cycle's first fresh frame(s): the camera's first carries strong column streaks the next ones
+    // don't, so it's held over too, and no stage learns from it.
+    --skipLeft_;
     std::copy(held_.begin(), held_.end(), display);
     if (signal) std::copy(heldSignal_.begin(), heldSignal_.end(), signal);
     once();
