@@ -9,16 +9,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -39,10 +36,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.io.File
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 
 enum class Page(val title: String) {
     Main("Settings"),
@@ -112,62 +106,12 @@ fun SettingsPanel(
     }
 
     if (choosingReplay) {
-        var dumps by remember { mutableStateOf<List<DumpEntry>?>(null) }
-        LaunchedEffect(dumpsDir) { dumps = withContext(Dispatchers.IO) { listDumps(dumpsDir) } }
-        AlertDialog(
-            onDismissRequest = { choosingReplay = false },
-            confirmButton = { TextButton(onClick = { choosingReplay = false }) { Text("Cancel") } },
-            title = { Text("Replay a recording") },
-            text = {
-                val list = dumps
-                when {
-                    list == null -> Text("Reading the recordings…")
-                    list.isEmpty() -> Text("No recordings in $dumpsDir")
-                    else -> LazyColumn(Modifier.heightIn(max = 460.dp)) {
-                        items(list) { d ->
-                            Row(
-                                Modifier.fillMaxWidth().clickable {
-                                    choosingReplay = false
-                                    val error = NativeBridge.startReplay(d.base)
-                                    say(if (error.isEmpty()) "Replaying ${d.title}" else "Replay: $error")
-                                }.padding(vertical = 8.dp, horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RowText(d.title, d.note, Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-            },
-        )
+        RecordingsDialog(dumpsDir, onDismiss = { choosingReplay = false }, onReplay = { e ->
+            choosingReplay = false
+            val error = NativeBridge.startReplay(e.base)
+            say(if (error.isEmpty()) "Replaying ${e.title}" else "Replay: $error")
+        }, say = say)
     }
-}
-
-/** A recording in the dumps folder, as the replay list shows it. */
-private class DumpEntry(val base: String, val title: String, val note: String)
-
-/**
- * The recordings, newest first: each by its date and time (from its name, dump_YYYYMMDD_HHMMSS),
- * with its length and source from the sidecar JSON.
- */
-private fun listDumps(dir: String): List<DumpEntry> {
-    val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
-    val shown = java.text.SimpleDateFormat("EEE d MMM, HH:mm:ss", java.util.Locale.getDefault())
-    return File(dir).listFiles { f -> f.name.endsWith(".raw") }.orEmpty()
-        .sortedByDescending { it.name }
-        .map { raw ->
-            val base = raw.path.removeSuffix(".raw")
-            val name = raw.name.removeSuffix(".raw")
-            val date = runCatching { stamp.parse(name.removePrefix("dump_")) }.getOrNull()
-            val meta = runCatching { org.json.JSONObject(File("$base.json").readText()) }.getOrNull()
-            val frames = meta?.optInt("frame_count", 0)?.takeIf { it > 0 }
-            val note = listOfNotNull(
-                frames?.let { "$it frames (%.0f s)".format(it / 25.0) },
-                meta?.optString("source")?.takeIf { it.isNotEmpty() && it != "camera" },
-                if (date != null) name else null,
-            ).joinToString(" · ")
-            DumpEntry(base, date?.let { shown.format(it) } ?: name, note)
-        }
 }
 
 // --- The pages -------------------------------------------------------------------------------------
@@ -274,11 +218,16 @@ private fun CameraPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit,
 @Composable
 private fun RecordingPage(options: DebugOptions, onOptions: (DebugOptions) -> Unit, say: (String) -> Unit, chooseReplay: () -> Unit) {
     Text(
-        "To record, use Capture on the right bar: the mode above it (or a long press) picks what it does.",
+        "To record, use Capture on the right bar: the mode above it (or a long press) picks what it does. " +
+            "A replay pauses the camera; Exit replay on the left bar goes back to it.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
     )
-    Section("Replay")
-    ActionRow("Replay a recording…", "Runs the pipeline on it, no camera needed") { chooseReplay() }
+    Section("Recordings")
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        FilledTonalButton(onClick = chooseReplay, modifier = Modifier.fillMaxWidth()) {
+            Text("Recordings: replay or delete", fontSize = 15.sp)
+        }
+    }
     Section("Logging")
     SwitchRow("Stats CSV", "A row of statistics per frame", options.statsCsv) { onOptions(options.copy(statsCsv = it)) }
     SwitchRow("Record lockouts", "Dumps the frames around each over-range lockout", options.dumpOnLockout) {
