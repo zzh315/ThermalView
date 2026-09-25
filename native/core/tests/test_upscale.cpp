@@ -96,3 +96,18 @@ TEST_CASE("EASU stays within each sample's 4 nearest pixels and keeps a flat fie
   CHECK(*std::max_element(out.begin(), out.end()) == doctest::Approx(0.4f));
   CHECK(*std::min_element(out.begin(), out.end()) == doctest::Approx(0.4f));
 }
+
+TEST_CASE("the fast B-spline prefilter matches the line-by-line double version") {
+  std::vector<float> img(tv::kImagePixels), fast(tv::kImagePixels), ref(tv::kImagePixels);
+  uint32_t seed = 3;
+  for (size_t i = 0; i < img.size(); ++i) {  // display intensities: noise, a step and a ramp
+    seed = seed * 1664525u + 1013904223u;
+    const int x = int(i % tv::kFrameWidth), y = int(i / tv::kFrameWidth);
+    img[i] = 0.02f * float(seed >> 24) / 255.0f + (x > 100 ? 0.6f : 0.1f) + 0.001f * float(y);
+  }
+  tv::bsplineCoefficients(img.data(), fast.data());
+  tv::bsplineCoefficientsReference(img.data(), ref.data());
+  float worst = 0.0f;
+  for (size_t i = 0; i < img.size(); ++i) worst = std::max(worst, std::fabs(fast[i] - ref[i]));
+  CHECK(worst < 1e-5f);
+}

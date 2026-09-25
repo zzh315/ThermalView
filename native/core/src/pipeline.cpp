@@ -194,22 +194,26 @@ void Pipeline::updateNoiseSigma(const uint16_t* image) {
   nrSigma_ = current + 0.02f * (reading - current);  // ~2 s at 25 fps
 }
 
-void Pipeline::reduceNoise(float* sig) {
+void Pipeline::reduceNoise(float* sig, const std::function<void()>& alongside) {
   const float sigma = options_.nrSigma > 0.0f ? options_.nrSigma : noiseSigma();
   const float h = options_.nrStrength * sigma;
-  if (reducer_) {
+  const bool accelerator = reducer_.start && reducer_.finish;
+  nrAccelerated_ = false;
+  if (accelerator && reducer_.start(sig, options_.nrSearch, options_.nrPatch, h)) {
+    alongside();  // while it runs
     nrOut_.resize(kImagePixels);
-    nrAccelerated_ = reducer_(sig, nrOut_.data(), options_.nrSearch, options_.nrPatch, h);
+    nrAccelerated_ = reducer_.finish(nrOut_.data());
     if (nrAccelerated_) {
       std::copy(nrOut_.begin(), nrOut_.end(), sig);
       return;
     }
   }
+  alongside();  // before the CPU filter changes sig in place
   // The CPU: at most nrFallbackSearch when an accelerator failed (the full search would miss the
   // frame budget), h scaled to keep the noise reduction (nr_study: 5x5 search at 1.27x h ~ 11x11).
   int search = options_.nrSearch;
   float hh = h;
-  if (reducer_ && search > options_.nrFallbackSearch) {
+  if (accelerator && search > options_.nrFallbackSearch) {
     hh = h * (1.0f + 0.09f * float(search - options_.nrFallbackSearch));
     search = options_.nrFallbackSearch;
   }
@@ -233,14 +237,17 @@ void Pipeline::restartDestripe() {
   destripeFrames_ = 0;
 }
 
-void Pipeline::destripe(float* sig) {
+void Pipeline::applyDestripe(float* sig) {
   const int w = kFrameWidth, h = kImageRows;
   for (int y = 0; y < h; ++y) {
     float* row = sig + size_t(y) * w;
     const float r = rowOffset_[size_t(y)];
     for (int x = 0; x < w; ++x) row[x] -= colOffset_[size_t(x)] + r;
   }
+}
 
+void Pipeline::updateDestripe(const float* sig) {
+  const int w = kFrameWidth, h = kImageRows;
   // Each pixel's residual against its 8 nearest neighbours along one axis (fewer at the borders),
   // kept only when it and the steps to its two neighbours stay under the gate: real edges drop
   // out. Row-major passes with sliding sums, no per-pixel buffers.
@@ -505,7 +512,14 @@ void Pipeline::hold() {
   if (options_.shutterHold && havePrevious_) frozen_ = true;
 }
 
-void Pipeline::process(const uint16_t* image, float* display, float* signal, FrameMeta meta) {
+void Pipeline::process(const uint16_t* image, float* display, float* signal, FrameMeta meta,
+                       const std::function<void()>& alongside) {
+  bool alongsideRan = false;
+  const std::function<void()> once = [&] {
+    if (alongsideRan) return;
+    alongsideRan = true;
+    if (alongside) alongside();
+  };
   const size_t bytes = kImagePixels * sizeof(uint16_t);
   const bool repeat = havePrevious_ && std::memcmp(image, previous_.data(), bytes) == 0;
   if (options_.nr && havePrevious_ && !repeat && !frozen_) updateNoiseSigma(image);  // stage 4b's sigma
@@ -518,6 +532,7 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     frozen_ = true;
     std::copy(held_.begin(), held_.end(), display);
     if (signal) std::copy(heldSignal_.begin(), heldSignal_.end(), signal);
+    once();
     return;
   }
 
@@ -541,9 +556,22 @@ void Pipeline::process(const uint16_t* image, float* display, float* signal, Fra
     for (size_t i = 0; i < kImagePixels; ++i) sig[i] -= k * r[i];
   }
   if (options_.badPixels) replaceBadPixels(badPixels_, sig);  // stage 2
-  if (options_.destripe) destripe(sig);                       // stage 3b
-  if (options_.denoise) denoise(sig);                         // stage 4 (removed: off)
-  if (options_.nr) reduceNoise(sig);                          // stage 4b
+  // Stage 3b: this frame's correction now; its estimate for the next frames from this corrected
+  // signal later, while stage 4b's GPU works (it changes nothing in this frame).
+  if (options_.destripe) applyDestripe(sig);
+  bool destripePending = options_.destripe;
+  const std::function<void()> sideWork = [&] {
+    if (destripePending) updateDestripe(sig);
+    destripePending = false;
+    once();
+  };
+  if (options_.denoise) {  // stage 4 (removed: off) changes sig in place, so the estimate goes first
+    if (destripePending) updateDestripe(sig);
+    destripePending = false;
+    denoise(sig);
+  }
+  if (options_.nr) reduceNoise(sig, sideWork);  // stage 4b
+  sideWork();  // (if stage 4b didn't run it: off)
   if (options_.tone) {
     // Stage 5. Pixels at the camera's clip (too hot to measure) stay out of the statistics.
     // So do pixels outside the measurement region.

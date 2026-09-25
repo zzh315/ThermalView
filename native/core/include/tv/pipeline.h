@@ -153,10 +153,15 @@ class Pipeline {
   double lastDriftC() const { return lastDriftC_; }  // the drift the last frame was compensated for
   float noiseSigma() const { return nrSigma_ > 0.0f ? nrSigma_ : options_.nrNominalSigma; }  // stage 4b's, counts
 
-  // Stage 4b's accelerator (the app's GPU version): filters src into dst (kImagePixels counts) with
-  // the same non-local means, or returns false, and this CPU version runs instead, at a search
-  // radius of at most nrFallbackSearch (h scaled to keep the strength, as measured).
-  using NoiseReducer = std::function<bool(const float* src, float* dst, int searchRadius, int patchRadius, float h)>;
+  // Stage 4b's accelerator (the app's GPU version), in two steps so the caller can work while it
+  // runs: start begins filtering src (kImagePixels counts, which stays untouched until finish) with
+  // the same non-local means, finish waits for the result. Either returning false means it isn't
+  // available, and this CPU version runs instead, at a search radius of at most nrFallbackSearch
+  // (h scaled to keep the strength, as measured).
+  struct NoiseReducer {
+    std::function<bool(const float* src, int searchRadius, int patchRadius, float h)> start;
+    std::function<bool(float* dst)> finish;
+  };
   void setNoiseReducer(NoiseReducer reducer) { reducer_ = std::move(reducer); }
   bool lastNoiseReductionAccelerated() const { return nrAccelerated_; }
 
@@ -171,7 +176,10 @@ class Pipeline {
 
   // One 256x192 camera image in; display intensity in [0, 1] out (kImagePixels floats). signal, if
   // given, receives the value tone mapping started from, in raw counts (for the harness's °C metrics).
-  void process(const uint16_t* image, float* display, float* signal = nullptr, FrameMeta meta = {});
+  // alongside, if given, runs exactly once during the call: while the accelerator filters (the app's
+  // temperature work overlaps the GPU, as does stage 3b's estimate update), else before stage 4b.
+  void process(const uint16_t* image, float* display, float* signal = nullptr, FrameMeta meta = {},
+               const std::function<void()>& alongside = {});
 
   // The caller has stopped feeding frames through a shutter cycle it knows about (the app discards
   // frames while its own 0x8000 or a lockout runs): the next frame crossfades from the last output,
@@ -202,11 +210,12 @@ class Pipeline {
   NoiseReducer reducer_;
   bool nrAccelerated_ = false;
   void updateNoiseSigma(const uint16_t* image);  // before previous_ is overwritten
-  void reduceNoise(float* sig);
+  void reduceNoise(float* sig, const std::function<void()>& alongside);
   float sigmaD_ = 0.0f;  // stage 4's noise level of the pooled difference, counts
   void denoise(float* sig);
   int destripeFrames_ = 0;                    // frames since stage 3b last started over
-  void destripe(float* sig);
+  void applyDestripe(float* sig);          // this frame's correction
+  void updateDestripe(const float* sig);   // the estimate for the next frames, from the corrected signal
   void restartDestripe();
   std::vector<float> work_;  // the signal, when the caller doesn't ask for it
   std::vector<uint16_t> previous_;

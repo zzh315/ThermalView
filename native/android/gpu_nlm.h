@@ -26,14 +26,23 @@ class GpuNlm {
   GpuNlm& operator=(const GpuNlm&) = delete;
   ~GpuNlm() { release(); }
 
-  // src -> dst, kImagePixels counts each (the pipeline's NoiseReducer; radii clamped as the CPU's).
+  // The pipeline's NoiseReducer, kImagePixels counts in and out (radii clamped as the CPU's):
+  // start uploads src and dispatches (src can change once it returns), and the GPU works while the
+  // caller does; finish waits for the result and copies it into dst. run is both at once.
   // pixelsPerThread 0: the default. False: not available.
-  bool run(const float* src, float* dst, int searchRadius, int patchRadius, float h, int pixelsPerThread = 0);
+  bool start(const float* src, int searchRadius, int patchRadius, float h, int pixelsPerThread = 0);
+  bool finish(float* dst);
+  bool run(const float* src, float* dst, int searchRadius, int patchRadius, float h, int pixelsPerThread = 0) {
+    return start(src, searchRadius, patchRadius, h, pixelsPerThread) && finish(dst);
+  }
   void release();
 
   bool failed() const { return failed_; }                 // it won't run again (status() says why)
   const std::string& status() const { return status_; }  // "GPU (renderer)" once working, else why not
-  double lastMs() const { return lastMs_; }              // the last run: upload to read-back
+  // The last run, ms: its own calls (upload and dispatch, then waiting and copying; not the caller's
+  // work in between), and those phases: upload, dispatch, wait (the map), copy.
+  double lastMs() const { return lastMs_; }
+  const double* lastPhasesMs() const { return phasesMs_; }
 
   static constexpr int kDefaultPixelsPerThread = 2;
 
@@ -49,6 +58,8 @@ class GpuNlm {
   bool failed_ = false;
   std::string status_ = "not started";
   double lastMs_ = 0;
+  double phasesMs_[4] = {};
+  bool started_ = false;
   EGLDisplay display_ = EGL_NO_DISPLAY;
   EGLContext context_ = EGL_NO_CONTEXT;
   EGLSurface surface_ = EGL_NO_SURFACE;

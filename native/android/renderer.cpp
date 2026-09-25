@@ -1,5 +1,7 @@
 #include "renderer.h"
 
+#include <pthread.h>
+
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -157,6 +159,7 @@ void Renderer::publishFrame() {
   {
     std::lock_guard lock(mutex_);  // so the render thread can't miss the wake-up
     frames_.publish();
+    publishNs_ = nowNs();
   }
   wake_.notify_one();
 }
@@ -232,7 +235,16 @@ double Renderer::latencyP95Ms() const {
   return latencyMs_.percentile(95);
 }
 
+void Renderer::renderPartsP50Ms(double* wake, double* draw, double* swap, double* prefilter) const {
+  std::lock_guard lock(mutex_);
+  *prefilter = prefilterWindowMs_.percentile(50);
+  *wake = wakeMs_.percentile(50);
+  *draw = drawMs_.percentile(50);
+  *swap = swapMs_.percentile(50);
+}
+
 void Renderer::loop() {
+  pthread_setname_np(pthread_self(), "tv-render");
   if (!initDisplay()) {
     LOGE("renderer: EGL init failed");
   }
@@ -254,6 +266,7 @@ void Renderer::loop() {
       doClear = clearPending_;
       clearPending_ = false;
       haveNew = frames_.acquire();
+      if (haveNew) wakeMs_.push(double(nowNs() - publishNs_) / 1e6);
     }
     if (doSwitch) {
       switchSurface(newWindow);
@@ -267,7 +280,9 @@ void Renderer::loop() {
     if (haveNew) haveFrame_ = true;
     if (surface_ == EGL_NO_SURFACE || !(doSwitch || doClear || haveNew)) continue;
 
+    const int64_t tDraw = nowNs();
     draw(frames_.readSlot(), haveFrame_);
+    const int64_t tDrawn = nowNs();
     std::string readback, readbackPalette;
     int upscaler = 0;
     if (haveFrame_ && program_) {
@@ -277,11 +292,16 @@ void Renderer::loop() {
       upscaler = upscaler_;
     }
     if (!readback.empty()) saveReadback(frames_.readSlot(), readback, readbackPalette, upscaler);
+    const int64_t tSwap = nowNs();
     eglSwapBuffers(display_, surface_);
     if (haveNew) {
-      const double ms = double(nowNs() - frames_.readSlot().arrivalNs) / 1e6;
+      const int64_t tSwapped = nowNs();
+      const double ms = double(tSwapped - frames_.readSlot().arrivalNs) / 1e6;
       std::lock_guard lock(mutex_);
       latencyMs_.push(ms);
+      drawMs_.push(double(tDrawn - tDraw) / 1e6);
+      prefilterWindowMs_.push(prefilterMs_);
+      swapMs_.push(double(tSwapped - tSwap) / 1e6);
       ++drawn_;
     }
   }
@@ -457,7 +477,9 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_FLOAT, frame.intensity.data());
   if (upscaler == 1) {
+    const int64_t t0 = nowNs();
     bsplineCoefficients(frame.intensity.data(), coeffs_.data());
+    prefilterMs_ = double(nowNs() - t0) / 1e6;
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, coeffTexture_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RED, GL_FLOAT, coeffs_.data());

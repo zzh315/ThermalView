@@ -68,6 +68,9 @@ class Renderer {
 
   double latencyP50Ms() const;
   double latencyP95Ms() const;
+  // The render thread's part of the latency, p50 ms: publish to wake-up, the draw calls (of them, the
+  // B-spline prefilter on the CPU), the swap.
+  void renderPartsP50Ms(double* wake, double* draw, double* swap, double* prefilter) const;
   uint64_t framesDrawn() const { return drawn_.load(); }
 
  private:
@@ -111,6 +114,9 @@ class Renderer {
   std::atomic<float> mirrorX_{1.0f}, mirrorY_{1.0f};
 
   RollingWindow latencyMs_{250};
+  RollingWindow wakeMs_{250}, drawMs_{250}, swapMs_{250}, prefilterWindowMs_{250};  // under mutex_
+  double prefilterMs_ = 0;                                  // render thread
+  int64_t publishNs_ = 0;                                   // under mutex_
   std::atomic<uint64_t> drawn_{0};
 };
 

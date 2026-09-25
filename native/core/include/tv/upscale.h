@@ -33,8 +33,10 @@ struct ViewRect {
 std::vector<float> kernelInput(const float* image, Kernel kernel);
 
 // The cardinal B-spline's coefficients of a kFrameWidth x kImageRows image, into coeffs (same
-// size; may not alias image): what the GPU's B-spline samples.
+// size; may not alias image): what the GPU's B-spline samples. Float, whole rows at a time;
+// bsplineCoefficientsReference is the same filter line by line in double (tests).
 void bsplineCoefficients(const float* image, float* coeffs);
+void bsplineCoefficientsReference(const float* image, float* coeffs);
 
 // Renders input (kernelInput of a kFrameWidth x kImageRows image) at dstW x dstH output pixels
 // covering rect. Output pixel (i, j) samples camera coordinate rect.x + (i + 0.5) * rect.w / dstW

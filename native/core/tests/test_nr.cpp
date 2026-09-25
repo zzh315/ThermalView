@@ -1,9 +1,13 @@
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <random>
+#include <functional>
+#include <string>
 #include <vector>
 
 #include "doctest.h"
+#include "tv/filters.h"
 #include "tv/pipeline.h"
 
 // Stage 4b: spatial noise reduction (non-local means), and its noise-sigma estimate.
@@ -121,24 +125,103 @@ TEST_CASE("stage 4b uses the accelerator when it works, and the CPU when it does
   tv::Pipeline p(o);
   std::vector<float> d(tv::kImagePixels), s(tv::kImagePixels);
   const auto img = scene(rng, 1.5f);
-  int calls = 0;
-  p.setNoiseReducer([&](const float*, float* dst, int sr, int pr, float h) {
-    ++calls;
+  int starts = 0, finishes = 0, alongside = 0;
+  std::vector<std::string> order;
+  tv::Pipeline::NoiseReducer gpu;
+  gpu.start = [&](const float*, int sr, int pr, float h) {
+    ++starts;
+    order.push_back("start");
     CHECK(sr == o.nrSearch);
     CHECK(pr == o.nrPatch);
     CHECK(h == doctest::Approx(o.nrStrength * 1.5f));
+    return true;
+  };
+  gpu.finish = [&](float* dst) {
+    ++finishes;
+    order.push_back("finish");
     std::fill(dst, dst + tv::kImagePixels, 1234.0f);  // recognisable
     return true;
-  });
-  p.process(img.data(), d.data(), s.data());
-  CHECK(calls == 1);
+  };
+  p.setNoiseReducer(gpu);
+  const std::function<void()> work = [&] {
+    ++alongside;
+    order.push_back("alongside");
+  };
+  p.process(img.data(), d.data(), s.data(), {}, work);
+  CHECK(starts == 1);
+  CHECK(finishes == 1);
+  CHECK(alongside == 1);
+  CHECK(order == std::vector<std::string>{"start", "alongside", "finish"});  // the work overlaps the GPU
   CHECK(p.lastNoiseReductionAccelerated());
   CHECK(s[1000] == 1234.0f);
   // A failing accelerator: the CPU filters (the signal is no longer the fake value, and smoother).
-  p.setNoiseReducer([&](const float*, float*, int, int, float) { return false; });
-  p.process(img.data(), d.data(), s.data());
-  CHECK_FALSE(p.lastNoiseReductionAccelerated());
-  const size_t flat = size_t(10) * W + 20;  // in the flat third
-  CHECK(s[flat] != 1234.0f);
-  CHECK(std::fabs(s[flat] - 6000.0f) < 3.0f);
+  for (bool failAtStart : {true, false}) {
+    CAPTURE(failAtStart);
+    tv::Pipeline::NoiseReducer broken;
+    broken.start = [&](const float*, int, int, float) { return !failAtStart; };
+    broken.finish = [&](float*) { return false; };
+    p.setNoiseReducer(broken);
+    alongside = 0;
+    const auto next = scene(rng, 1.5f);  // (a fresh frame: a repeat would be a shutter cycle)
+    p.process(next.data(), d.data(), s.data(), {}, work);
+    CHECK(alongside == 1);  // exactly once either way
+    CHECK_FALSE(p.lastNoiseReductionAccelerated());
+    const size_t flat = size_t(10) * W + 20;  // in the flat third
+    CHECK(s[flat] != 1234.0f);
+    CHECK(std::fabs(s[flat] - 6000.0f) < 3.0f);
+  }
+}
+
+TEST_CASE("the work alongside runs exactly once per frame: stage 4b off, and a repeated frame") {
+  auto o = nrOnly();
+  o.nr = false;
+  o.shutterHold = true;
+  tv::Pipeline p(o);
+  std::mt19937 rng(5);
+  std::vector<float> d(tv::kImagePixels);
+  int alongside = 0;
+  const std::function<void()> work = [&] { ++alongside; };
+  const auto img = scene(rng, 1.0f);
+  p.process(img.data(), d.data(), nullptr, {}, work);
+  CHECK(alongside == 1);
+  p.process(img.data(), d.data(), nullptr, {}, work);  // the same image: a shutter cycle's repeat
+  CHECK(p.frozen());
+  CHECK(alongside == 2);
+}
+
+TEST_CASE("with an accelerator, the output is exactly the CPU path's (stage 3b's estimate moves into its window)") {
+  // Every approved stage on. A: no accelerator, the CPU filters. B: a fake accelerator running the
+  // same CPU filter on what start() was given, with the work alongside (stage 3b's estimate update)
+  // in between. Over many frames, with stripes for stage 3b to track, they must agree bit for bit.
+  tv::PipelineOptions o;
+  o.nrSearch = 2;  // (the fake runs on the CPU)
+  tv::Pipeline a(o), b(o);
+  std::vector<float> buffer(tv::kImagePixels), scratch;
+  tv::NlmPadded padded;
+  int sr = 0, pr = 0;
+  float hh = 0.0f;
+  tv::Pipeline::NoiseReducer fake;
+  fake.start = [&](const float* src, int searchRadius, int patchRadius, float h) {
+    std::copy(src, src + tv::kImagePixels, buffer.begin());
+    sr = searchRadius, pr = patchRadius, hh = h;
+    return true;
+  };
+  fake.finish = [&](float* dst) {
+    tv::nlmPad(buffer.data(), sr, pr, &padded);
+    tv::nlmBand(padded, dst, 0, tv::kImageRows, sr, pr, hh, scratch);
+    return true;
+  };
+  b.setNoiseReducer(fake);
+  std::mt19937 rng(21);
+  std::vector<float> da(tv::kImagePixels), db(tv::kImagePixels), sa(tv::kImagePixels), sb(tv::kImagePixels);
+  for (int k = 0; k < 40; ++k) {
+    auto img = scene(rng, 1.1f);
+    for (int y = 0; y < H; ++y)  // a column and a row offset that stage 3b learns
+      for (int x = 0; x < W; ++x) img[size_t(y) * W + x] = uint16_t(img[size_t(y) * W + x] + (x == 77 ? 2 : 0) + (y == 50 ? 1 : 0));
+    a.process(img.data(), da.data(), sa.data(), {30.0, 25.0});
+    b.process(img.data(), db.data(), sb.data(), {30.0, 25.0});
+    REQUIRE(b.lastNoiseReductionAccelerated());
+    CHECK(std::memcmp(da.data(), db.data(), da.size() * sizeof(float)) == 0);
+    CHECK(std::memcmp(sa.data(), sb.data(), sa.size() * sizeof(float)) == 0);
+  }
 }

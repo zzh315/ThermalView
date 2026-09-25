@@ -1,5 +1,6 @@
 #include "session.h"
 
+#include <pthread.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <functional>
 
 #include "command_sender.h"
 #include "field_log.h"
@@ -212,9 +214,12 @@ void Session::init(const std::string& storageDir, const std::string& appVersion)
   ring_ = std::make_unique<FrameRing<8>>();
   snapshot_ = std::make_unique<Snapshot>();
   ctrl_ = std::make_unique<unsigned char[]>(sizeof(uvc_stream_ctrl_t));
-  pipeline_.setNoiseReducer([this](const float* src, float* dst, int searchRadius, int patchRadius, float h) {
-    return reduceNoiseOnGpu(src, dst, searchRadius, patchRadius, h);
-  });
+  Pipeline::NoiseReducer gpu;
+  gpu.start = [this](const float* src, int searchRadius, int patchRadius, float h) {
+    return startNoiseReductionOnGpu(src, searchRadius, patchRadius, h);
+  };
+  gpu.finish = [this](float* dst) { return finishNoiseReductionOnGpu(dst); };
+  pipeline_.setNoiseReducer(std::move(gpu));
   renderer_.start();
 }
 
@@ -240,6 +245,7 @@ bool Session::openCamera(int fd, const std::string& manufacturer, const std::str
   }
   eventRun_ = true;
   eventThread_ = std::thread([this] {
+    pthread_setname_np(pthread_self(), "tv-usb");
     while (eventRun_) {
       timeval timeout{0, 100'000};
       libusb_handle_events_timeout_completed(usb_, &timeout, nullptr);
@@ -441,6 +447,7 @@ void Session::applyAffinity(bool big) {
 }
 
 void Session::processLoop() {
+  pthread_setname_np(pthread_self(), "tv-proc");
   while (procRun_) {
     bool big;
     {
@@ -481,12 +488,22 @@ void Session::processLoop() {
   gpuNlm_.release();  // its context is current on this thread; a new processing thread makes another
 }
 
-bool Session::reduceNoiseOnGpu(const float* src, float* dst, int searchRadius, int patchRadius, float h) {
+bool Session::startNoiseReductionOnGpu(const float* src, int searchRadius, int patchRadius, float h) {
   const bool wasFailed = gpuNlm_.failed();
-  const bool ok = gpuNr_ && gpuNlm_.run(src, dst, searchRadius, patchRadius, h);
-  if (ok) gpuNrMs_.push(gpuNlm_.lastMs());
+  const bool ok = gpuNr_ && gpuNlm_.start(src, searchRadius, patchRadius, h);
   if (!ok && gpuNr_ && !wasFailed) FLOG("stage 4b: GPU unavailable (%s), the CPU takes over", gpuNlm_.status().c_str());
-  if (nrCheckRequested_.exchange(false)) checkGpuNoiseReduction(src, ok ? dst : nullptr, searchRadius, patchRadius, h);
+  nrStarted_ = {src, searchRadius, patchRadius, h};  // the pipeline keeps src as it is until finish
+  return ok;
+}
+
+bool Session::finishNoiseReductionOnGpu(float* dst) {
+  const bool wasFailed = gpuNlm_.failed();
+  const bool ok = gpuNlm_.finish(dst);
+  if (ok) gpuNrMs_.push(gpuNlm_.lastMs());
+  if (!ok && !wasFailed) FLOG("stage 4b: GPU read-back failed (%s), the CPU takes over", gpuNlm_.status().c_str());
+  if (nrCheckRequested_.exchange(false))
+    checkGpuNoiseReduction(nrStarted_.src, ok ? dst : nullptr, nrStarted_.searchRadius, nrStarted_.patchRadius,
+                           nrStarted_.h);
   return ok;
 }
 
@@ -526,22 +543,37 @@ void Session::checkGpuNoiseReduction(const float* src, const float* gpu, int sea
        "the filter moved pixels %.3f counts on average; GPU %.2f ms, CPU reference %.1f ms (images in nrcheck/)",
        searchRadius, patchRadius, h, maxDiff, worst % kFrameWidth, worst / kFrameWidth,
        sumDiff / double(kImagePixels), sumChange / double(kImagePixels), gpuNlm_.lastMs(), cpuMs);
-  // Each shader variant (pixels a thread), back to back: its time and its difference from the CPU.
+  // Each shader variant (pixels a thread), then smaller searches, back to back: the time from upload
+  // to read-back and its phases, and (at this search) the difference from the CPU.
   std::vector<float> out(kImagePixels);
-  for (int n : {1, 2, 4}) {
-    std::vector<double> ms;
-    for (int k = 0; k < 15 && gpuNlm_.run(src, out.data(), searchRadius, patchRadius, h, n); ++k) ms.push_back(gpuNlm_.lastMs());
-    if (ms.empty()) {
-      FLOG("stage 4b check: %d pixel(s) a thread failed (%s)", n, gpuNlm_.status().c_str());
-      return;
+  auto median = [](std::vector<double> v) {
+    std::sort(v.begin(), v.end());
+    return v.empty() ? -1.0 : v[v.size() / 2];
+  };
+  for (int search : {searchRadius, 3, 1})
+    for (int n : {1, 2, 4}) {
+      if (search != searchRadius && n != GpuNlm::kDefaultPixelsPerThread) continue;
+      std::vector<double> ms, phase[4];
+      for (int k = 0; k < 15 && gpuNlm_.run(src, out.data(), search, patchRadius, h, n); ++k) {
+        ms.push_back(gpuNlm_.lastMs());
+        for (int j = 0; j < 4; ++j) phase[j].push_back(gpuNlm_.lastPhasesMs()[j]);
+      }
+      if (ms.empty()) {
+        FLOG("stage 4b check: %d pixel(s) a thread failed (%s)", n, gpuNlm_.status().c_str());
+        return;
+      }
+      std::string diff;
+      if (search == searchRadius) {
+        double worstDiff = 0;
+        for (size_t i = 0; i < kImagePixels; ++i) worstDiff = std::max(worstDiff, std::fabs(double(out[i]) - double(cpu[i])));
+        diff = format(", |GPU - CPU| max %.2e counts", worstDiff);
+      }
+      FLOG("stage 4b check: search %dx%d, %d pixel(s) a thread%s: %.2f ms median of %zu runs back to back (min %.2f; "
+           "upload %.2f, dispatch %.2f, wait %.2f, copy %.2f)%s", 2 * search + 1, 2 * search + 1, n,
+           search == searchRadius && n == GpuNlm::kDefaultPixelsPerThread ? " (in use)" : "", median(ms), ms.size(),
+           *std::min_element(ms.begin(), ms.end()), median(phase[0]), median(phase[1]), median(phase[2]),
+           median(phase[3]), diff.c_str());
     }
-    double worstDiff = 0;
-    for (size_t i = 0; i < kImagePixels; ++i) worstDiff = std::max(worstDiff, std::fabs(double(out[i]) - double(cpu[i])));
-    std::sort(ms.begin(), ms.end());
-    FLOG("stage 4b check: %d pixel(s) a thread%s: %.2f ms median of %zu runs back to back (min %.2f, max %.2f), "
-         "|GPU - CPU| max %.2e counts", n, n == GpuNlm::kDefaultPixelsPerThread ? " (in use)" : "", ms[ms.size() / 2],
-         ms.size(), ms.front(), ms.back(), worstDiff);
-  }
 }
 
 CommandResult Session::command(uint16_t value, CommandPurpose purpose) {
@@ -1006,73 +1038,87 @@ void Session::handleFrame(const RawFrame& frame) {
     region_ = pendingRegion_;
     pipeline_.setRegion(region_);  // stage 5 measures what the view shows
   }
-  const bool usable = !flags || flags == kSanityOver14Bit;
-  int hotPixels = 0;      // over range: what the readouts show as "> 120 °C"
-  int clippedPixels = 0;  // at the camera's clip: the lockout and the (parked) range switching
-  if (usable) {
-    lastMeta_.assign(frame.data.begin(), frame.data.end());
-    lut_.build(temperatureInputs(view), range_, highMath_);
-    clipRaw_ = overRangeRaw(lut_);
-    // Owner decision, 2026-09-24: lock out only at the real clip, so hot parts the camera can still
-    // measure (up to ~131-134 °C when it's warm) don't freeze the view. The parked high range keeps
-    // its own threshold.
-    lockoutRaw_ = range_ == TempRange::Normal ? kClipFloorRaw : clipRaw_;
-    // Stage 2 on: readouts also stay off the known bad pixels (PLAN M4).
-    const BadPixelMap& bad = pipeline_.badPixels();
-    const bool exclude = pipeline_.options().badPixels && !bad.empty();
-    rawReadouts_ = computeReadouts(view.image(), lut_, region_, clipRaw_, exclude ? &bad.mask : nullptr);
-    if (stats.max >= std::min(clipRaw_, lockoutRaw_)) {
-      const uint16_t* img = view.image();
-      for (size_t i = 0; i < kImagePixels; ++i) {
-        hotPixels += img[i] >= clipRaw_;
-        clippedPixels += img[i] >= lockoutRaw_;
+  // The temperature work (PROTOCOL.md "Temperature math"; CLAUDE.md rule 2): this frame's table, the
+  // readouts from raw values, the over-range counts and what they trigger (the lockout, range
+  // switching), the CSV row and the dump. Nothing in it feeds the pipeline, so for a frame going to
+  // the display it runs inside Pipeline::process while the GPU filters stage 4b; otherwise below.
+  int64_t tableNs = 0;
+  DisplayFrame* displayOut = nullptr;  // set for a frame going to the display
+  double readoutDt = 0.04;
+  const std::function<void()> temperatureWork = [&] {
+    const int64_t tTable0 = nowNs();
+    const bool usable = !flags || flags == kSanityOver14Bit;
+    int hotPixels = 0;      // over range: what the readouts show as "> 120 °C"
+    int clippedPixels = 0;  // at the camera's clip: the lockout and the (parked) range switching
+    if (usable) {
+      lastMeta_.assign(frame.data.begin(), frame.data.end());
+      lut_.build(temperatureInputs(view), range_, highMath_);
+      clipRaw_ = overRangeRaw(lut_);
+      // Owner decision, 2026-09-24: lock out only at the real clip, so hot parts the camera can still
+      // measure (up to ~131-134 °C when it's warm) don't freeze the view. The parked high range keeps
+      // its own threshold.
+      lockoutRaw_ = range_ == TempRange::Normal ? kClipFloorRaw : clipRaw_;
+      // Stage 2 on: readouts also stay off the known bad pixels (PLAN M4).
+      const BadPixelMap& bad = pipeline_.badPixels();
+      const bool exclude = pipeline_.options().badPixels && !bad.empty();
+      rawReadouts_ = computeReadouts(view.image(), lut_, region_, clipRaw_, exclude ? &bad.mask : nullptr);
+      if (stats.max >= std::min(clipRaw_, lockoutRaw_)) {
+        const uint16_t* img = view.image();
+        for (size_t i = 0; i < kImagePixels; ++i) {
+          hotPixels += img[i] >= clipRaw_;
+          clippedPixels += img[i] >= lockoutRaw_;
+        }
       }
     }
-  }
-  if (hotPixels) {
-    lastHotPixels_ = hotPixels;
-    lastHotMax_ = stats.max;
-  }
+    if (hotPixels) {
+      lastHotPixels_ = hotPixels;
+      lastHotMax_ = stats.max;
+    }
 
-  {
-    bool wantCsv;
     {
-      std::lock_guard o(optionsMutex_);
-      wantCsv = options_.statsCsv;
-    }
-    if (wantCsv && !csv_) openCsv();
-    if (!wantCsv && csv_) closeCsv();
-    if (csv_) writeCsvRow(frame, view, stats, flags, frozen, hotPixels, usable ? &rawReadouts_ : nullptr);
-  }
-
-  if (state == State::Running) {
-    hotStreak_ = clippedPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
-    const int lockoutFrames = range_ == TempRange::High ? kLockoutFramesHigh : kLockoutFrames;
-    if (lockoutEnabled_ && hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, clippedPixels, stats.max, false);
-    if (autoRange_ && usable && state_.load() == State::Running) {
-      if (range_ == TempRange::Normal) {
-        clipStreak_ = clippedPixels >= kLockoutPixels ? clipStreak_ + 1 : 0;
-        if (clipStreak_ >= kRangeUpFrames) autoRangeRequest_ = 1;
-      } else {
-        const bool cool = std::isfinite(rawReadouts_.high.tempC) && !rawReadouts_.high.overRange &&
-                          rawReadouts_.high.tempC < kRangeDownC;
-        coolStreak_ = cool ? coolStreak_ + 1 : 0;
-        if (coolStreak_ >= kRangeDownFrames) autoRangeRequest_ = 0;
+      bool wantCsv;
+      {
+        std::lock_guard o(optionsMutex_);
+        wantCsv = options_.statsCsv;
       }
+      if (wantCsv && !csv_) openCsv();
+      if (!wantCsv && csv_) closeCsv();
+      if (csv_) writeCsvRow(frame, view, stats, flags, frozen, hotPixels, usable ? &rawReadouts_ : nullptr);
     }
-    if (rangeLogPending_ && usable && !frozen) {
-      rangeLogPending_ = false;
-      FLOG("range %s in effect: %s", range_ == TempRange::High ? "high" : "normal", constantsText(view).c_str());
+
+    if (state == State::Running) {
+      hotStreak_ = clippedPixels >= kLockoutPixels ? hotStreak_ + 1 : 0;
+      const int lockoutFrames = range_ == TempRange::High ? kLockoutFramesHigh : kLockoutFrames;
+      if (lockoutEnabled_ && hotStreak_ >= lockoutFrames) beginLockout(frame.arrivalNs, clippedPixels, stats.max, false);
+      if (autoRange_ && usable && state_.load() == State::Running) {
+        if (range_ == TempRange::Normal) {
+          clipStreak_ = clippedPixels >= kLockoutPixels ? clipStreak_ + 1 : 0;
+          if (clipStreak_ >= kRangeUpFrames) autoRangeRequest_ = 1;
+        } else {
+          const bool cool = std::isfinite(rawReadouts_.high.tempC) && !rawReadouts_.high.overRange &&
+                            rawReadouts_.high.tempC < kRangeDownC;
+          coolStreak_ = cool ? coolStreak_ + 1 : 0;
+          if (coolStreak_ >= kRangeDownFrames) autoRangeRequest_ = 0;
+        }
+      }
+      if (rangeLogPending_ && usable && !frozen) {
+        rangeLogPending_ = false;
+        FLOG("range %s in effect: %s", range_ == TempRange::High ? "high" : "normal", constantsText(view).c_str());
+      }
+    } else if (state == State::Lockout && !lockoutHoldStartNs_ && usable && !frozen) {
+      // Peeking: judge fresh frames only (repeated ones still show the scene before the shutter).
+      if (clippedPixels >= kLockoutPixels)
+        lockoutPeekHot_ = true;
+      else if (!lockoutPeekHot_ && ++lockoutClear_ >= kLockoutClearFrames)
+        endLockout(frame.arrivalNs);
     }
-  } else if (state == State::Lockout && !lockoutHoldStartNs_ && usable && !frozen) {
-    // Peeking: judge fresh frames only (repeated ones still show the scene before the shutter).
-    if (clippedPixels >= kLockoutPixels)
-      lockoutPeekHot_ = true;
-    else if (!lockoutPeekHot_ && ++lockoutClear_ >= kLockoutClearFrames)
-      endLockout(frame.arrivalNs);
-  }
-  captureForDump(frame);  // every full frame, so a dump also shows cycles and lockouts
-  const int64_t tTable = nowNs();
+    captureForDump(frame);  // every full frame, so a dump also shows cycles and lockouts
+    if (displayOut) {  // what the display shows with this frame: its readouts and over-range mask
+      shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, region_, clipRaw_, readoutDt);
+      for (size_t i = 0; i < kImagePixels; ++i) displayOut->clipped[i] = view.image()[i] >= clipRaw_ ? 255 : 0;
+    }
+    tableNs = nowNs() - tTable0;
+  };
 
   bool accepted = false;
   switch (state) {
@@ -1132,11 +1178,11 @@ void Session::handleFrame(const RawFrame& frame) {
     pipeline_.hold();
     pipelineFed_ = false;
   }
+  if (!accepted) temperatureWork();
 
   if (accepted) {
     const double dt = lastReadoutNs_ ? double(frame.arrivalNs - lastReadoutNs_) / 1e9 : 0.04;
     lastReadoutNs_ = frame.arrivalNs;
-    shownReadouts_ = readoutFilter_.update(rawReadouts_, view.image(), lut_, region_, clipRaw_, dt);
 
     // Camera-hot banner (PLAN M2): the module is rated to ~60 °C ambient and runs ~11-13 °C above it.
     // The FPA word means something else in the high range (M2: it decodes to ~70 °C there).
@@ -1162,19 +1208,21 @@ void Session::handleFrame(const RawFrame& frame) {
     }
 
     DisplayFrame& out = renderer_.frameSlot();
+    displayOut = &out;
+    readoutDt = dt;
     const int64_t tPipe0 = nowNs();
-    pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()});
+    pipeline_.process(view.image(), out.intensity.data(), nullptr, {view.fpaC(), view.shutterC()}, temperatureWork);
     const int64_t tPipe1 = nowNs();
-    for (size_t i = 0; i < kImagePixels; ++i) out.clipped[i] = view.image()[i] >= clipRaw_ ? 255 : 0;
     pipelineFed_ = true;
     out.arrivalNs = frame.arrivalNs;
     renderer_.publishFrame();
     const int64_t workNs = nowNs() - t0;
     procMs_.push(double(workNs) / 1e6);
+    // (the temperature work ran inside the pipeline's call: its time counts as its own part)
     partMs_[0].push(double(tChecks - t0) / 1e6);
-    partMs_[1].push(double(tTable - tChecks) / 1e6);
-    partMs_[2].push(double(tPipe1 - tPipe0) / 1e6);
-    partMs_[3].push(double(workNs - (tPipe1 - tPipe0) - (tTable - t0)) / 1e6);
+    partMs_[1].push(double(tableNs) / 1e6);
+    partMs_[2].push(double(tPipe1 - tPipe0 - tableNs) / 1e6);
+    partMs_[3].push(double(workNs - (tPipe1 - tPipe0) - (tChecks - t0)) / 1e6);
     perfHint_.report(workNs);
     lastCpu_ = sched_getcpu();
     ++cpuFrames_;
@@ -1218,8 +1266,8 @@ void Session::handleFrame(const RawFrame& frame) {
   if (!pipeline_.options().nr)
     s.nr.clear();
   else if (pipeline_.lastNoiseReductionAccelerated())
-    s.nr = format("stage 4b: %s, %.2f ms p50 / %.2f p95 (upload to read-back)", gpuNlm_.status().c_str(),
-                  gpuNrMs_.percentile(50), gpuNrMs_.percentile(95));
+    s.nr = format("stage 4b: %s, %.2f ms p50 / %.2f p95 of its own calls (the temperature work runs while it "
+                  "filters)", gpuNlm_.status().c_str(), gpuNrMs_.percentile(50), gpuNrMs_.percentile(95));
   else
     s.nr = format("stage 4b: CPU, search %dx%d (GPU: %s)", 2 * std::min(pipeline_.options().nrSearch, pipeline_.options().nrFallbackSearch) + 1,
                   2 * std::min(pipeline_.options().nrSearch, pipeline_.options().nrFallbackSearch) + 1,
@@ -1427,6 +1475,7 @@ void Session::stopReplay() {
 }
 
 void Session::replayLoop() {
+  pthread_setname_np(pthread_self(), "tv-replay");
   const auto& ts = replay_.timestampsNs;
   uint32_t sequence = 1;
   size_t i = 0;
@@ -1604,8 +1653,11 @@ std::string Session::overlayText() {
               "cpu %d (big %.0f%%)  %s\n",
               s.fps, s.jitterMs, s.maxIntervalMs, p50, p95, s.procP95Ms, s.cpu, 100.0 * s.bigShare,
               s.perfHint.c_str());
-  o += format("proc p50 by part: checks %.2f  table + readouts %.2f  pipeline %.2f  rest %.2f ms\n",
-              s.partP50Ms[0], s.partP50Ms[1], s.partP50Ms[2], s.partP50Ms[3]);
+  double wakeMs = 0, drawMs = 0, swapMs = 0, prefilterMs = 0;
+  renderer_.renderPartsP50Ms(&wakeMs, &drawMs, &swapMs, &prefilterMs);
+  o += format("proc p50 by part: checks %.2f  table + readouts %.2f  pipeline %.2f  rest %.2f ms   "
+              "render p50: wake %.2f  draw %.2f (B-spline prefilter %.2f)  swap %.2f ms\n",
+              s.partP50Ms[0], s.partP50Ms[1], s.partP50Ms[2], s.partP50Ms[3], wakeMs, drawMs, prefilterMs, swapMs);
   o += format("frames %" PRIu64 "  drops: seq %" PRIu64 "  bus %" PRIu64 "  rejected %" PRIu64
               " (size %" PRIu64 ")  overrun %" PRIu64 "  start-up %" PRIu64 "  restarts %" PRIu64 "\n",
               s.frames, s.seqGaps, s.arrivalGaps, s.rejectedSize + s.rejectedChecks, s.rejectedSize,

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace tv {
 namespace {
@@ -195,7 +196,82 @@ const char* kernelName(Kernel kernel) {
   return "?";
 }
 
+namespace {
+
+// prefilterLine's recursion on every column of a rows x cols block at once: each step is a whole
+// row, contiguous and independent across columns, so it vectorizes (the renderer runs this per
+// frame; line by line with a stride, in double, it took 2.4 ms on the tablet's render thread).
+// Floats: the pole's filters are stable and the result stays within ~1e-6 of the double version.
+void prefilterColumns(float* c, int rows, int cols) {
+  if (rows < 2) return;
+  const float z = float(std::sqrt(3.0) - 2.0);
+  const float gain = float((1.0 - (std::sqrt(3.0) - 2.0)) * (1.0 - 1.0 / (std::sqrt(3.0) - 2.0)));  // 6
+  const int horizon = std::min(rows, int(std::ceil(std::log(1e-9) / std::log(std::fabs(double(z))))));
+  const size_t n = size_t(cols);
+  for (size_t i = 0; i < n * size_t(rows); ++i) c[i] *= gain;
+  // Causal start: the mirrored signal's sum over the first rows (as prefilterLine), into a scratch row.
+  std::vector<float> start(c, c + n);
+  float zn = z;
+  for (int k = 1; k < horizon; ++k) {
+    const float* row = c + size_t(k) * n;
+    for (size_t x = 0; x < n; ++x) start[x] += zn * row[x];
+    zn *= z;
+  }
+  std::copy(start.begin(), start.end(), c);
+  for (int k = 1; k < rows; ++k) {
+    float* row = c + size_t(k) * n;
+    const float* prev = row - n;
+    for (size_t x = 0; x < n; ++x) row[x] += z * prev[x];
+  }
+  const float endGain = z / (z * z - 1.0f);
+  float* last = c + size_t(rows - 1) * n;
+  const float* beforeLast = last - n;
+  for (size_t x = 0; x < n; ++x) last[x] = endGain * (z * beforeLast[x] + last[x]);
+  for (int k = rows - 2; k >= 0; --k) {
+    float* row = c + size_t(k) * n;
+    const float* next = row + n;
+    for (size_t x = 0; x < n; ++x) row[x] = z * (next[x] - row[x]);
+  }
+}
+
+// The same recursion along every row, 8 rows interleaved so their dependency chains overlap.
+void prefilterRows(float* c) {
+  constexpr int kRows = 8;
+  static_assert(H % kRows == 0);
+  const float z = float(std::sqrt(3.0) - 2.0);
+  const float gain = float((1.0 - (std::sqrt(3.0) - 2.0)) * (1.0 - 1.0 / (std::sqrt(3.0) - 2.0)));  // 6
+  const int horizon = std::min(W, int(std::ceil(std::log(1e-9) / std::log(std::fabs(double(z))))));
+  const float endGain = z / (z * z - 1.0f);
+  for (int y0 = 0; y0 < H; y0 += kRows) {
+    float* block = c + size_t(y0) * W;
+    for (size_t i = 0; i < size_t(kRows) * W; ++i) block[i] *= gain;
+    float* r[kRows];
+    for (int j = 0; j < kRows; ++j) r[j] = block + size_t(j) * W;
+    float start[kRows];
+    for (int j = 0; j < kRows; ++j) start[j] = r[j][0];
+    float zn = z;
+    for (int k = 1; k < horizon; ++k) {
+      for (int j = 0; j < kRows; ++j) start[j] += zn * r[j][k];
+      zn *= z;
+    }
+    for (int j = 0; j < kRows; ++j) r[j][0] = start[j];
+    for (int x = 1; x < W; ++x)
+      for (int j = 0; j < kRows; ++j) r[j][x] += z * r[j][x - 1];
+    for (int j = 0; j < kRows; ++j) r[j][W - 1] = endGain * (z * r[j][W - 2] + r[j][W - 1]);
+    for (int x = W - 2; x >= 0; --x)
+      for (int j = 0; j < kRows; ++j) r[j][x] = z * (r[j][x + 1] - r[j][x]);
+  }
+}
+
+}  // namespace
+
 void bsplineCoefficients(const float* image, float* coeffs) {
+  std::copy(image, image + kImagePixels, coeffs);
+  prefilterRows(coeffs);
+  prefilterColumns(coeffs, H, W);
+}
+
+void bsplineCoefficientsReference(const float* image, float* coeffs) {
   std::copy(image, image + kImagePixels, coeffs);
   for (int y = 0; y < H; ++y) prefilterLine(coeffs + size_t(y) * W, W, 1);
   for (int x = 0; x < W; ++x) prefilterLine(coeffs + x, H, W);

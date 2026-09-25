@@ -92,7 +92,8 @@ const GpuNlm::Program* GpuNlm::program(int searchRadius, int patchRadius, int pi
   return &programs_.back();
 }
 
-bool GpuNlm::run(const float* src, float* dst, int searchRadius, int patchRadius, float h, int pixelsPerThread) {
+bool GpuNlm::start(const float* src, int searchRadius, int patchRadius, float h, int pixelsPerThread) {
+  started_ = false;
   if (failed_) return false;
   if (context_ == EGL_NO_CONTEXT && !init()) return false;
   searchRadius = std::clamp(searchRadius, 1, 7);  // as the CPU's
@@ -104,6 +105,7 @@ bool GpuNlm::run(const float* src, float* dst, int searchRadius, int patchRadius
   const GLsizeiptr bytes = GLsizeiptr(kImagePixels * sizeof(float));
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, in_);
   glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, bytes, src);
+  const double t1 = nowMs();
   glUseProgram(p->id);
   // w = exp(-(mean |difference| / h)^2) = exp2(-S^2 k), S the patch's sum of |differences|.
   const float area = float((2 * patchRadius + 1) * (2 * patchRadius + 1));
@@ -113,8 +115,22 @@ bool GpuNlm::run(const float* src, float* dst, int searchRadius, int patchRadius
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, out_);
   glDispatchCompute(GLuint(kFrameWidth / (16 * pixelsPerThread)), GLuint(kImageRows / 16), 1);
   glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+  glFlush();  // the GPU starts now, while the caller works
+  const double t2 = nowMs();
+  phasesMs_[0] = t1 - t0;
+  phasesMs_[1] = t2 - t1;
+  started_ = true;
+  return true;
+}
+
+bool GpuNlm::finish(float* dst) {
+  if (!started_ || failed_) return false;
+  started_ = false;
+  const double t2 = nowMs();
+  const GLsizeiptr bytes = GLsizeiptr(kImagePixels * sizeof(float));
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, out_);
   const void* mapped = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, bytes, GL_MAP_READ_BIT);
+  const double t3 = nowMs();
   if (!mapped) {
     const GLenum error = glGetError();
     char hex[16];
@@ -123,7 +139,10 @@ bool GpuNlm::run(const float* src, float* dst, int searchRadius, int patchRadius
   }
   std::memcpy(dst, mapped, size_t(bytes));
   glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-  lastMs_ = nowMs() - t0;
+  const double t4 = nowMs();
+  phasesMs_[2] = t3 - t2;
+  phasesMs_[3] = t4 - t3;
+  lastMs_ = phasesMs_[0] + phasesMs_[1] + phasesMs_[2] + phasesMs_[3];
   return true;
 }
 
