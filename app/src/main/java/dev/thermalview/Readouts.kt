@@ -92,8 +92,15 @@ fun ImageOverlay(readings: Readings?, box: ViewBox, rect: CamRect, banner: Strin
         val markers = ArrayList<Marker?>(3)
         if (readings != null) {
             fun marker(s: Spot, color: Color, textColor: Color, arm: Float): Marker? {
-                if (!s.placed || !rect.contains(s.x, s.y)) return null
-                val (x, y) = rect.toSurface(box, s.x, s.y)
+                if (!s.placed) return null
+                // Any camera pixel the view shows, even partly (the readouts measure those too,
+                // Session::setViewRect): the marker goes to the middle of its visible part.
+                val x0 = max(s.x, rect.x)
+                val x1 = min(s.x + 1f, rect.x + rect.w)
+                val y0 = max(s.y, rect.y)
+                val y1 = min(s.y + 1f, rect.y + rect.h)
+                if (x1 <= x0 || y1 <= y0) return null
+                val (x, y) = rect.toSurface(box, (x0 + x1) / 2 - 0.5f, (y0 + y1) / 2 - 0.5f)
                 // The gap keeps the marked pixel itself visible, however far zoomed in.
                 val gap = max(3.dp.toPx(), 0.6f * px)
                 val text = measurer.measure(readings.text(s), labelStyle.copy(color = textColor))

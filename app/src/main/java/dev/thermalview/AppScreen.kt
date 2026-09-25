@@ -56,6 +56,8 @@ fun AppScreen(
     options: DebugOptions,
     onOptions: (DebugOptions) -> Unit,
     paletteColors: (Int) -> IntArray,
+    zoomRequest: ZoomRequest? = null,
+    onZoomRequestDone: () -> Unit = {},
 ) {
     var status by remember { mutableStateOf(Status()) }
     var readings by remember { mutableStateOf<Readings?>(null) }
@@ -122,6 +124,15 @@ fun AppScreen(
         zoom = 1f
         zoomCx = CamRect.FRAME_W / 2
         zoomCy = CamRect.FRAME_H / 2
+    }
+    LaunchedEffect(zoomRequest) {
+        zoomRequest?.let {
+            val r = CamRect.of(it.zoom, it.cx, it.cy)
+            zoom = r.zoom
+            zoomCx = r.cx
+            zoomCy = r.cy
+            onZoomRequestDone()
+        }
     }
 
     MaterialTheme(colorScheme = Ui.Scheme) {

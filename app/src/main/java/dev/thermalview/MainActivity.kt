@@ -58,10 +58,14 @@ data class DebugOptions(
     private fun bit(on: Boolean) = if (on) "1" else "0"
 }
 
+/** Debug: a zoom set over adb (pinches can't be sent with `input`). */
+data class ZoomRequest(val zoom: Float, val cx: Float, val cy: Float)
+
 class MainActivity : ComponentActivity() {
     private lateinit var camera: UsbCamera
     private val message = mutableStateOf("")
     private val options = mutableStateOf(DebugOptions())
+    private val zoomRequest = mutableStateOf<ZoomRequest?>(null)  // debug: set over adb (--ef zoom)
     private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -91,6 +95,8 @@ class MainActivity : ComponentActivity() {
                 options = options.value,
                 onOptions = ::setOptions,
                 paletteColors = { NativeBridge.paletteColors(paletteJson(it), 256) },
+                zoomRequest = zoomRequest.value,
+                onZoomRequestDone = { zoomRequest.value = null },
             )
         }
     }
@@ -157,7 +163,8 @@ class MainActivity : ComponentActivity() {
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
      * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
-     * (stage text, e.g. "shutter=0").
+     * (stage text, e.g. "shutter=0"); zoom, zoomX, zoomY (floats: the zoom and the camera point at
+     * the view's center); message (a test banner, "" to clear).
      */
     private fun applyDebugExtras(intent: Intent?) {
         val extras = intent?.extras ?: return
@@ -214,6 +221,14 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "adb: nrCheck")
         }
         extras.getString("replay")?.let { Log.i(TAG, "adb: replay " + NativeBridge.startReplay(it).ifEmpty { "started" }) }
+        if (extras.containsKey("zoom")) {
+            zoomRequest.value = ZoomRequest(
+                extras.getFloat("zoom"),
+                extras.getFloat("zoomX", CamRect.FRAME_W / 2),
+                extras.getFloat("zoomY", CamRect.FRAME_H / 2),
+            )
+        }
+        extras.getString("message")?.let { message.value = it }
         // Experiments: any stage text, until the next toggle change re-applies the toggles.
         extras.getString("pipeline")?.let { Log.i(TAG, "adb: pipeline " + NativeBridge.setPipeline(it).ifEmpty { it }) }
         intent.replaceExtras(Bundle())  // don't re-apply on configuration changes
