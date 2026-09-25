@@ -27,10 +27,10 @@ data class DebugOptions(
     val shutterHold: Boolean = true,        // M4 stage 1 (approved): hold through shutter cycles, crossfade back
     val badPixels: Boolean = true,          // M4 stage 2 (approved): replace the camera's known bad pixels
     val drift: Boolean = true,              // M4 stage 3 (approved): drift compensation + stripe cleanup
-    val stripes: Boolean = false,           // M4 stage 3c (preview): the per-frame column/row noise, motion-compensated
+    val stripes: Boolean = true,            // M4 stage 3c: the per-frame column/row noise; part of NR_LEVELS' Low and High
     val tone: Boolean = true,               // M4 stage 5 (approved): automatic tone mapping, gain cap 2
     val nr: Boolean = true,                 // M4 stage 4b (approved): spatial noise reduction, non-local means
-    val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): NR_PRESETS' Low (owner, 2026-09-25)
+    val nrStrength: Float = 0.8f,           // its strength (h in noise sigmas): NR_LEVELS' Low (owner, 2026-09-25)
     val nrSearch: Int = 5,                  // its search radius: 2 (5x5), 3 (7x7), 5 (11x11); NR_SEARCHES
     val gpuNr: Boolean = true,              // stage 4b on the GPU; off: the CPU at a 5x5 search (h scaled to match)
     val nrMethod: Int = 0,                  // stage 4b's filter: 0 non-local means, 1 BM3D (preview, GPU only), same noise
@@ -131,7 +131,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch, nrMethod (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
+     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0").
      */
@@ -165,6 +165,8 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("gpuNr")) o = o.copy(gpuNr = extras.getBoolean("gpuNr"))
         if (extras.containsKey("nrSearch")) o = o.copy(nrSearch = extras.getInt("nrSearch"))
         if (extras.containsKey("nrMethod")) o = o.copy(nrMethod = extras.getInt("nrMethod"))
+        if (extras.containsKey("nrLevel")) o = withNrLevel(o, extras.getInt("nrLevel"))
+        if (extras.containsKey("textureLevel")) o = withTextureLevel(o, extras.getInt("textureLevel"))
         setOptions(o)
         if (extras.getBoolean("reconnect")) {
             camera.close()
@@ -210,9 +212,26 @@ class MainActivity : ComponentActivity() {
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
         val NR_STRENGTHS = listOf(0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas
         val NR_SEARCHES = listOf(2, 3, 5)  // stage 4b's search radius: 5x5, 7x7, 11x11
-        // Stage 4b's setting (owner, 2026-09-25; the detail it keeps: PIPELINE_LOG): name, on, strength.
-        val NR_PRESETS = listOf(Triple("Off", false, 0f), Triple("Low", true, 0.8f), Triple("Medium", true, 0.9f),
-                                Triple("High", true, 1.1f))
+        // The simple settings (owner, 2026-09-26: "simple presets that abstract settings into simple low
+        // and high effects"): each level sets the stages underneath, and a setting changed by hand in the
+        // debug panel shows as "custom". Noise reduction is stage 3c (the per-frame stripes) with stage
+        // 4b's non-local means at the owner's Low (0.8) or High (1.1) strength. BM3D stays a debug option:
+        // the owner couldn't see a big difference, and it doesn't fit the latency budget yet (PIPELINE_LOG).
+        val LEVELS = listOf("Off", "Low", "High")
+        fun withNrLevel(o: DebugOptions, level: Int): DebugOptions = when (level) {
+            0 -> o.copy(nr = false, stripes = false)
+            1 -> o.copy(nr = true, nrMethod = 0, nrStrength = 0.8f, nrSearch = 5, stripes = true)
+            else -> o.copy(nr = true, nrMethod = 0, nrStrength = 1.1f, nrSearch = 5, stripes = true)
+        }
+        fun nrLevelOf(o: DebugOptions): Int? = LEVELS.indices.firstOrNull { withNrLevel(o, it) == o }
+        // Texture (stage 6's mid-scale contrast; PLAN M6's setting): its strength x1.5 (Low, the default)
+        // or x3 (High, the owner's pick when trying it, 2026-09-26).
+        fun withTextureLevel(o: DebugOptions, level: Int): DebugOptions = when (level) {
+            0 -> o.copy(detail = false)
+            1 -> o.copy(detail = true, textureStrength = 1.5f)
+            else -> o.copy(detail = true, textureStrength = 3.0f)
+        }
+        fun textureLevelOf(o: DebugOptions): Int? = LEVELS.indices.firstOrNull { withTextureLevel(o, it) == o }
         // BM3D's strength (sigma multiple) that leaves the noise non-local means leaves at each preset's h, on
         // known texture through stage 3c (PIPELINE_LOG, 2026-09-26); between and beyond them, linear.
         private val BM3D_MATCH = listOf(0.8f to 1.04f, 0.9f to 1.23f, 1.1f to 1.65f)

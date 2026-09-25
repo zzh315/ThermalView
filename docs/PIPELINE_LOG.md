@@ -4,6 +4,19 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — Simple settings: noise reduction and texture Off / Low / High (owner)
+
+**The owner, after trying BM3D and 3c on the tablet:** "could not tell big difference, maybe have simple presets that abstract settings into simple low and high effects so that it's more intuitive", and on the trade-offs, "do what you think is best for performance".
+
+**Now** (the debug panel's first two buttons, and PLAN M6's settings):
+- **Noise reduction:** Off / Low / High. Low (the default) is stage 3c plus non-local means at h 0.8; High is the same at h 1.1. So stage 3c is on by default now, as part of noise reduction.
+- **Texture:** Off / Low (×1.5, the default) / High (×3).
+- **The technical switches stay below:** a setting changed there shows as "custom".
+
+**Why non-local means, not BM3D:** the owner couldn't see a big difference, and BM3D doesn't fit the latency budget yet. Live, with 3c: latency p50 / p95 28.4 / 30.9 ms with BM3D (after the faster shaders, `8043c8a`), 18.4 / 20.5 ms with non-local means. On known texture, BM3D's gain is largest at High's noise (+6–16 points at 1–2 px), so it would come in there first if it fits the budget.
+
+**The budget with the new default:** p95 20.5 ms, just over. Stages 5–6 (~7 ms live) are next.
+
 ## 2026-09-25 — Stage 4b: BM3D against NLM at matched noise, on stage 3c's output (evidence; awaiting the owner)
 
 **Why:** the owner chose BM3D for detail (after "stripe fix, then BM3D"). Before a GPU port (a large job), this checks what it buys with stage 3c on, at the owner's strengths.

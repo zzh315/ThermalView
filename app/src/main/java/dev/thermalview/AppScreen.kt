@@ -185,6 +185,17 @@ private fun DebugPanel(
                     Modifier.verticalScroll(rememberScrollState()).padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    // The simple settings first (owner, 2026-09-26): each cycles Off, Low, High.
+                    Button(onClick = {
+                        onOptions(MainActivity.withNrLevel(options, ((MainActivity.nrLevelOf(options) ?: 0) + 1) % 3))
+                    }) {
+                        Text("Noise reduction: " + (MainActivity.nrLevelOf(options)?.let { MainActivity.LEVELS[it] } ?: "custom"))
+                    }
+                    Button(onClick = {
+                        onOptions(MainActivity.withTextureLevel(options, ((MainActivity.textureLevelOf(options) ?: 0) + 1) % 3))
+                    }) {
+                        Text("Texture: " + (MainActivity.textureLevelOf(options)?.let { MainActivity.LEVELS[it] } ?: "custom"))
+                    }
                     Toggle("Overlay", showOverlay, onShowOverlay)
                     Toggle("Skip start-up 0x8000 (next start)", options.skipStartupShutter) {
                         onOptions(options.copy(skipStartupShutter = it))
@@ -203,17 +214,8 @@ private fun DebugPanel(
                     }
                     Toggle("Stage 2: bad pixels", options.badPixels) { onOptions(options.copy(badPixels = it)) }
                     Toggle("Stage 3: drift + stripes", options.drift) { onOptions(options.copy(drift = it)) }
-                    Toggle("Stage 3c: per-frame stripe fix (preview)", options.stripes) { onOptions(options.copy(stripes = it)) }
-                    // Stage 4b's setting (owner, 2026-09-25): Off / Low / Medium / High, starting at Low (PLAN M6).
-                    Button(onClick = {
-                        val presets = MainActivity.NR_PRESETS
-                        val now = presets.indexOfFirst { (_, on, s) -> on == options.nr && (!on || s == options.nrStrength) }
-                        val (_, on, s) = presets[(now + 1).mod(presets.size)]
-                        onOptions(options.copy(nr = on, nrStrength = if (on) s else options.nrStrength))
-                    }) {
-                        val preset = MainActivity.NR_PRESETS.firstOrNull { (_, on, s) -> on == options.nr && (!on || s == options.nrStrength) }
-                        Text("Noise reduction: " + (preset?.first ?: "custom (strength ${options.nrStrength})"))
-                    }
+                    Toggle("Stage 3c: per-frame stripe fix", options.stripes) { onOptions(options.copy(stripes = it)) }
+                    Toggle("Stage 4b: noise reduction", options.nr) { onOptions(options.copy(nr = it)) }
                     Button(onClick = { onOptions(options.copy(nrMethod = 1 - options.nrMethod)) }) {
                         Text("Noise reduction filter: " + if (options.nrMethod == 1) "BM3D (preview, same noise)" else "non-local means")
                     }
@@ -236,7 +238,7 @@ private fun DebugPanel(
                         val s = MainActivity.TEXTURE_STRENGTHS
                         onOptions(options.copy(textureStrength = s[(s.indexOf(options.textureStrength) + 1).mod(s.size)]))
                     }) {
-                        Text("Texture strength: x" + options.textureStrength)
+                        Text("Texture strength (debug): x" + options.textureStrength)
                     }
                     Toggle("Processing on big cores", options.bigCores) { onOptions(options.copy(bigCores = it)) }
                     Toggle("Performance hint (ADPF)", options.perfHint) { onOptions(options.copy(perfHint = it)) }
