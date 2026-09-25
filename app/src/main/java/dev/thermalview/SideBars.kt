@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -293,7 +294,21 @@ private fun ScaleBar(readings: Readings?, colors: List<Color>, modifier: Modifie
             if (locked) Grips(Modifier.fillMaxHeight())
             Box(
                 Modifier.fillMaxHeight().width(16.dp)
-                    .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) }), RoundedCornerShape(8.dp)),
+                    .background(Brush.verticalGradient(colors.ifEmpty { listOf(Color.White, Color.Black) }), RoundedCornerShape(8.dp))
+                    .drawWithContent {
+                        drawContent()
+                        // Where the readouts' temperatures fall on it through the mapping: 0.97 at the
+                        // top and 0.03 at the bottom (ToneOptions outHi / outLo).
+                        val marks = readings?.marks ?: return@drawWithContent
+                        for ((k, c) in listOf(1 to Ui.Cold, 2 to Ui.Center, 0 to Ui.Hot)) {
+                            val v = marks[k]
+                            if (v.isNaN()) continue
+                            val y = ((0.97f - v) / 0.94f).coerceIn(0f, 1f) * size.height
+                            val o = 3.dp.toPx()
+                            drawLine(Color(0xC0000000), Offset(-o, y), Offset(size.width + o, y), 4.dp.toPx())
+                            drawLine(c, Offset(-o + 1.dp.toPx(), y), Offset(size.width + o - 1.dp.toPx(), y), 2.dp.toPx())
+                        }
+                    },
             )
             if (locked) Grips(Modifier.fillMaxHeight())
         }

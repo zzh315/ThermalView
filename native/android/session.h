@@ -209,6 +209,7 @@ class Session {
   CapturePhase capturePhase_ = CapturePhase::None;  // processing thread
   double scaleLoC_ = NAN, scaleHiC_ = NAN;  // the scale bar's endpoints (processing thread)
   bool scaleHiOver_ = false;
+  double scaleMark_[3] = {NAN, NAN, NAN};  // the readouts on the scale bar, as intensities (processing thread)
   // The range lock (processing thread), and the UI's requests for it.
   RangeLock rangeLock_;
   FixedMapping fixedMapping_;

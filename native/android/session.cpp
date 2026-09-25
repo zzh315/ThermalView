@@ -186,6 +186,9 @@ struct Session::Snapshot {
   // whether the top one is over range.
   double scaleLoC = NAN, scaleHiC = NAN;
   bool scaleHiOver = false, scaleLocked = false;
+  // Where the high, low and center readouts fall on the scale: their temperatures through the mapping
+  // (NaN: no readout), in the order of Readouts' high, low, center.
+  double scaleMark[3] = {NAN, NAN, NAN};
   double lastCycleMs = 0;
   uint64_t recalDue = 0;   // the recalibration policy's dry run: how often it would have asked
   double recalAgoS = -1;   // and how long ago it last would have
@@ -1378,6 +1381,21 @@ void Session::handleFrame(const RawFrame& frame) {
       scaleHiC_ = scaleHiOver_ ? NAN : celsiusAt(lut_, tone->highCounts());
     }
     out.arrivalNs = frame.arrivalNs;
+    // The readouts on the scale bar: where their temperatures land through the mapping (so they agree
+    // with its °C ends; the pixels themselves show noise reduction's smoothed values). Over range: the
+    // top.
+    {
+      const ToneMapper* tone = pipeline_.toneMapper();
+      const auto at = [&](const Spot& sp) -> double {
+        if (!tone) return NAN;
+        if (sp.overRange) return tone->intensityAt(1e9f);
+        if (!sp.valid()) return NAN;
+        return tone->intensityAt(float(countsAt(lut_, sp.tempC)));
+      };
+      scaleMark_[0] = at(shownReadouts_.high);
+      scaleMark_[1] = at(shownReadouts_.low);
+      scaleMark_[2] = at(shownReadouts_.center);
+    }
     renderer_.publishFrame();
     const int64_t workNs = nowNs() - t0;
     procMs_.push(double(workNs) / 1e6);
@@ -1450,6 +1468,7 @@ void Session::handleFrame(const RawFrame& frame) {
   s.scaleHiC = scaleHiC_;
   s.scaleHiOver = scaleHiOver_;
   s.scaleLocked = rangeLock_.held();
+  for (int k = 0; k < 3; ++k) s.scaleMark[k] = scaleMark_[k];
   s.lastCycleMs = lastCycleMs_;
   s.recalDue = recalDue_;
   s.recalAgoS = recalDueNs_ ? double(frame.arrivalNs - recalDueNs_) / 1e9 : -1.0;
@@ -1833,6 +1852,7 @@ std::vector<float> Session::readouts() {
   v.push_back(float(snapshot_->scaleHiC));
   v.push_back(snapshot_->scaleHiOver ? 1.0f : 0.0f);
   v.push_back(snapshot_->scaleLocked ? 1.0f : 0.0f);
+  for (double m : snapshot_->scaleMark) v.push_back(float(m));
   return v;
 }
 

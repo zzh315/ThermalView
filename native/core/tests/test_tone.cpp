@@ -76,3 +76,14 @@ TEST_CASE("a hot object widens the range within a few frames; it contracts slowl
   for (uint32_t k = 0; k < 5; ++k) t.map(scene(5000, 1.2f, 200 + k, ramp).data(), out.data());  // 0.2 s later
   CHECK(t.highCounts() - t.lowCounts() > wide * 0.6f);  // still mostly wide: contracting takes ~1.3 s
 }
+
+TEST_CASE("intensityAt is the mapping map() applies to a pixel of that value") {
+  std::vector<float> sig(tv::kImagePixels), out(tv::kImagePixels);
+  for (size_t i = 0; i < sig.size(); ++i) sig[i] = 5000.0f + float(i % 256) * 2.0f + float((i / 256) % 7);
+  tv::ToneMapper tone;
+  for (int f = 0; f < 5; ++f) tone.map(sig.data(), out.data());
+  for (size_t i : {size_t(3), size_t(1000), size_t(20000), tv::kImagePixels - 1})
+    CHECK(tone.intensityAt(sig[i]) == doctest::Approx(out[i]).epsilon(1e-5));
+  CHECK(tone.intensityAt(1e6f) == doctest::Approx(tv::ToneOptions{}.outHi));  // clamped at the ends
+  CHECK(tone.intensityAt(-1e6f) == doctest::Approx(tv::ToneOptions{}.outLo));
+}

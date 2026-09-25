@@ -197,6 +197,14 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
   apply(signal, out, detail);
 }
 
+float ToneMapper::intensityAt(float counts) const {
+  const float span = std::max(hi_ - lo_, 1.0f);
+  const float t = std::clamp((counts - offset_ - lo_) * (float(kCurve) / span), 0.0f, float(kCurve));
+  const int k = std::min(int(t), kCurve - 1);
+  const float c = curve_[size_t(k)] + (t - float(k)) * (curve_[size_t(k + 1)] - curve_[size_t(k)]);
+  return options_.outLo + (options_.outHi - options_.outLo) * std::clamp(c, 0.0f, 1.0f);
+}
+
 void ToneMapper::apply(const float* signal, float* out, const float* detail) const {
   // 5. Apply: interpolate between edges (clamped outside the range), squeeze into outLo..outHi. With a
   //    detail layer, add it at the curve's local slope (per count), so it keeps its size relative to
