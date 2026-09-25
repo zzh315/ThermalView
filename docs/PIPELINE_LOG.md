@@ -32,7 +32,17 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 **Review:** side-by-side clips (stage 3c on in both; NLM Low | BM3D ×1.04), local: `bench/out/clips/bm3d_low/` (full frames, 4×) and `bench/out/clips/bm3d_low_crops/` (8×).
 
-**Verdict:** pending. The owner's call is whether this is worth the GPU port (the matching, 3D transforms and aggregation as compute shaders; its cost on the Adreno is unmeasured).
+**The owner, on the clips** (2026-09-26): "The bm3d one looks good on the clips you saved. I need to check on the device with camera plugged in later to make sure." So it went to the GPU.
+
+**On the tablet, as a preview** (`78a55de`):
+- **What runs:** the real-time shape as GLES compute shaders: step 1, step 2 and two gathers (`native/android/gpu_bm3d_shader.cpp`).
+- **Checked on the Mac:** `tools/py/gpu_bm3d_emulate.py` runs the generated shaders on the Mac, each workgroup's 64 invocations as threads meeting at every barrier. Against `tv::bm3d`: max 0.001–0.004 counts, mean ~1e-5, on a synthetic frame and `room`, five shapes.
+- **Checked on the tablet** (nrCheck, the camera's frames): max 0.0005 counts, mean 1e-5. One scene had 9 pixels up to 0.014 counts, where near-tied matches round the other way.
+- **Too slow for use:** ~17–19 ms a frame, where the NLM takes ~4. Per pass: step 1 ~7.5 ms, step 2 ~9.5, each gather ~1.5. Live with 3c: 25 fps and no dropped frames, but latency p50 / p95 39 / 47 ms, against 20.
+- **Where the time goes:** stubbing out block matching (distances and ranking) saves only ~2 ms, and nor are the uniform window lookups the cost. The transforms' and tiles' barrier-heavy phases at low occupancy are the bulk. Optimizing that is next.
+- **To look at it:** in the debug panel, turn on "Stage 3c" and set "Noise reduction filter" to BM3D. The Low / Medium / High presets give BM3D the strength that leaves each preset's noise.
+
+**Verdict:** pending the owner's look on the device.
 
 ## 2026-09-25 — Stage 3c: the per-frame column and row noise (preview, `0a19f38`; awaiting the owner's second look)
 
