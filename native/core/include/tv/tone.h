@@ -14,7 +14,10 @@
 namespace tv {
 
 struct ToneOptions {
-  float lowPct = 0.3f, highPct = 99.7f;  // robust range (PLAN; 99.9 let a small hot spot jitter the range)
+  // The robust range: every object's pixels, leaving out only a few stray ones (owner, 2026-09-26: at
+  // 0.3 / 99.7 a 60 °C bulb of 69 pixels fell above the range and a 30 °C hand took its color; small hot
+  // parts are what PCB work looks for). The cost, flicker a little up on flat scenes (PIPELINE_LOG).
+  float lowPct = 0.01f, highPct = 99.99f;
   float maxGain = 2.0f;          // display levels (of 255) per count at most: the gain cap (owner: 2.0)
   float linearShare = 0.2f;      // the curve's linear part; the rest is plateau equalization
   float plateauDown = 0.25f;     // occupied bins count at least this x the mean occupied bin...

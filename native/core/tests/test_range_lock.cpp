@@ -220,12 +220,3 @@ TEST_CASE("reset() ends a lock too") {
   tone.reset();
   CHECK_FALSE(tone.fixed());
 }
-
-TEST_CASE("linearMapping: a scale linear in °C (the rainbow's Room preset)") {
-  const auto lut = lutOf(goldenInputs());
-  FixedMapping m;
-  REQUIRE(tv::linearMapping(lut, 13.0, 29.0, &m));
-  for (double t : {13.0, 17.5, 21.0, 26.3, 29.0})
-    CHECK(intensity(m, tv::countsAt(lut, t)) == doctest::Approx((t - 13.0) / 16.0).epsilon(0.002));
-  CHECK_FALSE(tv::linearMapping(lut, 20.0, 20.0, &m));
-}

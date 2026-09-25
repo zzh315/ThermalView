@@ -4,6 +4,34 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — Stage 5's range: every object's pixels (0.01–99.99%); the rainbow is Deep, or Soft
+
+**The owner, on two recordings** (`bench/bulb`, a 60 °C bulb and a hand in front of it): "the light bulb did not change color much and the hand seems to have color close to the light bulb, which is 60 degrees, my hand is around 30". Earlier: "how come sometimes the high temp pointer is sitting outside of the auto range?"
+
+**The cause:** the auto range ran from the 0.3rd to the 99.7th percentile of the region, so the hottest 147 pixels fell outside it.
+- The bulb covers 69 pixels (0.14%), so the range's top sat at the hand's warmest skin (raw ~5890; the bulb peaks at ~7680).
+- The bulb then clipped to the palette's top, and the hand took the colors just under it.
+- It's the same reason the high marker (the hottest pixel) sat above the range.
+- Small hot parts are what PCB work looks for, so this matters most there.
+
+**Now:** 0.01 to 99.99%. A few stray pixels are left out; every object is in.
+
+| `bulb`, frame 100 (Noise High, Texture Low, rainbow Deep) | 0.3–99.7% | 0.01–99.99% |
+|---|---|---|
+| Background, median display value | 0.32 | 0.32 |
+| Hand | 0.89 (red) | 0.64 (orange) |
+| Bulb | 0.97 (red) | 0.94 (red) |
+
+- **A larger linear share barely adds to it:** hand 0.62 at 0.3, 0.60 at 0.4.
+- **Sheet** (both palettes, before and after): `bench/results/bulb_percentiles/bulb_f100.jpg`.
+- **The cost on the benchmark** (the app's default: Noise High, Texture Low; `bench/results/870d632+app_default.json` against `+app_default_p9999.json`): flicker on `flat_aged` rises 0.06 → 0.19 levels (still within the reference apps' 0.07–0.22), `keyboard_box` 0.12 → 0.20, `flat` 0.21 → 0.24.
+- **Otherwise within a few hundredths:** display noise on `flat` 0.64 → 0.66; the recalibration step 7.96 → 8.09.
+- **Inside the hand**, detail is a little fainter: the bulb takes the top of the palette.
+
+**The rainbow (the owner's pick):** Deep, with Soft kept as an option (Settings, kept across launches). Both use the balance.
+- On Deep, the owner: it "looks more colorful and intense".
+- Vivid and Room "look washed out in opposite ways", and Deep+ looked like Deep, so all three are gone. Room's code went with it.
+
 ## 2026-09-26 — Rainbow over-saturated, Auto's colors bunched (owner): candidates for the owner's pick
 
 **The owner, on a new recording** (`bench/rainbow`, Noise High, Texture High, Auto range): "the rainbow palette looks over saturated and the auto gradient is not good enough … everything is a bit red and there's not much contrast".
@@ -39,7 +67,7 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 The presets only change the rainbow: white hot keeps stage 5 as it is. Locking in Room holds its scale.
 
-**Verdict:** pending the owner's pick. The chosen one becomes the default and the comparison goes.
+**Verdict:** the owner picked Deep, with Soft kept (see the entry above). Vivid, Deep+ and Room are gone.
 
 ## 2026-09-26 — Quality first (owner): stage 1 without the crossfade; noise reduction High is BM3D
 

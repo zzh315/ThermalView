@@ -184,14 +184,12 @@ private fun MainPage(
         "Palette, noise, texture and view size are on the left bar; recalibrate and capture on the right.",
         color = Ui.Subtle, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
     )
-    // For the owner's pick (2026-09-26); the chosen ones become the defaults and this goes.
-    Section("Compare, then tell Claude")
-    val preset = MainActivity.RAINBOW_PRESETS.getOrElse(options.rainbowPreset) { MainActivity.RAINBOW_PRESETS[0] }
+    Section("Picture")
     Choice(
-        "Rainbow preset",
+        "Rainbow",
         MainActivity.RAINBOW_PRESETS.map { it.name },
         options.rainbowPreset.coerceIn(0, MainActivity.RAINBOW_PRESETS.size - 1),
-        note = preset.note + if (options.palette != 2) " (switch the palette to Rainbow)" else "",
+        note = if (options.palette == 2) "Its colors" else "Its colors (the palette is White hot now)",
     ) { onOptions(options.copy(rainbowPreset = it)) }
     Section("On screen")
     SwitchRow("Frame rate and lag", "On the left bar", showStats, onShowStats)

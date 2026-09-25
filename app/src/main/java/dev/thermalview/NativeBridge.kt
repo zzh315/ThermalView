@@ -61,7 +61,6 @@ object NativeBridge {
     /** M6's range lock: hold the colors to the temperatures they show now (on), or automatic again. */
     external fun setRangeLock(on: Boolean): String
     external fun setRangeEnds(loC: Float, hiC: Float)  // the locked range's ends, °C
-    external fun setRoomScale(on: Boolean, loC: Float, hiC: Float)  // the rainbow's Room preset: a fixed scale
 
     /** [n] colors (0xAARRGGBB) of a palette file (palettes/, as the display bakes it); empty if it doesn't parse. */
     external fun paletteColors(json: String, n: Int): IntArray

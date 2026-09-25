@@ -187,7 +187,7 @@ fun RightBar(
         Tile(onClick = { NativeBridge.setRangeLock(!locked) }, enabled = live, color = if (locked) Ui.TileActive else Ui.Tile) {
             Caption("Range")
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Value(if (locked) "Locked" else if (readings?.room == true) "Room" else "Auto", Modifier.weight(1f))
+                Value(if (locked) "Locked" else "Auto", Modifier.weight(1f))
                 LockGlyph(locked)
             }
         }
