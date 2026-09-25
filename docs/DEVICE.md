@@ -315,3 +315,15 @@ Commands:
 
 - **Why:** at 25 fps the processing thread is busy ~15 ms of every 40, so schedutil keeps the big cluster near its lowest clock, and neither of Android's hints reaches it on this ROM.
 - **So:** every millisecond of CPU work costs ~2.5 ms of latency. Budget gains come from doing less, from spreading work over cores, or from the GPU.
+
+### Compose drawing after the app's background (M6, 2026-09-26)
+
+Commands: `adb shell input keyevent KEYCODE_HOME`, then `am start -n dev.thermalview/.MainActivity` 4 s later. Tiles checked by the median color of `adb exec-out screencap -p` over each one.
+
+| Fact | Value |
+|---|---|
+| Side-bar tiles drawn with `clip(shape)` + `alpha()` layers | With the range locked, Calibrate's and Capture's backgrounds were gone after the app came back. Only their text drew, and the camera's black surface showed through (median 10,10,11 against the tiles' 34,39,47). Reproduced twice; not reproduced without the lock. The Range and Settings tiles, drawn the same way, kept theirs |
+| The same tiles without layers (a shaped background, no clip, no alpha) | Kept their backgrounds through two cycles with the box and the lock on |
+| The settings panel (a Material `Surface`) | Kept its background through a cycle |
+
+- **So:** the side bars avoid graphics layers (`SideBars.kt` `Tile`). A clip or alpha layer elsewhere should be checked through a background cycle.
