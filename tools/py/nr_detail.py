@@ -95,19 +95,44 @@ def native():
     if not _LIB:
         lib = ctypes.CDLL(str(ROOT / "build" / "harness" / "libtvnr.dylib"))
         f, i, ptr = ctypes.c_float, ctypes.c_int, ctypes.c_void_p
-        lib.tv_bm3d.argtypes = [ptr, ptr, f, i, i, i, i, i, f, f, f, i, f, i, f]
+        lib.tv_bm3d.argtypes = [ptr, ptr, f, i, i, i, i, i, f, f, f, i, f, i, f, i, i]
         lib.tv_nlm.argtypes = [ptr, ptr, i, i, f]
+        lib.tv_bm3d_cov.argtypes = [ptr, ptr, ptr, i, f, i, i, i, i, i, f, f, f, i, f, i, f]
         _LIB.append(lib)
     return _LIB[0]
 
 
 def bm3d(x, strength=1.0, block=8, stride=3, search=19, group1=16, group2=32, lam=3.0, tau1=4.0, tau2=0.64,
-         wiener=True, kaiser=2.0, all_blocks=True, mu2=0.4):
+         wiener=True, kaiser=2.0, all_blocks=True, mu2=0.4, skip_col=False, skip_row=False):
     """native/core's BM3D (tv/bm3d.h) at sigma = strength x the camera's noise."""
     x = np.ascontiguousarray(x, np.float32)
     out = np.empty_like(x)
     native().tv_bm3d(x.ctypes.data, out.ctypes.data, strength * SIGMA, block, stride, search, group1, group2, lam,
-                     tau1, tau2, int(wiener), kaiser, int(all_blocks), mu2)
+                     tau1, tau2, int(wiener), kaiser, int(all_blocks), mu2, int(skip_col), int(skip_row))
+    return out
+
+
+_COV = []
+
+
+def camera_covariance():
+    """The camera's noise autocovariance (radius 24, counts^2), from `flat` (build/nr/flat_autocov.npy)."""
+    if not _COV:
+        _COV.append(np.ascontiguousarray(np.load(ROOT / "build" / "nr" / "flat_autocov.npy"), np.float32))
+    return _COV[0]
+
+
+def bm3d_cov(x, strength=1.0, block=8, stride=3, search=19, group1=16, group2=32, lam=3.2, tau1=0.0, tau2=0.0,
+             wiener=True, kaiser=2.0, all_blocks=True, mu2=0.8, cov=None):
+    """native/core's BM3D for correlated noise with the camera's covariance; strength scales lambda
+    and mu^2 as the reference implementation's filter_strength does (lambda 3.2, mu^2 0.8: its choice
+    for this spectrum)."""
+    x = np.ascontiguousarray(x, np.float32)
+    out = np.empty_like(x)
+    c = camera_covariance() if cov is None else np.ascontiguousarray(cov, np.float32)
+    radius = (c.shape[0] - 1) // 2
+    native().tv_bm3d_cov(x.ctypes.data, out.ctypes.data, c.ctypes.data, radius, 1.0, block, stride, search, group1,
+                         group2, lam * strength, tau1, tau2, int(wiener), kaiser, int(all_blocks), mu2 * strength ** 2)
     return out
 
 

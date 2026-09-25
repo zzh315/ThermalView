@@ -97,17 +97,22 @@ std::vector<int> referencePositions(int n, int stride) {
 
 // The reference block's group: itself, then the most similar blocks within the window (mean squared
 // difference per pixel at most tau), up to maxGroup, rounded down to a power of two.
-void matchBlocks(const float* img, int k, int rx, int ry, int search, float tau, int maxGroup,
-                 std::vector<std::pair<float, int>>& candidates, std::vector<int>& group) {
+void matchBlocks(const float* img, int k, int rx, int ry, int search, float tau, int maxGroup, bool skipColumn,
+                 bool skipRow, const float* bias, std::vector<std::pair<float, int>>& candidates,
+                 std::vector<int>& group) {
   const int nx = W - k + 1, ny = H - k + 1;
   const float limit = tau > 0.0f ? tau * float(k * k) : 3.0e38f;  // as a sum over the block
+  const int span = 2 * search + 1;
   candidates.clear();
   const float* ref = img + size_t(ry) * W + rx;
   for (int y = std::max(0, ry - search); y <= std::min(ny - 1, ry + search); ++y)
     for (int x = std::max(0, rx - search); x <= std::min(nx - 1, rx + search); ++x) {
-      if (x == rx && y == ry) continue;
+      if ((x == rx && y == ry) || (skipColumn && x == rx) || (skipRow && y == ry)) continue;
       const float* cand = img + size_t(y) * W + x;
-      float d = 0.0f;
+      // The noise's expected share of the distance at this displacement, taken off (correlated noise:
+      // blocks sharing columns or rows share part of it, so they would look closer than they are).
+      const float offset = bias ? bias[size_t(y - ry + search) * span + size_t(x - rx + search)] : 0.0f;
+      float d = -offset;
       for (int i = 0; i < k && d <= limit; ++i) {
         const float* a = ref + size_t(i) * W;
         const float* b = cand + size_t(i) * W;
@@ -156,14 +161,83 @@ void aggregate(const float* g, const std::vector<int>& group, int k, float weigh
   }
 }
 
-}  // namespace
+// The correlated model's tables: each DCT coefficient's noise covariance between two blocks at every
+// displacement up to reach (cq), and the matching's bias at every displacement up to search.
+struct NoiseTables {
+  int reach = 0;
+  std::vector<float> cq;    // [q * span^2 + (dy + reach) * span + dx + reach], span = 2 reach + 1
+  std::vector<float> bias;  // [(dy + search) * (2 search + 1) + dx + search]: 2 (R(0) - R(d)) k^2
+  float r0 = 0.0f;
+};
 
-void bm3d(const float* src, float* dst, float sigma, const Bm3dOptions& o) {
-  const int k = std::clamp(o.block, 2, 16);
-  if (!(sigma > 0.0f)) {
-    std::copy(src, src + kImagePixels, dst);
-    return;
+NoiseTables noiseTables(const NoiseCovariance& cov, int k, int search, const std::vector<float>& c) {
+  NoiseTables t;
+  t.reach = 2 * search;  // the members of a group lie within search of its reference
+  const int span = 2 * t.reach + 1, e = k - 1;
+  t.r0 = cov.at(0, 0);
+  // a_u(d) = sum_x c[u][x + d] c[u][x]: the 1D basis functions' autocorrelations (the 2D basis is
+  // separable, so its autocorrelation is a_v(ey) a_u(ex)).
+  std::vector<float> a(size_t(k) * (2 * e + 1), 0.0f);
+  for (int u = 0; u < k; ++u)
+    for (int d = -e; d <= e; ++d) {
+      float sum = 0.0f;
+      for (int x = 0; x < k; ++x)
+        if (x + d >= 0 && x + d < k) sum += c[size_t(u) * k + x + d] * c[size_t(u) * k + x];
+      a[size_t(u) * (2 * e + 1) + d + e] = sum;
+    }
+  // C_q(d) = sum_{ey, ex} a_v(ey) a_u(ex) R(dy + ey, dx + ex): along x first, then along y.
+  const int tall = span + 2 * e;
+  std::vector<float> tx(size_t(k) * tall * span);  // [u][dy' + reach + e][dx + reach]
+  for (int u = 0; u < k; ++u)
+    for (int dy = -t.reach - e; dy <= t.reach + e; ++dy)
+      for (int dx = -t.reach; dx <= t.reach; ++dx) {
+        float sum = 0.0f;
+        for (int ex = -e; ex <= e; ++ex) sum += a[size_t(u) * (2 * e + 1) + ex + e] * cov.at(dx + ex, dy);
+        tx[(size_t(u) * tall + size_t(dy + t.reach + e)) * span + size_t(dx + t.reach)] = sum;
+      }
+  t.cq.assign(size_t(k) * k * span * span, 0.0f);
+  for (int v = 0; v < k; ++v)
+    for (int u = 0; u < k; ++u) {
+      float* out = t.cq.data() + size_t(v * k + u) * span * span;
+      for (int dy = -t.reach; dy <= t.reach; ++dy)
+        for (int dx = -t.reach; dx <= t.reach; ++dx) {
+          float sum = 0.0f;
+          for (int ey = -e; ey <= e; ++ey)
+            sum += a[size_t(v) * (2 * e + 1) + ey + e] *
+                   tx[(size_t(u) * tall + size_t(dy + ey + t.reach + e)) * span + size_t(dx + t.reach)];
+          out[size_t(dy + t.reach) * span + size_t(dx + t.reach)] = sum;
+        }
+    }
+  const int ms = 2 * search + 1;
+  t.bias.resize(size_t(ms) * ms);
+  for (int dy = -search; dy <= search; ++dy)
+    for (int dx = -search; dx <= search; ++dx)
+      t.bias[size_t(dy + search) * ms + size_t(dx + search)] = 2.0f * (t.r0 - cov.at(dx, dy)) * float(k * k);
+  return t;
+}
+
+// The noise variance of each coefficient of a group's 3D transform, var[j * kk + q]: from the
+// members' pairwise covariances (their displacements), through the Walsh-Hadamard transform on both
+// sides, diag(H K H^T).
+void groupVariances(const NoiseTables& t, const std::vector<int>& group, int k, float scale, float* var, float* km) {
+  const int nx = W - k + 1, kk = k * k, n = int(group.size());
+  const int span = 2 * t.reach + 1;
+  for (int q = 0; q < kk; ++q) {
+    const float* cq = t.cq.data() + size_t(q) * span * span;
+    for (int a = 0; a < n; ++a)
+      for (int b = 0; b < n; ++b) {
+        const int dx = group[size_t(a)] % nx - group[size_t(b)] % nx, dy = group[size_t(a)] / nx - group[size_t(b)] / nx;
+        km[a * n + b] = cq[size_t(dy + t.reach) * span + size_t(dx + t.reach)];
+      }
+    for (int a = 0; a < n; ++a) walshHadamard(km + a * n, n, 1);  // K H^T, row by row
+    for (int b = 0; b < n; ++b) walshHadamard(km + b, n, n);      // H (K H^T), column by column
+    for (int j = 0; j < n; ++j) var[size_t(j) * kk + q] = std::max(km[j * n + j], 1e-12f) * scale;
   }
+}
+
+// Both noise models: white (tables null: every coefficient's variance sigma2) or correlated.
+void bm3dCore(const float* src, float* dst, float sigma2, const NoiseTables* tables, float scale, const Bm3dOptions& o) {
+  const int k = std::clamp(o.block, 2, 16);
   const int kk = k * k;
   const std::vector<float> c = dctMatrix(k), window = kaiserWindow(k, o.kaiser);
   const std::vector<int> xs = referencePositions(W - k + 1, o.stride), ys = referencePositions(H - k + 1, o.stride);
@@ -173,29 +247,38 @@ void bm3d(const float* src, float* dst, float sigma, const Bm3dOptions& o) {
   std::vector<std::pair<float, int>> candidates;
   std::vector<int> group;
   const int maxGroup = std::max(o.group1, o.group2);
-  std::vector<float> g(static_cast<size_t>(maxGroup) * kk), gb(static_cast<size_t>(maxGroup) * kk), tmp(static_cast<size_t>(kk));
-  const float sigma2 = sigma * sigma;
+  std::vector<float> g(static_cast<size_t>(maxGroup) * kk), gb(static_cast<size_t>(maxGroup) * kk),
+      tmp(static_cast<size_t>(kk)), var(static_cast<size_t>(maxGroup) * kk, sigma2),
+      km(static_cast<size_t>(maxGroup) * maxGroup);
+  std::vector<float> bias;
+  if (tables)
+    for (float b : tables->bias) bias.push_back(b * scale);
+  const float* matchBias = tables ? bias.data() : nullptr;
+  const float pixelVar = tables ? tables->r0 * scale : sigma2;  // the thresholds' unit
 
-  // Step 1: hard thresholding of each group's 3D transform.
-  const float threshold = o.lambda * sigma;
+  // Step 1: hard thresholding of each group's 3D transform, each coefficient against its own noise.
+  const float lambda2 = o.lambda * o.lambda;
   for (int ry : ys)
     for (int rx : xs) {
-      matchBlocks(src, k, rx, ry, o.search, o.tau1 * sigma2, o.group1, candidates, group);
+      matchBlocks(src, k, rx, ry, o.search, o.tau1 * pixelVar, o.group1, o.skipSameColumn, o.skipSameRow, matchBias,
+                  candidates, group);
       const int n = int(group.size());
+      if (tables) groupVariances(*tables, group, k, scale, var.data(), km.data());
       for (int j = 0; j < n; ++j)
         std::copy_n(noisyDct.data() + size_t(group[size_t(j)]) * kk, kk, g.data() + size_t(j) * kk);
-      int kept = 0;
+      double keptVar = 0.0;  // the noise the group keeps: its weight is the inverse
       for (int q = 0; q < kk; ++q) {
         walshHadamard(g.data() + q, n, kk);
         for (int j = 0; j < n; ++j) {
           float& v = g[size_t(j) * kk + q];
-          if (std::fabs(v) < threshold) v = 0.0f;
-          else ++kept;
+          const float vr = var[size_t(j) * kk + q];
+          if (v * v < lambda2 * vr) v = 0.0f;
+          else keptVar += vr;
         }
         walshHadamard(g.data() + q, n, kk);
       }
-      aggregate(g.data(), group, k, 1.0f / float(std::max(kept, 1)), c, window, num.data(), den.data(), tmp.data(),
-                o.aggregateAll);
+      const float weight = keptVar > 0.0 ? float(1.0 / keptVar) : 1.0f / pixelVar;
+      aggregate(g.data(), group, k, weight, c, window, num.data(), den.data(), tmp.data(), o.aggregateAll);
     }
   for (size_t i = 0; i < kImagePixels; ++i) basic[i] = num[i] / den[i];
   if (!o.wiener) {
@@ -204,34 +287,64 @@ void bm3d(const float* src, float* dst, float sigma, const Bm3dOptions& o) {
   }
 
   // Step 2: the basic estimate's groups give the Wiener factors for the noisy ones.
-  const float noiseW = o.mu2 * sigma2;
   blockDcts(basic.data(), k, c, basicDct);
   std::fill(num.begin(), num.end(), 0.0f);
   std::fill(den.begin(), den.end(), 0.0f);
   for (int ry : ys)
     for (int rx : xs) {
-      matchBlocks(basic.data(), k, rx, ry, o.search, o.tau2 * sigma2, o.group2, candidates, group);
+      // (on the basic estimate, the noise left is small and hardly correlated: no bias)
+      matchBlocks(basic.data(), k, rx, ry, o.search, o.tau2 * pixelVar, o.group2, o.skipSameColumn, o.skipSameRow,
+                  nullptr, candidates, group);
       const int n = int(group.size());
+      if (tables) groupVariances(*tables, group, k, scale, var.data(), km.data());
       for (int j = 0; j < n; ++j) {
         std::copy_n(noisyDct.data() + size_t(group[size_t(j)]) * kk, kk, g.data() + size_t(j) * kk);
         std::copy_n(basicDct.data() + size_t(group[size_t(j)]) * kk, kk, gb.data() + size_t(j) * kk);
       }
-      float energy = 0.0f;  // the Wiener factors' sum of squares
+      double energy = 0.0;  // the noise left after shrinking: sum of W^2 var
       for (int q = 0; q < kk; ++q) {
         walshHadamard(g.data() + q, n, kk);
         walshHadamard(gb.data() + q, n, kk);
         for (int j = 0; j < n; ++j) {
           const float b = gb[size_t(j) * kk + q];
-          const float wf = b * b / (b * b + noiseW);
+          const float vr = var[size_t(j) * kk + q];
+          const float wf = b * b / (b * b + o.mu2 * vr);
           g[size_t(j) * kk + q] *= wf;
-          energy += wf * wf;
+          energy += double(wf) * wf * vr;
         }
         walshHadamard(g.data() + q, n, kk);
       }
-      aggregate(g.data(), group, k, 1.0f / std::max(energy, 1e-6f), c, window, num.data(), den.data(), tmp.data(),
-                o.aggregateAll);
+      aggregate(g.data(), group, k, energy > 1e-20 ? float(1.0 / energy) : 1.0f / pixelVar, c, window, num.data(),
+                den.data(), tmp.data(), o.aggregateAll);
     }
   for (size_t i = 0; i < kImagePixels; ++i) dst[i] = num[i] / den[i];
+}
+
+}  // namespace
+
+float NoiseCovariance::at(int dx, int dy) const {
+  if (radius <= 0 || values.empty()) return 0.0f;
+  dx = std::clamp(dx, -radius, radius);
+  dy = std::clamp(dy, -radius, radius);
+  return values[size_t(dy + radius) * size_t(2 * radius + 1) + size_t(dx + radius)];
+}
+
+void bm3d(const float* src, float* dst, float sigma, const Bm3dOptions& o) {
+  if (!(sigma > 0.0f)) {
+    std::copy(src, src + kImagePixels, dst);
+    return;
+  }
+  bm3dCore(src, dst, sigma * sigma, nullptr, 1.0f, o);
+}
+
+void bm3d(const float* src, float* dst, const NoiseCovariance& noise, float scale, const Bm3dOptions& o) {
+  if (!(scale > 0.0f) || noise.radius <= 0 || !(noise.at(0, 0) > 0.0f)) {
+    std::copy(src, src + kImagePixels, dst);
+    return;
+  }
+  const int k = std::clamp(o.block, 2, 16);
+  const NoiseTables tables = noiseTables(noise, k, std::max(o.search, 0), dctMatrix(k));
+  bm3dCore(src, dst, 0.0f, &tables, scale, o);
 }
 
 }  // namespace tv

@@ -215,8 +215,8 @@ void Session::init(const std::string& storageDir, const std::string& appVersion)
   snapshot_ = std::make_unique<Snapshot>();
   ctrl_ = std::make_unique<unsigned char[]>(sizeof(uvc_stream_ctrl_t));
   Pipeline::NoiseReducer gpu;
-  gpu.start = [this](const float* src, int searchRadius, int patchRadius, float h) {
-    return startNoiseReductionOnGpu(src, searchRadius, patchRadius, h);
+  gpu.start = [this](const float* src, const Pipeline::NoiseRequest& request) {
+    return startNoiseReductionOnGpu(src, request);
   };
   gpu.finish = [this](float* dst) { return finishNoiseReductionOnGpu(dst); };
   pipeline_.setNoiseReducer(std::move(gpu));
@@ -488,7 +488,10 @@ void Session::processLoop() {
   gpuNlm_.release();  // its context is current on this thread; a new processing thread makes another
 }
 
-bool Session::startNoiseReductionOnGpu(const float* src, int searchRadius, int patchRadius, float h) {
+bool Session::startNoiseReductionOnGpu(const float* src, const Pipeline::NoiseRequest& request) {
+  if (request.method != 0) return false;  // BM3D: no GPU version yet (the CPU fallback is non-local means)
+  const int searchRadius = request.searchRadius, patchRadius = request.patchRadius;
+  const float h = request.h;
   const bool wasFailed = gpuNlm_.failed();
   const bool ok = gpuNr_ && gpuNlm_.start(src, searchRadius, patchRadius, h);
   if (!ok && gpuNr_ && !wasFailed) FLOG("stage 4b: GPU unavailable (%s), the CPU takes over", gpuNlm_.status().c_str());

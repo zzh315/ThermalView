@@ -38,9 +38,32 @@ struct Bm3dOptions {
   // Every block of a group adds its estimate to the result (BM3D); off: only the group's reference
   // block does, the form a GPU can aggregate without float atomics (denser references make up for it).
   bool aggregateAll = true;
+  // Leave the reference's own columns (and rows) out of its matches: the sensor's per-frame column
+  // and row noise is the same along a column, so same-column blocks stack it up as structure
+  // (PIPELINE_LOG, 2026-09-25); from other columns it averages away like the grain.
+  bool skipSameColumn = false, skipSameRow = false;
 };
 
 // src -> dst, kFrameWidth x kImageRows; sigma: the noise's std, in src's units (sigma <= 0: a copy).
 void bm3d(const float* src, float* dst, float sigma, const Bm3dOptions& options);
+
+// Correlated noise (Makinen, Azzari and Foi, "Collaborative filtering of correlated noise: exact
+// transform-domain variance for improved shrinkage and patch matching", IEEE TIP 2020): this
+// sensor's per-frame column and row noise is the same along a column (a row), so block matching
+// stacks blocks that share it and the white-noise form keeps it as structure (PIPELINE_LOG,
+// 2026-09-25). The noise model is its measured autocovariance R: values[(dy + radius) * (2 radius
+// + 1) + dx + radius], src's units squared, |dx|, |dy| <= radius (beyond: the edge's value, so the
+// rows' and columns' long-range offsets carry on).
+struct NoiseCovariance {
+  int radius = 0;
+  std::vector<float> values;
+  float at(int dx, int dy) const;
+};
+
+// The same filter with the noise's covariance R x scale (the frame's noise level against the
+// model's): every 3D coefficient is thresholded and shrunk against its own variance (from R and the
+// group's block positions), groups are weighted by the variance they keep, and block matching
+// subtracts the noise's expected distance at each displacement, 2 (R(0) - R(d)).
+void bm3d(const float* src, float* dst, const NoiseCovariance& noise, float scale, const Bm3dOptions& options);
 
 }  // namespace tv

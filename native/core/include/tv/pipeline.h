@@ -11,6 +11,7 @@
 
 #include "tv/bad_pixels.h"
 #include "tv/drift.h"
+#include "tv/bm3d.h"
 #include "tv/filters.h"
 #include "tv/frame.h"
 #include "tv/readouts.h"
@@ -76,6 +77,12 @@ struct PipelineOptions {
   float nrSigma = 0.0f;
   float nrNominalSigma = 1.07f;  // the start value (M4: 1.06-1.10 counts on the still benchmark scenes)
   int nrFallbackSearch = 2;      // the CPU's search radius when an accelerator is set but fails
+  // The method: 0 non-local means (above), 1 BM3D (bm3d.h; owner, 2026-09-25: a better filter, in
+  // development), at sigma = bm3dStrength x the measured noise. BM3D runs on the CPU only where no
+  // accelerator is set (the harness): with one that can't run it, the CPU fallback is non-local means.
+  int nrMethod = 0;
+  float bm3dStrength = 1.0f;
+  Bm3dOptions bm3d;
 
   // Stage 5 (approved 2026-09-25, gain cap 2.0): automatic tone mapping (tone.h) in place of the
   // baseline's per-frame min/max stretch. Pixels at the camera's clip stay out of its statistics.
@@ -160,8 +167,15 @@ class Pipeline {
   // the same non-local means, finish waits for the result. Either returning false means it isn't
   // available, and this CPU version runs instead, at a search radius of at most nrFallbackSearch
   // (h scaled to keep the strength, as measured).
+  struct NoiseRequest {
+    int method = 0;                              // PipelineOptions::nrMethod
+    int searchRadius = 0, patchRadius = 0;       // non-local means
+    float h = 0.0f;
+    float sigma = 0.0f;                          // BM3D
+    Bm3dOptions bm3d;
+  };
   struct NoiseReducer {
-    std::function<bool(const float* src, int searchRadius, int patchRadius, float h)> start;
+    std::function<bool(const float* src, const NoiseRequest& request)> start;
     std::function<bool(float* dst)> finish;
   };
   void setNoiseReducer(NoiseReducer reducer) { reducer_ = std::move(reducer); }

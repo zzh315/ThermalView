@@ -260,7 +260,7 @@ class Session {
   bool gpuNr_ = true;
   std::atomic<bool> nrCheckRequested_{false};
   RollingWindow gpuNrMs_{250};
-  bool startNoiseReductionOnGpu(const float* src, int searchRadius, int patchRadius, float h);
+  bool startNoiseReductionOnGpu(const float* src, const Pipeline::NoiseRequest& request);
   bool finishNoiseReductionOnGpu(float* dst);
   struct { const float* src = nullptr; int searchRadius = 0, patchRadius = 0; float h = 0; } nrStarted_;
   void checkGpuNoiseReduction(const float* src, const float* gpu, int searchRadius, int patchRadius, float h);

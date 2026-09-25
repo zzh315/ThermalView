@@ -8,7 +8,8 @@ extern "C" {
 
 // BM3D (tv/bm3d.h): src -> dst, kImagePixels floats each.
 void tv_bm3d(const float* src, float* dst, float sigma, int block, int stride, int search, int group1, int group2,
-             float lambda, float tau1, float tau2, int wiener, float kaiser, int aggregateAll, float mu2) {
+             float lambda, float tau1, float tau2, int wiener, float kaiser, int aggregateAll, float mu2,
+             int skipSameColumn, int skipSameRow) {
   tv::Bm3dOptions o;
   o.block = block;
   o.stride = stride;
@@ -22,7 +23,32 @@ void tv_bm3d(const float* src, float* dst, float sigma, int block, int stride, i
   o.kaiser = kaiser;
   o.aggregateAll = aggregateAll != 0;
   o.mu2 = mu2;
+  o.skipSameColumn = skipSameColumn != 0;
+  o.skipSameRow = skipSameRow != 0;
   tv::bm3d(src, dst, sigma, o);
+}
+
+// BM3D for correlated noise: the covariance values (2 radius + 1)^2, scaled by scale.
+void tv_bm3d_cov(const float* src, float* dst, const float* cov, int radius, float scale, int block, int stride,
+                 int search, int group1, int group2, float lambda, float tau1, float tau2, int wiener, float kaiser,
+                 int aggregateAll, float mu2) {
+  tv::Bm3dOptions o;
+  o.block = block;
+  o.stride = stride;
+  o.search = search;
+  o.group1 = group1;
+  o.group2 = group2;
+  o.lambda = lambda;
+  o.tau1 = tau1;
+  o.tau2 = tau2;
+  o.wiener = wiener != 0;
+  o.kaiser = kaiser;
+  o.aggregateAll = aggregateAll != 0;
+  o.mu2 = mu2;
+  tv::NoiseCovariance noise;
+  noise.radius = radius;
+  noise.values.assign(cov, cov + size_t(2 * radius + 1) * size_t(2 * radius + 1));
+  tv::bm3d(src, dst, noise, scale, o);
 }
 
 // Stage 4b's shipped non-local means (tv/filters.h's fast version), h in src's units.

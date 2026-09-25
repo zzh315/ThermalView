@@ -128,12 +128,13 @@ TEST_CASE("stage 4b uses the accelerator when it works, and the CPU when it does
   int starts = 0, finishes = 0, alongside = 0;
   std::vector<std::string> order;
   tv::Pipeline::NoiseReducer gpu;
-  gpu.start = [&](const float*, int sr, int pr, float h) {
+  gpu.start = [&](const float*, const tv::Pipeline::NoiseRequest& r) {
     ++starts;
     order.push_back("start");
-    CHECK(sr == o.nrSearch);
-    CHECK(pr == o.nrPatch);
-    CHECK(h == doctest::Approx(o.nrStrength * 1.5f));
+    CHECK(r.method == 0);
+    CHECK(r.searchRadius == o.nrSearch);
+    CHECK(r.patchRadius == o.nrPatch);
+    CHECK(r.h == doctest::Approx(o.nrStrength * 1.5f));
     return true;
   };
   gpu.finish = [&](float* dst) {
@@ -158,7 +159,7 @@ TEST_CASE("stage 4b uses the accelerator when it works, and the CPU when it does
   for (bool failAtStart : {true, false}) {
     CAPTURE(failAtStart);
     tv::Pipeline::NoiseReducer broken;
-    broken.start = [&](const float*, int, int, float) { return !failAtStart; };
+    broken.start = [&](const float*, const tv::Pipeline::NoiseRequest&) { return !failAtStart; };
     broken.finish = [&](float*) { return false; };
     p.setNoiseReducer(broken);
     alongside = 0;
@@ -201,9 +202,9 @@ TEST_CASE("with an accelerator, the output is exactly the CPU path's (stage 3b's
   int sr = 0, pr = 0;
   float hh = 0.0f;
   tv::Pipeline::NoiseReducer fake;
-  fake.start = [&](const float* src, int searchRadius, int patchRadius, float h) {
+  fake.start = [&](const float* src, const tv::Pipeline::NoiseRequest& r) {
     std::copy(src, src + tv::kImagePixels, buffer.begin());
-    sr = searchRadius, pr = patchRadius, hh = h;
+    sr = r.searchRadius, pr = r.patchRadius, hh = r.h;
     return true;
   };
   fake.finish = [&](float* dst) {

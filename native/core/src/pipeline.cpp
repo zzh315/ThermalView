@@ -59,6 +59,32 @@ bool parseStages(const std::string& text, PipelineOptions* o) {
       o->nrStrength = float(std::atof(value.c_str()));
     } else if (key == "nrSigma" && !value.empty()) {
       o->nrSigma = float(std::atof(value.c_str()));
+    } else if (key == "nrMethod" && !value.empty()) {
+      o->nrMethod = value == "bm3d" || value == "1" ? 1 : 0;
+    } else if (key == "bm3dStrength" && !value.empty()) {
+      o->bm3dStrength = float(std::atof(value.c_str()));
+    } else if (key == "bm3dBlock" && !value.empty()) {
+      o->bm3d.block = std::clamp(std::atoi(value.c_str()), 2, 16);
+    } else if (key == "bm3dStride" && !value.empty()) {
+      o->bm3d.stride = std::clamp(std::atoi(value.c_str()), 1, 16);
+    } else if (key == "bm3dSearch" && !value.empty()) {
+      o->bm3d.search = std::clamp(std::atoi(value.c_str()), 0, 32);
+    } else if (key == "bm3dGroup1" && !value.empty()) {
+      o->bm3d.group1 = std::clamp(std::atoi(value.c_str()), 1, 64);
+    } else if (key == "bm3dGroup2" && !value.empty()) {
+      o->bm3d.group2 = std::clamp(std::atoi(value.c_str()), 1, 64);
+    } else if (key == "bm3dWiener") {
+      o->bm3d.wiener = on;
+    } else if (key == "bm3dAll") {
+      o->bm3d.aggregateAll = on;
+    } else if (key == "bm3dLambda" && !value.empty()) {
+      o->bm3d.lambda = float(std::atof(value.c_str()));
+    } else if (key == "bm3dMu2" && !value.empty()) {
+      o->bm3d.mu2 = float(std::atof(value.c_str()));
+    } else if (key == "bm3dTau1" && !value.empty()) {
+      o->bm3d.tau1 = float(std::atof(value.c_str()));
+    } else if (key == "bm3dTau2" && !value.empty()) {
+      o->bm3d.tau2 = float(std::atof(value.c_str()));
     } else if (key == "tone") {
       o->tone = on;
     } else if (key == "toneGain" && !value.empty()) {
@@ -135,7 +161,8 @@ std::string describeStages(const PipelineOptions& o) {
   if (o.badPixels) add("badPixels");
   if (o.destripe) add("destripe");
   if (o.denoise) add("denoise(k" + std::to_string(o.denoiseKMin).substr(0, 4) + ")");
-  if (o.nr) add("nr(h" + std::to_string(o.nrStrength).substr(0, 4) + ")");
+  if (o.nr && o.nrMethod == 1) add("bm3d(s" + std::to_string(o.bm3dStrength).substr(0, 4) + ")");
+  else if (o.nr) add("nr(h" + std::to_string(o.nrStrength).substr(0, 4) + ")");
   if (o.tone) add("tone(g" + std::to_string(o.toneOptions.maxGain).substr(0, 4) + ")");
   if (o.detail && o.tone) {
     if (o.detailMidGain > 1.0f) add("texture(x" + std::to_string(o.detailMidGain).substr(0, 4) + ")");
@@ -199,7 +226,14 @@ void Pipeline::reduceNoise(float* sig, const std::function<void()>& alongside) {
   const float h = options_.nrStrength * sigma;
   const bool accelerator = reducer_.start && reducer_.finish;
   nrAccelerated_ = false;
-  if (accelerator && reducer_.start(sig, options_.nrSearch, options_.nrPatch, h)) {
+  NoiseRequest request;
+  request.method = options_.nrMethod;
+  request.searchRadius = options_.nrSearch;
+  request.patchRadius = options_.nrPatch;
+  request.h = h;
+  request.sigma = options_.bm3dStrength * sigma;
+  request.bm3d = options_.bm3d;
+  if (accelerator && reducer_.start(sig, request)) {
     alongside();  // while it runs
     nrOut_.resize(kImagePixels);
     nrAccelerated_ = reducer_.finish(nrOut_.data());
@@ -209,6 +243,12 @@ void Pipeline::reduceNoise(float* sig, const std::function<void()>& alongside) {
     }
   }
   alongside();  // before the CPU filter changes sig in place
+  if (options_.nrMethod == 1 && !accelerator) {  // BM3D on the CPU: the harness's reference
+    nrOut_.resize(kImagePixels);
+    bm3d(sig, nrOut_.data(), request.sigma, options_.bm3d);
+    std::copy(nrOut_.begin(), nrOut_.end(), sig);
+    return;
+  }
   // The CPU: at most nrFallbackSearch when an accelerator failed (the full search would miss the
   // frame budget), h scaled to keep the noise reduction (nr_study: 5x5 search at 1.27x h ~ 11x11).
   int search = options_.nrSearch;
