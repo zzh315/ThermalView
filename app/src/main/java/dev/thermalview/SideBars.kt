@@ -356,12 +356,12 @@ private fun CalibrateTile(live: Boolean) {
     }
 }
 
-private class CaptureMode(val title: String, val note: String, val description: String)
+private class CaptureMode(val title: String, val caption: String, val note: String, val description: String)
 
 private val CAPTURE_MODES = listOf(
-    CaptureMode("Mark", "log only", "Marks the field log (for test scripts)"),
-    CaptureMode("Record", "200 frames", "Records 200 raw frames now"),
-    CaptureMode("Calibrated", "shutter, then 200", "Waits for the shutter to cool, recalibrates, then records 200 frames"),
+    CaptureMode("Mark", "Mark", "log only", "Marks the field log (for test scripts)"),
+    CaptureMode("Record", "Record", "200 frames", "Records 200 raw frames now"),
+    CaptureMode("Recalibrate + record", "Recal", "shutter, then 200", "Waits for the shutter to cool, recalibrates, then records 200 frames"),
 )
 
 /**
@@ -391,7 +391,7 @@ private fun CaptureTile(status: Status, live: Boolean) {
     val run = {
         if (live && !busy) {
             count += 1
-            val label = "${m.title.lowercase()} #$count"
+            val label = "${m.caption.lowercase()} #$count"
             flash = when (mode) {
                 0 -> { NativeBridge.mark(label); "marked #$count" }
                 1 -> {
@@ -410,7 +410,7 @@ private fun CaptureTile(status: Status, live: Boolean) {
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Caption(m.title, Ui.Accent, Modifier.weight(1f))
+                Caption(m.caption, Ui.Accent, Modifier.weight(1f))
                 Chevron(Ui.Accent)
             }
             Value("Capture")
