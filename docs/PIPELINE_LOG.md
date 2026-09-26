@@ -4,6 +4,59 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — M7, contrast: stage 5's upper plateau and gain cap, for the owner's pick (Settings › Contrast)
+
+**The owner:** "prioritise image quality and good looking contrast first before anything else".
+
+**Where we stand** (the app's settings, `bench/results/4541ee7+m7_start.json`; the reference apps' screenshots at camera resolution; levels of 255):
+
+| Scene | Levels used, p1–p99: ours / Hti / Xtherm | Regional contrast (RMS against a 6 px blur): ours / Hti / Xtherm |
+|---|---|---|
+| `room` | 171 / 55 / 111 | 8.6 / 2.7 / 4.8 |
+| `keyboard` | 229 / 96 / 186 | 7.8 / 3.8 / 6.4 |
+| `night` | 223 / 102 / 186 | 16.2 / 8.0 / 12.1 |
+| `hand` | 231 / 197 / 231 | 16.1 / 16.9 / 22.7 |
+
+- *Ahead of Hti everywhere.* Hti's wide scenes use a third of the range.
+- *Hti's fine contrast on `hand` is higher* (6.0 against our 3.4) because of its rim, which the owner rejected.
+
+**What limits it** (`bench/results/m7_contrast/curves_now.png`: each scene's histogram, its curve, and pure equalization):
+- *`room`'s curve is nearly a straight line*, so the room's dense middle gets little contrast, and in white hot its median shows at level 72 of 255 (murky). Two limits bind:
+  - **The upper plateau** (the mean of the histogram's local maxima). A long sparse tail's many tiny maxima pull it down, so the room's bulk is clipped hard.
+  - **The gain cap** (2 levels a count) binds as soon as the plateau is raised.
+- *`keyboard` and `night`* are held by the plateau alone.
+- *`flat` scenes* are held by the cap, which is what keeps their noise calm.
+
+**Tried** (harness renders, frame 100, the app's settings; contrast as std / regional, white hot):
+
+| Change | `room` | `night` | `keyboard` | `hand` (the wall behind it) | `flat` noise |
+|---|---|---|---|---|---|
+| now | 40.8 / 9.1 | 61.9 / 17.1 | 61.4 / 8.3 | black (median 33) | 1.06 |
+| upper plateau ×2 ("More") | 40.5 / 9.1 | 68.5 / 20.3 | 65.5 / 8.7 | dark grey (47), faint column stripes | 1.06 |
+| + gain cap 3 ("Most") | 54.4 / 10.7 | 68.5 / 20.3 | 66.9 / 8.9 | the same | 1.59 |
+
+- *The lower plateau at 0.1* rescues `bulb`'s room from black: white-hot median 6 → 14.
+  - But it takes output from the temperature gap between a hand and a hot bulb: bulb minus hand 0.33 → 0.26 in white hot, 0.23 → 0.20 in Rainbow HC.
+  - That's the separation the owner asked for on that scene ("the hand seems to have color close to the light bulb"), so it stays at 0.25.
+- *The upper plateau barely moves that separation* (0.33 → 0.30; 0.23 → 0.22).
+- *The metrics for More and Most* (`4541ee7+m7_more.json`, `+m7_most.json`):
+  - **More** changes no flat-scene figure: noise, fixed pattern, stripes and flicker are identical. Keyboard detail 4.79 → 4.81; its halo 1.91 → 1.63%.
+  - **Most** costs ×1.5 on `flat` and `flat_aged`: noise 1.06 → 1.59 and 1.33 → 1.99 levels, fixed pattern 4.1 → 6.2, row stripes on `flat_aged` 2.4 → 3.6. The recalibration's biggest step rises 8.3 → 12.5 levels. At the tablet's scale that's visible mottling on a bare desk.
+
+**Not adopted:**
+- *A mean-referenced upper plateau* (the mean occupied bin, meant to pass a broad bulk and clip a narrow peak). `hand`'s wall is itself a broad zone (80 counts with a real gradient), so it greyed the wall just the same.
+- *A wider mid-scale layer* (radius 16–24): every figure moved by 2% or less. The adaptive curve spreads its output over whatever histogram it gets, so a boost before it is mostly taken back, and the halo guard fades it near more steps.
+- *Regional contrast* (CLAHE-style local curves, or a regional layer after the curve).
+  - It breaks what a thermal view relies on: a hotter pixel always shows hotter than a cooler one anywhere in the frame.
+  - Local curves would let a cool area in a cold region outshine a warmer one elsewhere: wrong for PCB hot spots and heating pipes.
+
+**For the owner's pick on live scenes:** Settings › Contrast.
+- *Now:* as before.
+- *More:* the upper plateau ×2.
+- *Most:* that and the gain cap 3.
+
+Kept across launches. Sheets: `bench/results/m7_contrast/levels_white_hot.jpg`, `levels_rainbow_hti.jpg` (room, keyboard, night, hand, bulb, flat × Now / More / Most).
+
 ## 2026-09-26 — Rainbow HC: Hti Image's full rainbow, as another palette (the owner: better than Rainbow)
 
 **The owner:** "HTi's rainbow_hc has blue and purple color as well at the lower range, try it out, add it as another palette". Their screenshot of it is in the tablet's DCIM/Screenshots (07:24).

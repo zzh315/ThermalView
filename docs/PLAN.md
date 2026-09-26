@@ -203,6 +203,13 @@ Landscape by default (the View menu turns it: Orientation below), full-screen, m
 
 A final tuning pass on all benchmark scenes, at every view-size preset, then owner sign-off: in the owner's judgment, our output beats each scene's best reference app.
 
+*Status (2026-09-26):* contrast first (owner: "prioritise image quality and good looking contrast first before anything else").
+- **Where we stand:** ahead of Hti on every scene's range and regional contrast (PIPELINE_LOG, "M7, contrast").
+- **Two candidates for stage 5,** for the owner to pick on live scenes in Settings › Contrast:
+  - *More:* the upper plateau ×2. Wide scenes get more detail, at no cost on flat ones.
+  - *Most:* that and the gain cap 3. Low-contrast scenes stretch too, with 1.5× their grain.
+- **Not adopted:** regional contrast. It breaks the global temperature order.
+
 ## Later — ask the owner before starting any of these
 
 - **Focus assist:** a live sharpness score or edge-peaking overlay while the owner turns the focus ring. Cheap to build, and focus is the biggest real-world sharpness factor.

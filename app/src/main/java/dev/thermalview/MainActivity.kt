@@ -44,6 +44,7 @@ data class DebugOptions(
     val boxDim: Float = 0.5f,               // M6: the brightness outside the box (start at 50%; tunable)
     val rainbowPreset: Int = 0,             // the rainbow's look: 0 Deep, 1 Soft (RAINBOW_PRESETS; kept)
     val orientation: Int = 1,               // M6: how the screen turns, ORIENTATION_NAMES (0 Auto, 1 Landscape, 2 Portrait; kept)
+    val contrast: Int = 0,                  // M7's comparison: CONTRAST_LEVELS (0 Now, 1 More, 2 Most; kept)
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -59,6 +60,9 @@ data class DebugOptions(
     ) else emptyList()).plus(
         // (the rainbows' own auto contrast; white hot keeps stage 5 as it is)
         MainActivity.toneFor(palette, rainbowPreset).let { if (it.isEmpty()) emptyList() else listOf(it) },
+    ).plus(
+        MainActivity.CONTRAST_LEVELS.getOrElse(contrast) { MainActivity.CONTRAST_LEVELS[0] }.stages
+            .let { if (it.isEmpty()) emptyList() else listOf(it) },
     ).joinToString(",")
 
     private fun bit(on: Boolean) = if (on) "1" else "0"
@@ -141,6 +145,7 @@ class MainActivity : ComponentActivity() {
             viewSize = prefs.getInt("viewSize", o.viewSize).coerceIn(0, VIEW_WIDTHS.size - 1),
             rainbowPreset = prefs.getInt("rainbow", o.rainbowPreset).coerceIn(0, RAINBOW_PRESETS.size - 1),
             orientation = prefs.getInt("orientation", o.orientation).coerceIn(0, ORIENTATIONS.size - 1),
+            contrast = prefs.getInt("contrast", o.contrast).coerceIn(0, CONTRAST_LEVELS.size - 1),
         )
         prefs.getInt("nrLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withNrLevel(r, it) }
         prefs.getInt("textureLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withTextureLevel(r, it) }
@@ -153,6 +158,7 @@ class MainActivity : ComponentActivity() {
             putInt("viewSize", o.viewSize)
             putInt("rainbow", o.rainbowPreset)
             putInt("orientation", o.orientation)
+            putInt("contrast", o.contrast)
             nrLevelOf(o)?.let { putInt("nrLevel", it) }
             textureLevelOf(o)?.let { putInt("textureLevel", it) }
         }.apply()
@@ -177,7 +183,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, orientation, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
+     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, orientation, contrast, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0"); zoom, zoomX, zoomY (floats: the zoom and the camera point at
      * the view's center); message (a test banner, "" to clear).
@@ -206,6 +212,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("palette")) o = o.copy(palette = extras.getInt("palette"))
         if (extras.containsKey("viewSize")) o = o.copy(viewSize = extras.getInt("viewSize"))
         if (extras.containsKey("orientation")) o = o.copy(orientation = extras.getInt("orientation").coerceIn(0, ORIENTATIONS.size - 1))
+        if (extras.containsKey("contrast")) o = o.copy(contrast = extras.getInt("contrast").coerceIn(0, CONTRAST_LEVELS.size - 1))
         if (extras.containsKey("textureStrength")) o = o.copy(textureStrength = extras.getFloat("textureStrength"))
         if (extras.containsKey("nr")) o = o.copy(nr = extras.getBoolean("nr"))
         if (extras.containsKey("nrStrength")) o = o.copy(nrStrength = extras.getFloat("nrStrength"))
@@ -293,6 +300,17 @@ class MainActivity : ComponentActivity() {
             else -> ""
         }
         fun marksLocked(palette: Int) = palette >= 2  // (the rainbows' lockedAbove / lockedBelow: grey)
+        // M7's contrast comparison (owner, 2026-09-26: "prioritise image quality and good looking contrast
+        // first before anything else"; PIPELINE_LOG): stage 5's upper plateau x2 gives wide scenes' dense
+        // zones more of the range (night, keyboard: +7-12%), keeping the hand and bulb apart; Most also
+        // lets the curve rise 3 levels a count, not 2, so low-contrast scenes (a wall, a ceiling, the
+        // floor) stretch further, with 1.5x their grain.
+        class ContrastLevel(val name: String, val stages: String)
+        val CONTRAST_LEVELS = listOf(
+            ContrastLevel("Now", ""),
+            ContrastLevel("More", "tonePlateauUp=2"),
+            ContrastLevel("Most", "tonePlateauUp=2,toneGain=3"),
+        )
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
         val NR_STRENGTHS = listOf(0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas
         val NR_SEARCHES = listOf(2, 3, 5)  // stage 4b's search radius: 5x5, 7x7, 11x11
