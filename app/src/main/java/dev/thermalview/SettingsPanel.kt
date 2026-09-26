@@ -148,8 +148,8 @@ private fun MainPage(
     Choice(
         "Contrast", MainActivity.CONTRAST_LEVELS.map { it.name }, options.contrast.coerceIn(0, MainActivity.CONTRAST_LEVELS.size - 1),
         note = when (options.contrast) {
-            1 -> "Wide scenes: more detail"
-            2 -> "Low-contrast scenes too"
+            1 -> "More detail; a hot spot won't black out the rest"
+            2 -> "And low-contrast scenes stretched"
             else -> "As before"
         },
     ) { onOptions(options.copy(contrast = it)) }

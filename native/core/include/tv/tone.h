@@ -24,6 +24,9 @@ struct ToneOptions {
   // ...and at most the mean of the histogram's local maxima (the upper plateau) times this:
   float plateauUp = 1.0f;
   bool balance = false;          // what the cap leaves goes half below the scene's median, half above it
+  // Without the balance, the median stays where the curve puts it, but within [medianLo, medianHi] of
+  // the output (M7 experiment: a hot object in view mustn't crush the scene's bulk into black).
+  float medianLo = 0.0f, medianHi = 1.0f;
   float expandTauS = 0.1f;       // the range follows a wider scene this fast
   float contractTauS = 1.3f;     // and a narrower one this slowly
   float curveTauS = 2.0f;        // the curve's shape, smoothed over time (0.3 made a moving hand pump)
@@ -87,6 +90,7 @@ class ToneMapper {
  private:
   ToneOptions options_;
   std::vector<float> previous_, work_, curve_, target_;
+  std::vector<float> guardInc_ = std::vector<float>(kCurve);  // the median guard's copy of the rises
   std::vector<uint32_t> hist_;
   std::vector<uint8_t> outside_;
   bool havePrevious_ = false, haveRange_ = false, haveCurve_ = false;

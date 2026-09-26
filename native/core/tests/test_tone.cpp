@@ -87,3 +87,50 @@ TEST_CASE("intensityAt is the mapping map() applies to a pixel of that value") {
   CHECK(tone.intensityAt(1e6f) == doctest::Approx(tv::ToneOptions{}.outHi));  // clamped at the ends
   CHECK(tone.intensityAt(-1e6f) == doctest::Approx(tv::ToneOptions{}.outLo));
 }
+
+TEST_CASE("the median guard keeps a scene's bulk out of the black when a hot object is in view") {
+  // A room (a gentle ramp, 95% of the frame) and a small, much hotter object (5%, +1500 counts), with
+  // a sparse warm gradient between them, as around a bulb: unguarded, the room sinks to the bottom.
+  auto bulb = [](size_t i) {
+    const size_t x = i % tv::kFrameWidth, y = i / tv::kFrameWidth;
+    if (i < tv::kImagePixels / 20) return 1500.0f;                       // the hot object
+    if (y < 24) return 1500.0f * float(x) / float(tv::kFrameWidth);      // its warm surroundings, sparse
+    return float(x % 64) * 0.5f;                                          // the room
+  };
+  // The frame's median (what the guard places) and the room's own (its rows, lower down the curve).
+  const auto median = [](const std::vector<float>& out, size_t from) {
+    std::vector<float> v(out.begin() + std::ptrdiff_t(from), out.end());
+    std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(v.size() / 2), v.end());
+    return v[v.size() / 2];
+  };
+  std::vector<float> out(tv::kImagePixels);
+  tv::ToneMapper plain;
+  for (uint32_t k = 0; k < 30; ++k) plain.map(scene(5000, 1.2f, k, bulb).data(), out.data());
+  const float sunk = median(out, 0), roomSunk = median(out, tv::kImagePixels / 2);
+  tv::ToneOptions o;
+  o.medianLo = 0.25f;
+  o.medianHi = 0.75f;
+  tv::ToneMapper guarded(o);
+  for (uint32_t k = 0; k < 30; ++k) guarded.map(scene(5000, 1.2f, k, bulb).data(), out.data());
+  const float held = median(out, 0), roomHeld = median(out, tv::kImagePixels / 2);
+  CHECK(sunk < 0.2f);
+  // (the output is squeezed into 0.03..0.97: the curve's 0.25 shows at ~0.265)
+  CHECK(held == doctest::Approx(0.03f + 0.94f * 0.25f).epsilon(0.08));
+  CHECK(roomHeld > roomSunk + 0.05f);  // the room itself comes up out of the black
+  CHECK(out[0] > 0.9f);                // the hot object still at the top
+}
+
+TEST_CASE("the median guard leaves a scene whose median is already in the band alone") {
+  auto ramp = [](size_t i) { return float(i % tv::kFrameWidth) * 2.0f; };
+  std::vector<float> a(tv::kImagePixels), b(tv::kImagePixels);
+  tv::ToneMapper plain;
+  tv::ToneOptions o;
+  o.medianLo = 0.25f;
+  o.medianHi = 0.75f;
+  tv::ToneMapper guarded(o);
+  for (uint32_t k = 0; k < 10; ++k) {
+    plain.map(scene(5000, 1.2f, k, ramp).data(), a.data());
+    guarded.map(scene(5000, 1.2f, k, ramp).data(), b.data());
+  }
+  for (size_t i = 0; i < a.size(); i += 97) CHECK(b[i] == doctest::Approx(a[i]).epsilon(1e-6));
+}

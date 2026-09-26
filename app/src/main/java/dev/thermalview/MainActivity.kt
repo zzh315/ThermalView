@@ -302,14 +302,17 @@ class MainActivity : ComponentActivity() {
         fun marksLocked(palette: Int) = palette >= 2  // (the rainbows' lockedAbove / lockedBelow: grey)
         // M7's contrast comparison (owner, 2026-09-26: "prioritise image quality and good looking contrast
         // first before anything else"; PIPELINE_LOG): stage 5's upper plateau x2 gives wide scenes' dense
-        // zones more of the range (night, keyboard: +7-12%), keeping the hand and bulb apart; Most also
+        // zones more of the range (night, keyboard: +7-12%), keeping the hand and bulb apart, and the
+        // median guard keeps a scene's bulk within 0.25-0.75 of the output, so a hot object in view
+        // doesn't black out the rest (white hot; the rainbows' balance already centres it). Most also
         // lets the curve rise 3 levels a count, not 2, so low-contrast scenes (a wall, a ceiling, the
         // floor) stretch further, with 1.5x their grain.
         class ContrastLevel(val name: String, val stages: String)
+        private const val MEDIAN_GUARD = "toneMedianLo=0.25,toneMedianHi=0.75"
         val CONTRAST_LEVELS = listOf(
             ContrastLevel("Now", ""),
-            ContrastLevel("More", "tonePlateauUp=2"),
-            ContrastLevel("Most", "tonePlateauUp=2,toneGain=3"),
+            ContrastLevel("More", "tonePlateauUp=2,$MEDIAN_GUARD"),
+            ContrastLevel("Most", "tonePlateauUp=2,toneGain=3,$MEDIAN_GUARD"),
         )
         val TEXTURE_STRENGTHS = listOf(1.5f, 2.0f, 2.5f, 3.0f)  // stage 6's settings (owner, 2026-09-25)
         val NR_STRENGTHS = listOf(0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f)  // stage 4b's, h in noise sigmas

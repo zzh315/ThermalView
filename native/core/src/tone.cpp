@@ -199,22 +199,39 @@ void ToneMapper::map(const float* signal, float* out, const uint8_t* exclude, fl
     }
     return r;
   };
+  // The scene's median bin (the balance and the median guard place the curve by it).
+  uint64_t counted = 0;
+  for (int b = 0; b < kCurve; ++b) counted += hist_[size_t(b)];
+  int m = 0;
+  for (uint64_t cum = 0; m < kCurve && cum + hist_[size_t(m)] <= counted / 2; ++m) cum += hist_[size_t(m)];
+  // The median at a share s of the output: each side of it gets its share (a side the cap stops short
+  // leaves the rest to the other, so the palette is used where it can be).
+  const auto split = [&](float share) {
+    float lower = fill(0, m, share), upper = fill(m, kCurve, 1.0f - share);
+    if (lower < share - 1e-4f) upper = fill(m, kCurve, 1.0f - lower);
+    else if (upper < 1.0f - share - 1e-4f) lower = fill(0, m, 1.0f - upper);
+    target_[0] = std::clamp(share - lower, 0.0f, std::max(0.0f, 1.0f - lower - upper));
+  };
   if (options_.balance) {
     // The scene's median at the palette's middle: each half of the pixels gets half the output (the
     // even share above hands most of it to a long sparse tail, pushing the scene's bulk to one end).
-    // A half the cap stops short leaves the rest to the other, so the palette is used where it can be.
-    uint64_t counted = 0;
-    for (int b = 0; b < kCurve; ++b) counted += hist_[size_t(b)];
-    int m = 0;
-    for (uint64_t cum = 0; m < kCurve && cum + hist_[size_t(m)] <= counted / 2; ++m) cum += hist_[size_t(m)];
-    float lower = fill(0, m, 0.5f), upper = fill(m, kCurve, 0.5f);
-    if (lower < 0.5f - 1e-4f) upper = fill(m, kCurve, 1.0f - lower);
-    else if (upper < 0.5f - 1e-4f) lower = fill(0, m, 1.0f - upper);
-    target_[0] = std::clamp(0.5f - lower, 0.0f, std::max(0.0f, 1.0f - lower - upper));
+    split(0.5f);
   } else {
+    const bool guard = options_.medianLo > 0.0f || options_.medianHi < 1.0f;
+    if (guard) std::copy(inc.begin(), inc.begin() + kCurve, guardInc_.begin());
     rise = fill(0, kCurve, 1.0f);
     // The curve at the bin edges: cumulative, centred when the cap kept it below the full range.
     target_[0] = 0.5f * (1.0f - rise);
+    if (guard) {
+      // Where that leaves the median, kept within the guard (from the rises as they were before the fill).
+      float at = target_[0];
+      for (int b = 0; b < m; ++b) at += inc[size_t(b)];
+      const float want = std::clamp(at, options_.medianLo, options_.medianHi);
+      if (std::abs(want - at) > 1e-4f) {
+        std::copy(guardInc_.begin(), guardInc_.begin() + kCurve, inc.begin());
+        split(want);
+      }
+    }
   }
   for (int b = 0; b < kCurve; ++b) target_[size_t(b + 1)] = target_[size_t(b)] + inc[size_t(b)];
   // The first frame takes its curve as it is: easing in from a neutral one would show a second or two
