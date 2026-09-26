@@ -46,4 +46,24 @@ void bsplineCoefficientsReference(const float* image, float* coeffs);
 void upscale(const std::vector<float>& input, const float* image, Kernel kernel, bool clamp, const ViewRect& rect,
              int dstW, int dstH, float* dst);
 
+// M7's edge sharpening, on the upscaled image (contour shaping). Where the image has an edge, each
+// upscaled value is pushed away from the middle of its neighbourhood's range, toward the edge's two
+// sides: the edge steepens along the upscaled image's own smooth contours, so a slanted edge gets no
+// stair-steps (sharpening at camera resolution loses where an edge sits within its pixels), and no
+// value passes its neighbourhood's min or max (no halo). The gate opens where the 3x3 range is most
+// of the 7x7 one (a step, not a steady ramp) and several times the frame's noise floor (the 20th
+// percentile of the 3x3 range), so neither gradients nor grain are touched.
+struct ContourFields {
+  std::vector<float> values;  // per camera pixel: the 3x3 min and max, the 7x7 min and max
+  float floor = 0.0f;         // the frame's noise floor, in the image's units
+};
+void contourFields(const float* image, ContourFields* fields);  // image: kFrameWidth x kImageRows
+
+// One output's value v at camera coordinate (cx, cy) (pixel centers at integers), shaped at strength
+// k: the renderer's fragment shader does the same, with the fields sampled bilinearly.
+float shapeContour(const ContourFields& fields, float k, float cx, float cy, float v);
+
+// shapeContour over an upscale's output (its pixel (i, j) at upscale's camera coordinate).
+void sharpenContours(const ContourFields& fields, float k, const ViewRect& rect, int dstW, int dstH, float* dst);
+
 }  // namespace tv

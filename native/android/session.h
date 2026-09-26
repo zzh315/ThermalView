@@ -87,6 +87,7 @@ class Session {
   // on the screen, quarter turns clockwise (M6's orientation).
   void setViewWidth(int px) { renderer_.setViewWidth(px); }
   void setRotation(int quarterTurns) { renderer_.setRotation(quarterTurns); }
+  void setSharpen(float strength) { renderer_.setSharpen(strength); }  // M7's edge sharpening (0: off)
 
   // Zoom and pan (PLAN M6): the visible part of the frame, camera pixels. The renderer draws it; the
   // tone mapping and the readouts measure it (the processing thread applies it with the next frame).

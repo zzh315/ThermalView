@@ -45,6 +45,7 @@ data class DebugOptions(
     val rainbowPreset: Int = 0,             // the rainbow's look: 0 Deep, 1 Soft (RAINBOW_PRESETS; kept)
     val orientation: Int = 1,               // M6: how the screen turns, ORIENTATION_NAMES (0 Auto, 1 Landscape, 2 Portrait; kept)
     val contrast: Int = 0,                  // M7's comparison: CONTRAST_LEVELS (0 Now, 1 More, 2 Most; kept)
+    val sharpness: Int = 0,                 // M7's edge sharpening: LEVELS (0 Off, 1 Low, 2 High; kept), SHARPEN_STRENGTHS
 ) {
     /** The pipeline stages these toggles select, for [NativeBridge.setPipeline]. */
     fun stages(): String = listOf(
@@ -146,6 +147,7 @@ class MainActivity : ComponentActivity() {
             rainbowPreset = prefs.getInt("rainbow", o.rainbowPreset).coerceIn(0, RAINBOW_PRESETS.size - 1),
             orientation = prefs.getInt("orientation", o.orientation).coerceIn(0, ORIENTATIONS.size - 1),
             contrast = prefs.getInt("contrast", o.contrast).coerceIn(0, CONTRAST_LEVELS.size - 1),
+            sharpness = prefs.getInt("sharpness", o.sharpness).coerceIn(0, SHARPEN_STRENGTHS.size - 1),
         )
         prefs.getInt("nrLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withNrLevel(r, it) }
         prefs.getInt("textureLevel", -1).takeIf { it in LEVELS.indices }?.let { r = withTextureLevel(r, it) }
@@ -159,6 +161,7 @@ class MainActivity : ComponentActivity() {
             putInt("rainbow", o.rainbowPreset)
             putInt("orientation", o.orientation)
             putInt("contrast", o.contrast)
+            putInt("sharpness", o.sharpness)
             nrLevelOf(o)?.let { putInt("nrLevel", it) }
             textureLevelOf(o)?.let { putInt("textureLevel", it) }
         }.apply()
@@ -175,6 +178,7 @@ class MainActivity : ComponentActivity() {
         NativeBridge.setPipeline(value.stages()).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "pipeline: $it") }
         NativeBridge.setDisplay(value.upscaler, paletteJson(value.palette)).takeIf { it.isNotEmpty() }?.let { Log.w(TAG, "display: $it") }
         NativeBridge.setViewWidth(VIEW_WIDTHS.getOrElse(value.viewSize) { 0 })
+        NativeBridge.setSharpen(SHARPEN_STRENGTHS.getOrElse(value.sharpness) { 0f })
         val turn = ORIENTATIONS.getOrElse(value.orientation) { ORIENTATIONS[1] }
         if (requestedOrientation != turn) requestedOrientation = turn
     }
@@ -183,7 +187,7 @@ class MainActivity : ComponentActivity() {
      * Debug builds only: lets the M1 runs be driven over adb, e.g.
      * `adb shell am start -n dev.thermalview/.MainActivity --ei dump 200`.
      * Extras: csv, skipStartupShutter, fallbackOrder, lockoutDump, autoRange, highMathInfi,
-     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, orientation, contrast, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
+     * shutterHold, badPixels, drift, stripes, tone, detail, nr, gpuNr, bigCores, perfHint (booleans), upscaler, palette, viewSize, orientation, contrast, sharpness, nrSearch, nrMethod, nrLevel, textureLevel (ints), textureStrength, nrStrength (floats; applied first); reconnect, shutter, lockout, stopReplay, readback, nrCheck, logOverlay (booleans);
      * dump (frames); replay (dump path without extension); range ("high" or "normal"); pipeline
      * (stage text, e.g. "shutter=0"); zoom, zoomX, zoomY (floats: the zoom and the camera point at
      * the view's center); message (a test banner, "" to clear).
@@ -213,6 +217,7 @@ class MainActivity : ComponentActivity() {
         if (extras.containsKey("viewSize")) o = o.copy(viewSize = extras.getInt("viewSize"))
         if (extras.containsKey("orientation")) o = o.copy(orientation = extras.getInt("orientation").coerceIn(0, ORIENTATIONS.size - 1))
         if (extras.containsKey("contrast")) o = o.copy(contrast = extras.getInt("contrast").coerceIn(0, CONTRAST_LEVELS.size - 1))
+        if (extras.containsKey("sharpness")) o = o.copy(sharpness = extras.getInt("sharpness").coerceIn(0, SHARPEN_STRENGTHS.size - 1))
         if (extras.containsKey("textureStrength")) o = o.copy(textureStrength = extras.getFloat("textureStrength"))
         if (extras.containsKey("nr")) o = o.copy(nr = extras.getBoolean("nr"))
         if (extras.containsKey("nrStrength")) o = o.copy(nrStrength = extras.getFloat("nrStrength"))
@@ -307,6 +312,10 @@ class MainActivity : ComponentActivity() {
         // doesn't black out the rest (white hot; the rainbows' balance already centres it). Most also
         // lets the curve rise 3 levels a count, not 2, so low-contrast scenes (a wall, a ceiling, the
         // floor) stretch further, with 1.5x their grain.
+        // M7's edge sharpening after the upscale (native/core sharpenContours; PIPELINE_LOG): Off, Low
+        // 0.5 and High 1.0. Steps steepen along the upscaled image's own contours, so slanted edges get no
+        // stair-steps and nothing overshoots; grain and gradients are left alone.
+        val SHARPEN_STRENGTHS = listOf(0f, 0.5f, 1.0f)
         class ContrastLevel(val name: String, val stages: String)
         private const val MEDIAN_GUARD = "toneMedianLo=0.25,toneMedianHi=0.75"
         val CONTRAST_LEVELS = listOf(

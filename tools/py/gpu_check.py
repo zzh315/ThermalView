@@ -75,6 +75,8 @@ def main():
     rot = int(info.get("rot", 0))
     if rot:  # M6's orientation: the image turned in the view
         cmd += ["--rotate", str(rot)]
+    if float(info.get("sharpen", 0)) > 0:  # M7's edge sharpening
+        cmd += ["--sharpen", str(info["sharpen"])]
     subprocess.run(["cmake", "--build", ROOT / "build" / "harness"], check=True, stdout=subprocess.DEVNULL)
     subprocess.run(cmd, check=True)
     gpu = np.asarray(Image.open(OUT / "readback.ppm").convert("RGB")).astype(int)

@@ -209,6 +209,10 @@ A final tuning pass on all benchmark scenes, at every view-size preset, then own
   - *More:* the upper plateau ×2 and the median guard. Wide scenes get more detail at no cost on flat ones, and a hot object no longer blacks out the rest.
   - *Most:* that and the gain cap 3. Low-contrast scenes stretch too, with 1.5× their grain.
 - **Not adopted:** regional contrast. It breaks the global temperature order.
+- **Sharpness:** edges steepened after the upscale, along the upscaled image's own contours.
+  - It avoids the stair-steps of camera-resolution sharpening, and nothing overshoots.
+  - It's gated to steps above the frame's noise floor.
+  - Settings › Sharpness, Off by default, for the owner's look.
 
 ## Later — ask the owner before starting any of these
 

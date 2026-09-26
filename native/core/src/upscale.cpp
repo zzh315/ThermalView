@@ -336,4 +336,91 @@ void upscale(const std::vector<float>& input, const float* image, Kernel kernel,
   }
 }
 
+namespace {
+
+// Separable running min and max over (2r + 1) x (2r + 1), borders clamped.
+void minMax(const float* image, int r, float* lo, float* hi) {
+  const int w = kFrameWidth, h = kImageRows;
+  std::vector<float> rowLo(size_t(w) * size_t(h)), rowHi(rowLo.size());
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      float a = image[size_t(y) * size_t(w) + size_t(x)], b = a;
+      for (int d = -r; d <= r; ++d) {
+        const float v = image[size_t(y) * size_t(w) + size_t(std::clamp(x + d, 0, w - 1))];
+        a = std::min(a, v);
+        b = std::max(b, v);
+      }
+      rowLo[size_t(y) * size_t(w) + size_t(x)] = a;
+      rowHi[size_t(y) * size_t(w) + size_t(x)] = b;
+    }
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      float a = rowLo[size_t(y) * size_t(w) + size_t(x)], b = rowHi[size_t(y) * size_t(w) + size_t(x)];
+      for (int d = -r; d <= r; ++d) {
+        const size_t i = size_t(std::clamp(y + d, 0, h - 1)) * size_t(w) + size_t(x);
+        a = std::min(a, rowLo[i]);
+        b = std::max(b, rowHi[i]);
+      }
+      lo[size_t(y) * size_t(w) + size_t(x)] = a;
+      hi[size_t(y) * size_t(w) + size_t(x)] = b;
+    }
+}
+
+float smoothstep(float e0, float e1, float x) {
+  const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
+}
+
+}  // namespace
+
+void contourFields(const float* image, ContourFields* fields) {
+  std::vector<float> lo3(kImagePixels), hi3(kImagePixels), lo7(kImagePixels), hi7(kImagePixels);
+  minMax(image, 1, lo3.data(), hi3.data());
+  minMax(image, 3, lo7.data(), hi7.data());
+  fields->values.resize(4 * kImagePixels);
+  for (size_t i = 0; i < kImagePixels; ++i) {
+    fields->values[4 * i] = lo3[i];
+    fields->values[4 * i + 1] = hi3[i];
+    fields->values[4 * i + 2] = lo7[i];
+    fields->values[4 * i + 3] = hi7[i];
+  }
+  // The noise floor: the 20th percentile of the 3x3 range, from every 7th pixel.
+  std::vector<float> r;
+  r.reserve(kImagePixels / 7 + 1);
+  for (size_t i = 3; i < kImagePixels; i += 7) r.push_back(hi3[i] - lo3[i]);
+  std::nth_element(r.begin(), r.begin() + std::ptrdiff_t(r.size() / 5), r.end());
+  fields->floor = std::max(r[r.size() / 5], 1e-4f);
+}
+
+float shapeContour(const ContourFields& fields, float k, float cx, float cy, float v) {
+  const float fx = std::floor(cx), fy = std::floor(cy);
+  const float tx = cx - fx, ty = cy - fy;
+  const int x0 = std::clamp(int(fx), 0, kFrameWidth - 1), x1 = std::clamp(int(fx) + 1, 0, kFrameWidth - 1);
+  const int y0 = std::clamp(int(fy), 0, kImageRows - 1), y1 = std::clamp(int(fy) + 1, 0, kImageRows - 1);
+  float f[4];
+  for (int c = 0; c < 4; ++c) {
+    const auto at = [&](int x, int y) { return fields.values[4 * (size_t(y) * kFrameWidth + size_t(x)) + size_t(c)]; };
+    const float top = at(x0, y0) + tx * (at(x1, y0) - at(x0, y0));
+    const float bottom = at(x0, y1) + tx * (at(x1, y1) - at(x0, y1));
+    f[c] = top + ty * (bottom - top);
+  }
+  const float range = f[1] - f[0];
+  const float gate = smoothstep(0.45f, 0.75f, range / std::max(f[3] - f[2], 1e-5f)) *
+                     smoothstep(3.0f * fields.floor, 6.0f * fields.floor, range);
+  const float mid = 0.5f * (f[0] + f[1]);
+  return std::clamp(mid + (v - mid) * (1.0f + k * gate), f[0], f[1]);
+}
+
+void sharpenContours(const ContourFields& fields, float k, const ViewRect& rect, int dstW, int dstH, float* dst) {
+  if (k <= 0.0f) return;
+  for (int j = 0; j < dstH; ++j) {
+    const float cy = rect.y + (float(j) + 0.5f) * rect.h / float(dstH) - 0.5f;
+    for (int i = 0; i < dstW; ++i) {
+      const float cx = rect.x + (float(i) + 0.5f) * rect.w / float(dstW) - 0.5f;
+      float& v = dst[size_t(j) * size_t(dstW) + size_t(i)];
+      v = shapeContour(fields, k, cx, cy, std::clamp(v, 0.0f, 1.0f));
+    }
+  }
+}
+
 }  // namespace tv

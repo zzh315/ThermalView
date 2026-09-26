@@ -144,6 +144,10 @@ private fun MainPage(
     Choice("Texture", MainActivity.LEVELS, texture, note = if (texture == null) "Custom (Image processing)" else "Fine detail") {
         onOptions(MainActivity.withTextureLevel(options, it))
     }
+    // M7's edge sharpening: edges crisper after the upscale (off by default until the owner has looked).
+    Choice("Sharpness", MainActivity.LEVELS, options.sharpness.coerceIn(0, 2), note = "Crisper edges") {
+        onOptions(options.copy(sharpness = it))
+    }
     // M7's comparison: which contrast looks best on the owner's own scenes.
     Choice(
         "Contrast", MainActivity.CONTRAST_LEVELS.map { it.name }, options.contrast.coerceIn(0, MainActivity.CONTRAST_LEVELS.size - 1),

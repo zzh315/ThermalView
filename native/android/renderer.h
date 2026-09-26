@@ -7,6 +7,7 @@
 #include <GLES3/gl3.h>
 #include <android/native_window.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -19,6 +20,7 @@
 #include "tv/frame.h"
 #include "tv/stats.h"
 #include "tv/triple_buffer.h"
+#include "tv/upscale.h"
 
 namespace tv {
 
@@ -74,6 +76,10 @@ class Renderer {
   // the tablet, so the app turns the image back); odd turns make the view 3:4.
   void setRotation(int quarterTurns) { rotation_ = ((quarterTurns % 4) + 4) % 4; }
 
+  // M7's edge sharpening on the upscaled image (native/core sharpenContours), at this strength (0: off;
+  // with the B-spline upscaler).
+  void setSharpen(float strength) { sharpen_ = std::max(strength, 0.0f); }
+
   // Debug (M5's GPU-vs-CPU check): after the next frame drawn, save what the GPU drew in the view
   // (<prefix>.ppm), the intensity and over-range mask it drew from (<prefix>.f32, <prefix>_clip.u8)
   // and how (<prefix>.json: size, upscaler, palette, mirroring).
@@ -113,7 +119,10 @@ class Renderer {
   ANativeWindow* window_ = nullptr;
   GLuint program_ = 0, texture_ = 0, coeffTexture_ = 0, lutTexture_ = 0, clipTexture_ = 0, outsideTexture_ = 0, vao_ = 0;
   GLint uMirror_ = -1, uMode_ = -1, uPalette_ = -1, uSaturation_ = -1, uRect_ = -1, uBox_ = -1, uDim_ = -1;
-  GLint uLocked_ = -1, uAbove_ = -1, uBelow_ = -1, uRot_ = -1;
+  GLint uLocked_ = -1, uAbove_ = -1, uBelow_ = -1, uRot_ = -1, uSharpen_ = -1, uFloor_ = -1;
+  GLuint fieldsTexture_ = 0;
+  ContourFields fields_;  // (the GL thread's)
+  std::atomic<float> sharpen_{0.0f};
   std::atomic<int> rotation_{0};
   bool marksLocked_ = false;                         // under displayMutex_
   std::array<float, 3> above_{}, below_{};           // under displayMutex_

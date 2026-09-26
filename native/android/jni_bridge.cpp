@@ -92,6 +92,10 @@ JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setRotation(JNIEnv*, jo
   session().setRotation(int(quarterTurns));
 }
 
+JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setSharpen(JNIEnv*, jobject, jfloat strength) {
+  session().setSharpen(float(strength));
+}
+
 JNIEXPORT void JNICALL Java_dev_thermalview_NativeBridge_setViewWidth(JNIEnv*, jobject, jint px) {
   session().setViewWidth(int(px));
 }

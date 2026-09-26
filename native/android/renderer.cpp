@@ -56,6 +56,9 @@ uniform vec3 uAbove;
 uniform vec3 uBelow;
 uniform vec4 uBox;         // M6's box, camera pixels x0, y0, x1, y1 (x1 <= x0: none)
 uniform float uDim;        // outside it, this much of the brightness
+uniform sampler2D uFields; // RGBA32F, M7's edge sharpening: each pixel's 3x3 min, max and 7x7 min, max
+uniform float uSharpen;    // its strength (0: off)
+uniform float uFloor;      // the frame's noise floor (native/core contourFields)
 in vec2 vUV;
 out vec4 outColor;
 int mirror(int k, int n) {  // whole-sample symmetric; one reflection covers the taps' reach
@@ -93,6 +96,20 @@ void main() {
     g = clamp(sum, min(min(p00, p10), min(p01, p11)), max(max(p00, p10), max(p01, p11)));
   }
   g = clamp(g, 0.0, 1.0);
+  if (uSharpen > 0.0) {
+    // M7's edge sharpening (native/core shapeContour): away from the middle of the neighbourhood's
+    // range, toward the edge's two sides, never past them; only at steps well above the noise floor.
+    vec2 q = cam - 0.5;
+    vec2 qf = floor(q);
+    vec2 t = q - qf;
+    ivec2 a = clamp(ivec2(qf), ivec2(0), size - 1), b = clamp(ivec2(qf) + 1, ivec2(0), size - 1);
+    vec4 F = mix(mix(texelFetch(uFields, a, 0), texelFetch(uFields, ivec2(b.x, a.y), 0), t.x),
+                 mix(texelFetch(uFields, ivec2(a.x, b.y), 0), texelFetch(uFields, b, 0), t.x), t.y);
+    float range = F.y - F.x;
+    float gate = smoothstep(0.45, 0.75, range / max(F.w - F.z, 1e-5)) * smoothstep(3.0 * uFloor, 6.0 * uFloor, range);
+    float mid = 0.5 * (F.x + F.y);
+    g = clamp(mid + (g - mid) * (1.0 + uSharpen * gate), F.x, F.y);
+  }
   if (uPalette == 1) {
     vec3 c = texture(uLut, vec2((g * 1023.0 + 0.5) / 1024.0, 0.5)).rgb;
     if (uLocked == 1) {
@@ -258,10 +275,10 @@ void Renderer::saveReadback(const DisplayFrame& frame, const std::string& prefix
   std::snprintf(json, sizeof json,
                 "{\"width\": %d, \"height\": %d, \"upscaler\": \"%s\", \"palette\": \"%s\", \"mirror_x\": %s, "
                 "\"mirror_y\": %s, \"rect\": [%.4f, %.4f, %.4f, %.4f], \"box\": [%.0f, %.0f, %.0f, %.0f], \"dim\": %.3f, "
-                "\"locked\": %s, \"rot\": %d}\n",
+                "\"locked\": %s, \"rot\": %d, \"sharpen\": %.3f}\n",
                 w, h, upscaler == 1 ? "bspline" : "nearest", palette.c_str(), mirrorX_.load() < 0 ? "true" : "false",
                 mirrorY_.load() < 0 ? "true" : "false", rect[0], rect[1], rect[2], rect[3], box[0], box[1], box[2],
-                box[3], dim, markLocked ? "true" : "false", rotation_.load());
+                box[3], dim, markLocked ? "true" : "false", rotation_.load(), upscaler == 1 ? sharpen_.load() : 0.0f);
   std::ofstream(prefix + ".json", std::ios::trunc) << json;
   LOGI("renderer: readback saved to %s (%dx%d)", prefix.c_str(), w, h);
 }
@@ -440,6 +457,9 @@ bool Renderer::initGl() {
   glUniform1i(glGetUniformLocation(program_, "uLut"), 2);
   glUniform1i(glGetUniformLocation(program_, "uClip"), 3);
   glUniform1i(glGetUniformLocation(program_, "uOutside"), 4);
+  glUniform1i(glGetUniformLocation(program_, "uFields"), 5);
+  uSharpen_ = glGetUniformLocation(program_, "uSharpen");
+  uFloor_ = glGetUniformLocation(program_, "uFloor");
   uLocked_ = glGetUniformLocation(program_, "uLocked");
   uAbove_ = glGetUniformLocation(program_, "uAbove");
   uBelow_ = glGetUniformLocation(program_, "uBelow");
@@ -477,6 +497,13 @@ bool Renderer::initGl() {
   glTexStorage2D(GL_TEXTURE_2D, 1, GL_RG8, kFrameWidth, kImageRows);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glGenTextures(1, &fieldsTexture_);
+  glBindTexture(GL_TEXTURE_2D, fieldsTexture_);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, kFrameWidth, kImageRows);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // (read with texelFetch, blended in the shader)
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glGenVertexArrays(1, &vao_);
@@ -569,6 +596,13 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RG, GL_UNSIGNED_BYTE, frame.outside.data());
   }
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  const float sharpen = upscaler == 1 ? sharpen_.load() : 0.0f;  // (with the B-spline only)
+  if (sharpen > 0.0f) {
+    contourFields(frame.intensity.data(), &fields_);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, fieldsTexture_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kFrameWidth, kImageRows, GL_RGBA, GL_FLOAT, fields_.values.data());
+  }
   glUseProgram(program_);
   glUniform3f(uSaturation_, saturation[0], saturation[1], saturation[2]);
   glUniform4f(uRect_, rect[0], rect[1], rect[2], rect[3]);
@@ -579,6 +613,8 @@ void Renderer::draw(const DisplayFrame& frame, bool haveFrame) {
   glUniform1i(uMode_, upscaler == 1 ? 1 : 0);
   glUniform1i(uPalette_, palette ? 1 : 0);
   glUniform1i(uLocked_, markLocked ? 1 : 0);
+  glUniform1f(uSharpen_, sharpen);
+  glUniform1f(uFloor_, fields_.floor);
   glUniform3f(uAbove_, above[0], above[1], above[2]);
   glUniform3f(uBelow_, below[0], below[1], below[2]);
   glBindVertexArray(vao_);

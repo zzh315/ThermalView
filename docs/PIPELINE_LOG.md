@@ -4,6 +4,29 @@ Every image-pipeline experiment and its verdict (CLAUDE.md rule 4, docs/PLAN.md 
 
 Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for metrics and sheets only). It builds and runs `harness bench`, writes `bench/results/<label>.json` and the half-size sheets in `bench/results/<label>/`, and keeps full-size sheets and clips in `bench/out/` (local). The label is the last commit that changed the display path or the metrics code (`native/core/`, `tools/harness/`, `palettes/`, `tools/py/bench.py`: what the harness runs), suffixed `-dirty` while those have uncommitted changes. Metric definitions: PLAN.md M3 and `tools/py/bench.py`'s docstring.
 
+## 2026-09-26 — M7, sharpness: edges steepened after the upscale, for the owner's look (Settings › Sharpness)
+
+**Why:** M3's bar for `night` is InfiCamPlus's sharpness (pass 2: "at least InfiCamPlus's sharpness and detail, without halos"). The owner turned down camera-resolution sharpening as jagged (stage 6's review): steepening an edge to about a pixel loses where it sits within its pixels, so a slanted edge becomes stair-steps at 8×. Kernels don't help either: at Full size the B-spline, Catmull-Rom and Lanczos-3 look alike (the edges' softness is the source's, ~2 px through the lens), and EASU looked "close to the B-spline" (`12ac338`).
+
+**New: contour shaping on the upscaled image** (`native/core` `contourFields` / `sharpenContours`; the renderer's shader does the same):
+- *The shaping:* where there's an edge, each screen pixel's value moves away from the middle of its neighbourhood's range, toward the edge's two sides.
+  - The neighbourhood is the camera pixel's 3×3 min and max, sampled bilinearly so nothing jumps at pixel boundaries.
+  - The edge steepens along the upscaled image's own smooth contours, so a slanted edge stays smooth and keeps its place.
+  - Nothing passes the neighbourhood's min or max, so there's no rim.
+- *The gate:* it opens only at a step (the 3×3 range most of the 7×7 one, not a steady ramp) that's 3–6× the frame's noise floor (the 20th percentile of the 3×3 range).
+  - A fixed threshold let it work on grain at Contrast Most: 14% of `flat_aged`'s pixels moved by over a level. With the frame's own floor, 0.01%.
+- *Strengths:* Low 0.5, High 1.0, on the B-spline upscaler.
+- *Tests:* a soft step narrows by more than 20% with no overshoot and its 50% crossing held; grain and a steady ramp stay untouched.
+
+**Measured** (harness, 2133 × 1600, the app's settings):
+- *`keyboard` screen edge*, the slope's half width: 2.04 camera px, then 1.44 (Low), then 1.20 (High).
+- *`flat_aged` at Contrast Most*, pixels changed by over a level: 0.001% (Low), 0.011% (High).
+- *The gate by scene:* at High it moves 5–6% of `keyboard`'s and `night`'s pixels (edges, p99 4–8 levels).
+- *Crops:* `bench/results/m7_sharpen/{keyboard,night,hand,room}.jpg` (Rainbow HC; Off / Low / High at Full size).
+- *By eye* (the crops): crisper key gaps, car lines, a finger's edge and foliage; no stair-steps and no rim. Stronger than High (2.0) drew a thin light line along a finger and wavy key outlines.
+
+**In the app:** Settings › Sharpness, Off (the default) / Low / High. The GPU check reads its strength from the readback; to run on the tablet.
+
 ## 2026-09-26 — M7, contrast: stage 5's upper plateau and gain cap, for the owner's pick (Settings › Contrast)
 
 **The owner:** "prioritise image quality and good looking contrast first before anything else".

@@ -111,3 +111,78 @@ TEST_CASE("the fast B-spline prefilter matches the line-by-line double version")
   for (size_t i = 0; i < img.size(); ++i) worst = std::max(worst, std::fabs(fast[i] - ref[i]));
   CHECK(worst < 1e-5f);
 }
+
+namespace {
+// An 8x upscale of image through the cardinal B-spline (the app's), then the contour shaping at k.
+std::vector<float> shaped(const std::vector<float>& img, float k, int dw = 8 * W, int dh = 8 * H) {
+  std::vector<float> out(size_t(dw) * size_t(dh));
+  tv::upscale(tv::kernelInput(img.data(), tv::Kernel::CardinalBSpline), img.data(), tv::Kernel::CardinalBSpline, true, {},
+              dw, dh, out.data());
+  tv::ContourFields f;
+  tv::contourFields(img.data(), &f);
+  tv::sharpenContours(f, k, {}, dw, dh, out.data());
+  return out;
+}
+// A soft vertical step at x = 128 (a 2 px ramp, like a real edge through the lens) with a little noise.
+std::vector<float> softStep(uint32_t seed, float noise) {
+  std::vector<float> a(tv::kImagePixels);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      seed = seed * 1664525u + 1013904223u;
+      const float t = std::clamp((float(x) - 127.0f) / 2.0f, 0.0f, 1.0f);
+      a[size_t(y) * W + size_t(x)] = 0.3f + 0.4f * t + noise * (float(seed >> 8) / float(1 << 24) - 0.5f);
+    }
+  return a;
+}
+float width1090(const std::vector<float>& out, int dw, int row) {  // the step's 10-90% width, output pixels
+  const float* p = &out[size_t(row) * size_t(dw)];
+  int a = 0, b = 0;
+  while (a < dw && p[a] < 0.3f + 0.04f) ++a;
+  while (b < dw && p[b] < 0.7f - 0.04f) ++b;
+  return float(b - a);
+}
+}  // namespace
+
+TEST_CASE("contour sharpening steepens an edge without passing its neighbourhood's range") {
+  const auto img = softStep(3, 0.004f);
+  const auto plain = shaped(img, 0.0f), sharp = shaped(img, 1.0f);
+  const int dw = 8 * W, row = 8 * 96 + 3;
+  CHECK(width1090(sharp, dw, row) < 0.8f * width1090(plain, dw, row));
+  // No halo: nothing goes outside the step's two levels (and a little noise).
+  float lo = 1, hi = 0;
+  for (int x = 8 * 110; x < 8 * 146; ++x) {
+    lo = std::min(lo, sharp[size_t(row) * size_t(dw) + size_t(x)]);
+    hi = std::max(hi, sharp[size_t(row) * size_t(dw) + size_t(x)]);
+  }
+  CHECK(lo > 0.3f - 0.01f);
+  CHECK(hi < 0.7f + 0.01f);
+  // Its position stays: the 50% crossing moves by under a camera pixel's tenth.
+  const auto cross = [&](const std::vector<float>& o) {
+    int x = 0;
+    while (x < dw && o[size_t(row) * size_t(dw) + size_t(x)] < 0.5f) ++x;
+    return x;
+  };
+  CHECK(std::abs(cross(sharp) - cross(plain)) <= 1);
+}
+
+TEST_CASE("contour sharpening leaves noise and smooth gradients alone") {
+  // Flat grain: the gate stays shut (its floor is the frame's own).
+  std::vector<float> grain(tv::kImagePixels);
+  uint32_t s = 11;
+  for (float& v : grain) {
+    s = s * 1664525u + 1013904223u;
+    v = 0.5f + 0.01f * (float(s >> 8) / float(1 << 24) - 0.5f);
+  }
+  const auto g0 = shaped(grain, 0.0f, 4 * W, 4 * H), g1 = shaped(grain, 1.0f, 4 * W, 4 * H);
+  float worst = 0;
+  for (size_t i = 0; i < g0.size(); ++i) worst = std::max(worst, std::fabs(g1[i] - g0[i]));
+  CHECK(worst < 0.004f);  // under a display level
+  // A steady ramp across the frame: no terracing.
+  std::vector<float> ramp(tv::kImagePixels);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) ramp[size_t(y) * W + size_t(x)] = 0.2f + 0.6f * float(x) / float(W - 1);
+  const auto r0 = shaped(ramp, 0.0f, 4 * W, 4 * H), r1 = shaped(ramp, 1.0f, 4 * W, 4 * H);
+  worst = 0;
+  for (size_t i = 0; i < r0.size(); ++i) worst = std::max(worst, std::fabs(r1[i] - r0[i]));
+  CHECK(worst < 1e-4f);
+}

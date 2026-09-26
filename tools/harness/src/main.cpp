@@ -30,7 +30,7 @@
 // FILE.f32 in place of DUMP (one frame's intensity, as the app's GPU readback saves it) the pipeline
 // is skipped; --clip FILE.u8 gives its over-range mask and --mirror-x / --mirror-y its mirroring.
 // --rotate N turns the image N quarter turns clockwise in the view, as M6's orientation does (--size
-// is the view's: 3:4 for odd turns).
+// is the view's: 3:4 for odd turns). --sharpen K applies M7's edge sharpening at strength K.
 //
 //   harness palette FILE.json --out FILE.ppm
 //
@@ -310,6 +310,7 @@ int render(int argc, char** argv) {
   const std::string path = argv[2];
   std::string stages = "default", out, palettePath, kernelText = "bspline", clipPath, outsidePath;
   int frameIndex = 0, w = 0, h = 0, rot = 0;
+  float sharpen = 0.0f;
   bool clamp = false, mirrorX = false, mirrorY = false;
   const bool fromIntensity = path.size() > 4 && path.compare(path.size() - 4, 4, ".f32") == 0;
   tv::ViewRect rect;
@@ -331,6 +332,7 @@ int render(int argc, char** argv) {
     else if (a == "--mirror-x") mirrorX = true;
     else if (a == "--mirror-y") mirrorY = true;
     else if (a == "--rotate") rot = ((std::atoi(next().c_str()) % 4) + 4) % 4;  // quarter turns clockwise (M6)
+    else if (a == "--sharpen") sharpen = float(std::atof(next().c_str()));  // M7's edge sharpening, its strength
     else if (a == "--box") {
       int x, y, bw, bh;
       if (std::sscanf(next().c_str(), "%d,%d,%d,%d", &x, &y, &bw, &bh) != 4 || bw <= 0 || bh <= 0) return usage();
@@ -390,6 +392,11 @@ int render(int argc, char** argv) {
   const int uw = rot % 2 == 0 ? w : h, uh = rot % 2 == 0 ? h : w;
   std::vector<float> up(size_t(uw) * size_t(uh));
   tv::upscale(tv::kernelInput(display.data(), kernel), display.data(), kernel, clamp, rect, uw, uh, up.data());
+  if (sharpen > 0.0f) {  // M7's edge sharpening, on the upscaled intensity as the shader does it
+    tv::ContourFields fields;
+    tv::contourFields(display.data(), &fields);
+    tv::sharpenContours(fields, sharpen, rect, uw, uh, up.data());
+  }
   // Over-range pixels take the palette's saturation color where their bilinear mask passes 0.5, as
   // the GPU does with a filtered R8 mask.
   std::vector<float> maskUp(up.size());
