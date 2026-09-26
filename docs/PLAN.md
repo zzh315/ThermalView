@@ -206,7 +206,7 @@ A final tuning pass on all benchmark scenes, at every view-size preset, then own
 *Status (2026-09-26):* contrast first (owner: "prioritise image quality and good looking contrast first before anything else").
 - **Where we stand:** ahead of Hti on every scene's range and regional contrast (PIPELINE_LOG, "M7, contrast").
 - **Two candidates for stage 5,** for the owner to pick on live scenes in Settings › Contrast:
-  - *More:* the upper plateau ×2. Wide scenes get more detail, at no cost on flat ones.
+  - *More:* the upper plateau ×2 and the median guard. Wide scenes get more detail at no cost on flat ones, and a hot object no longer blacks out the rest.
   - *Most:* that and the gain cap 3. Low-contrast scenes stretch too, with 1.5× their grain.
 - **Not adopted:** regional contrast. It breaks the global temperature order.
 

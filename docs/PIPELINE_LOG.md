@@ -39,7 +39,12 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
   - But it takes output from the temperature gap between a hand and a hot bulb: bulb minus hand 0.33 → 0.26 in white hot, 0.23 → 0.20 in Rainbow HC.
   - That's the separation the owner asked for on that scene ("the hand seems to have color close to the light bulb"), so it stays at 0.25.
 - *The upper plateau barely moves that separation* (0.33 → 0.30; 0.23 → 0.22).
-- *The metrics for More and Most* (`4541ee7+m7_more.json`, `+m7_most.json`):
+- *The median guard* (new, `fb9a6cd`). Without the balance, the median stays where the curve puts it, but within 0.25–0.75 of the output.
+  - **`bulb`, white hot:** the room comes up out of the black (median 0.11 → 0.26). The hand and the bulb stay apart (0.62 against 0.89, where Rainbow HC's balance gives 0.67 and 0.90).
+  - **`hand` and `motion`:** they move a little (median level 33 → 39).
+  - **Unchanged:** `room`, `keyboard`, `night` and `flat`, whose medians are already in the band, and the rainbows.
+  - **At 0.3–0.7** the hand's wall turns grey.
+- *The metrics for More and Most*, both with the guard (`fb9a6cd+m7_more_g.json`, `+m7_most_g.json`):
   - **More** changes no flat-scene figure: noise, fixed pattern, stripes and flicker are identical. Keyboard detail 4.79 → 4.81; its halo 1.91 → 1.63%.
   - **Most** costs ×1.5 on `flat` and `flat_aged`: noise 1.06 → 1.59 and 1.33 → 1.99 levels, fixed pattern 4.1 → 6.2, row stripes on `flat_aged` 2.4 → 3.6. The recalibration's biggest step rises 8.3 → 12.5 levels. At the tablet's scale that's visible mottling on a bare desk.
 
@@ -52,7 +57,7 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 
 **For the owner's pick on live scenes:** Settings › Contrast.
 - *Now:* as before.
-- *More:* the upper plateau ×2.
+- *More:* the upper plateau ×2 and the median guard.
 - *Most:* that and the gain cap 3.
 
 Kept across launches. Sheets: `bench/results/m7_contrast/levels_white_hot.jpg`, `levels_rainbow_hti.jpg` (room, keyboard, night, hand, bulb, flat × Now / More / Most).
