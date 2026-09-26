@@ -25,7 +25,10 @@ Run: `tools/py/.venv/bin/python tools/py/bench.py` (about 20 s; `--no-clips` for
 - *Crops:* `bench/results/m7_sharpen/{keyboard,night,hand,room}.jpg` (Rainbow HC; Off / Low / High at Full size).
 - *By eye* (the crops): crisper key gaps, car lines, a finger's edge and foliage; no stair-steps and no rim. Stronger than High (2.0) drew a thin light line along a finger and wavy key outlines.
 
-**In the app:** Settings › Sharpness, Off (the default) / Low / High. The GPU check reads its strength from the readback; to run on the tablet.
+**In the app:** Settings › Sharpness, Off (the default) / Low / High.
+- *The shader:* checked on the tablet's Adreno 650 by `tools/shader_check.sh`, which compiles and links it off-screen over adb, with the tablet locked: it compiled and linked, and its uniforms are live.
+- *The GPU-vs-CPU check* reads the strength from the readback; it runs when the app is next on screen.
+- *Cost:* the fields take 0.41 ms a frame on the Mac at -O2 (~1 ms on the tablet), only while it's on.
 
 ## 2026-09-26 — M7, contrast: stage 5's upper plateau and gain cap, for the owner's pick (Settings › Contrast)
 
