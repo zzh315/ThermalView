@@ -105,8 +105,8 @@ void main() {
     ivec2 a = clamp(ivec2(qf), ivec2(0), size - 1), b = clamp(ivec2(qf) + 1, ivec2(0), size - 1);
     vec4 F = mix(mix(texelFetch(uFields, a, 0), texelFetch(uFields, ivec2(b.x, a.y), 0), t.x),
                  mix(texelFetch(uFields, ivec2(a.x, b.y), 0), texelFetch(uFields, b, 0), t.x), t.y);
-    float range = F.y - F.x;
-    float gate = smoothstep(0.45, 0.75, range / max(F.w - F.z, 1e-5)) * smoothstep(3.0 * uFloor, 6.0 * uFloor, range);
+    float span3 = F.y - F.x;
+    float gate = smoothstep(0.45, 0.75, span3 / max(F.w - F.z, 1e-5)) * smoothstep(3.0 * uFloor, 6.0 * uFloor, span3);
     float mid = 0.5 * (F.x + F.y);
     g = clamp(mid + (g - mid) * (1.0 + uSharpen * gate), F.x, F.y);
   }
